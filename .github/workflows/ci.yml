@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: json, mbstring, pdo, pdo_mysql
+      - name: PHP syntax
+        run: find backend -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  download-center:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: pnpm
+          cache-dependency-path: download-site/pnpm-lock.yaml
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        working-directory: download-site
+      - run: pnpm lint
+        working-directory: download-site
+      - run: pnpm test
+        working-directory: download-site
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - run: chmod +x gradlew
+        working-directory: android
+      - name: Test and assemble four roles
+        working-directory: android
+        run: ./gradlew testPlatformOwnerDebugUnitTest testAuthorizedPlatformDebugUnitTest testAdminDebugUnitTest testUserDebugUnitTest assemblePlatformOwnerDebug assembleAuthorizedPlatformDebug assembleAdminDebug assembleUserDebug --stacktrace

@@ -1,0 +1,4538 @@
+[
+    {
+        "method":  "GET",
+        "path":  "/",
+        "scope":  "public",
+        "handler":  "HealthController::show"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/health",
+        "scope":  "public",
+        "handler":  "HealthController::show"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/app",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::app"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/bootstrap",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::bootstrap"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/features",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::features"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/notices",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::notices"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/banners",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::banners"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/version",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::version"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/app/visit",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::recordVisit"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/app/statistics",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::statistics"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/card-login",
+        "scope":  "public",
+        "handler":  "UserCard::login"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/card-auto-login",
+        "scope":  "public",
+        "handler":  "UserCard::autoLogin"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/lifecycle",
+        "scope":  "public",
+        "handler":  "PublicLifecycle::check"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/note-shares/{share_code}",
+        "scope":  "public",
+        "handler":  "PublicBootstrap::documentShare"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/resource-categories",
+        "scope":  "public",
+        "handler":  "PublicResource::categories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/resources",
+        "scope":  "public",
+        "handler":  "PublicResource::resources"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/resources/{resource_id}",
+        "scope":  "public",
+        "handler":  "PublicResource::show"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/forum-plates",
+        "scope":  "public",
+        "handler":  "PublicForum::plates"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/forum-posts",
+        "scope":  "public",
+        "handler":  "PublicForum::posts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/forum-posts/{post_id}",
+        "scope":  "public",
+        "handler":  "PublicForum::show"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/public/remote-files/{file_id}",
+        "scope":  "public",
+        "handler":  "PublicFile::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/captcha",
+        "scope":  "public",
+        "handler":  "PublicCaptcha::create"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/verification-code/email",
+        "scope":  "public",
+        "handler":  "PublicVerification::email"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/public/payment/callback/{channel}",
+        "scope":  "public",
+        "handler":  "PublicPayment::callback"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/login",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::login"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/logout",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::logout"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/me",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::me"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::permissions"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/profile",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::profile"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/profile/avatar",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::avatar"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/password",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::password"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/login-logs",
+        "scope":  "platform",
+        "handler":  "PlatformAuth::loginLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/identity-unbind-requests",
+        "scope":  "platform",
+        "handler":  "PlatformIdentity::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/identity-unbind-requests/{request_id}/review",
+        "scope":  "platform",
+        "handler":  "PlatformIdentity::review"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/my-identity-unbind-requests",
+        "scope":  "platform",
+        "handler":  "PlatformIdentity::mine"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/my-identity-unbind-requests",
+        "scope":  "platform",
+        "handler":  "PlatformIdentity::requestMine"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/dashboard",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::dashboard"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/settings",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::settings"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/settings",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::saveSettings"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/ip-statistics",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::ipStatistics"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admin-registration-logs",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::registrationLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admin-login-logs",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::adminLoginLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/operation-logs",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::operationLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/data-console/tables",
+        "scope":  "platform",
+        "handler":  "PlatformDataConsole::tables"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/data-console/{table}",
+        "scope":  "platform",
+        "handler":  "PlatformDataConsole::rows"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/data-console/{table}",
+        "scope":  "platform",
+        "handler":  "PlatformDataConsole::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/data-console/{table}/{row_id}",
+        "scope":  "platform",
+        "handler":  "PlatformDataConsole::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/data-console/{table}/{row_id}",
+        "scope":  "platform",
+        "handler":  "PlatformDataConsole::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/governance-rules",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/governance-rules",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/governance-rules/{rule_id}",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/governance-rules/{rule_id}",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/governance-rules/batch",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::batch"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/effective-features",
+        "scope":  "platform",
+        "handler":  "PlatformGovernance::effective"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/ai/status",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::status"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/ai-knowledge",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/ai-knowledge",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/ai-knowledge/{document_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/ai-knowledge/{document_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/ai-knowledge/{document_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAiKnowledge::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/community/posts",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::posts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/software-updates",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::updates"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/software-updates",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::createUpdate"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/software-updates/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::updateUpdate"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/software-updates/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::deleteUpdate"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/maintenances",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::maintenances"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/maintenances",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::createMaintenance"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/maintenances/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::updateMaintenance"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/maintenances/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::deleteMaintenance"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/festival-themes",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::festivalThemes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/festival-themes",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::createFestivalTheme"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/festival-themes/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::updateFestivalTheme"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/festival-themes/{policy_id}",
+        "scope":  "platform",
+        "handler":  "PlatformLifecycle::deleteFestivalTheme"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/poll-categories",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/poll-categories",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/poll-categories/{category_id}",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/poll-categories/{category_id}",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/polls",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::polls"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/polls",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::createPoll"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/polls/{poll_id}",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/polls/{poll_id}/vote",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::vote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/polls/{poll_id}/close",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::close"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/polls/{poll_id}",
+        "scope":  "platform",
+        "handler":  "PlatformPoll::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/community/posts",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/community/posts/{post_id}",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/community/posts/{post_id}/comments",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::comment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/community/posts/{post_id}/reactions",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::reaction"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/community/posts/{post_id}",
+        "scope":  "platform",
+        "handler":  "PlatformCommunity::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/activities/balance",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::balance"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/activities",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/activities/{activity_id}",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/claim",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::claim"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/draw",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::draw"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/submit",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::submit"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/award",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::award"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/close",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::close"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/activities/{activity_id}/cancel",
+        "scope":  "platform",
+        "handler":  "PlatformActivity::cancel"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/operators",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/operators",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/batch-entitlement",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::batchEntitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/operators/{operator_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/{operator_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::update"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/{operator_id}/entitlement",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::entitlement"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/{operator_id}/password",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::resetPassword"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/operators/{operator_id}/ban",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::ban"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/operators/{operator_id}/unban",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::unban"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/operators/{operator_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/operators/{operator_id}/settings",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::settings"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/{operator_id}/settings",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::saveSettings"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/operators/{operator_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::permissionList"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/operators/{operator_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformOperator::savePermissions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admins",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/admins",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/admins/batch-entitlement",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::batchEntitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admins/{admin_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/admins/{admin_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::update"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/admins/{admin_id}/password",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::resetPassword"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/admins/{admin_id}/ban",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::ban"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/admins/{admin_id}/unban",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::unban"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/admins/{admin_id}",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::delete"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/admins/{admin_id}/entitlement",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::entitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admins/{admin_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::permissionList"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/admins/{admin_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::savePermissions"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/admins/{admin_id}/impersonate",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::impersonate"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admins/{admin_id}/apps",
+        "scope":  "platform",
+        "handler":  "PlatformAdmin::apps"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::apps"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/users",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::users"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/overview",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::overview"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::userPermissions"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/permissions",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::saveUserPermissions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/communications",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::communications"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/communications/send",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::participate"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/communications/{message_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::updateCommunication"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/apps/{app_id}/users/{user_id}/communications/{message_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::deleteCommunication"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/communication-takeover-policy",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::takeoverPolicy"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}/communication-takeover-policy",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::saveTakeoverPolicy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/communication-takeover-audits",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::takeoverAudits"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/message-forwards/{forward_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::forwardBundle"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/apps/{app_id}/red-packets/{packet_id}/force-refund",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::forceRefundRedPacket"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/uploads",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::uploads"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/apps/{app_id}/uploads",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::upload"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/apps/{app_id}/uploads/{upload_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::deleteUpload"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/apps/{app_id}/chat-rooms/{room_id}/assets/{asset_type}/{asset_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::deleteGroupAsset"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/forum-plates",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::forumPlates"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/forum-posts",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::forumPosts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/forum-posts/{post_id}",
+        "scope":  "platform",
+        "handler":  "PlatformOversight::forumPost"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/reward-rules",
+        "scope":  "platform",
+        "handler":  "PlatformReward::rules"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}/reward-rules/{scene_code}",
+        "scope":  "platform",
+        "handler":  "PlatformReward::updateRule"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}/reward-events",
+        "scope":  "platform",
+        "handler":  "PlatformReward::events"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/apps/{app_id}/reward-events/{event_id}/review",
+        "scope":  "platform",
+        "handler":  "PlatformReward::review"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/apps/{app_id}/rewards/manual-grant",
+        "scope":  "platform",
+        "handler":  "PlatformReward::manualGrant"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/apps/{app_id}",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::app"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::updateApp"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/apps/{app_id}/settings",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::saveAppSettings"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/apps/{app_id}",
+        "scope":  "platform",
+        "handler":  "PlatformDashboard::deleteApp"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/purchase-orders",
+        "scope":  "platform",
+        "handler":  "PlatformBilling::purchaseOrders"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/purchase-orders/{order_id}/fulfill",
+        "scope":  "platform",
+        "handler":  "PlatformBilling::fulfillPurchaseOrder"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/purchase-orders/{order_id}/reject",
+        "scope":  "platform",
+        "handler":  "PlatformBilling::rejectPurchaseOrder"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/admin-feedbacks",
+        "scope":  "platform",
+        "handler":  "PlatformBilling::feedbacks"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/admin-feedbacks/{feedback_id}/reply",
+        "scope":  "platform",
+        "handler":  "PlatformBilling::replyFeedback"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/exchange-products",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::products"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/exchange-products",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::createProduct"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/exchange-products/{product_id}",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::product"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/exchange-products/{product_id}",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::updateProduct"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/exchange-products/{product_id}/enable",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::enableProduct"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/exchange-products/{product_id}/disable",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::disableProduct"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/platform/exchange-products/{product_id}",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::deleteProduct"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/exchanges",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::orders"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/exchanges/{exchange_id}",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::order"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/exchanges/{exchange_id}/refund",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::refund"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/platform/balance-logs",
+        "scope":  "platform",
+        "handler":  "PlatformExchange::integralLogs"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/register",
+        "scope":  "admin",
+        "handler":  "AdminAuth::register"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/login",
+        "scope":  "admin",
+        "handler":  "AdminAuth::login"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/logout",
+        "scope":  "admin",
+        "handler":  "AdminAuth::logout"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/me",
+        "scope":  "admin",
+        "handler":  "AdminAuth::me"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/permissions",
+        "scope":  "admin",
+        "handler":  "AdminAuth::permissions"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/profile",
+        "scope":  "admin",
+        "handler":  "AdminAuth::profile"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/profile/avatar",
+        "scope":  "admin",
+        "handler":  "AdminAuth::avatar"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/password",
+        "scope":  "admin",
+        "handler":  "AdminAuth::password"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/login-logs",
+        "scope":  "admin",
+        "handler":  "AdminAuth::loginLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/identity-unbind-requests",
+        "scope":  "admin",
+        "handler":  "AdminIdentity::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/identity-unbind-requests/{request_id}/review",
+        "scope":  "admin",
+        "handler":  "AdminIdentity::review"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/my-identity-unbind-requests",
+        "scope":  "admin",
+        "handler":  "AdminIdentity::mine"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/my-identity-unbind-requests",
+        "scope":  "admin",
+        "handler":  "AdminIdentity::requestMine"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/entitlement",
+        "scope":  "admin",
+        "handler":  "AdminBilling::entitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/purchase-orders",
+        "scope":  "admin",
+        "handler":  "AdminBilling::purchaseOrders"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/purchase-orders",
+        "scope":  "admin",
+        "handler":  "AdminBilling::createPurchaseOrder"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/platform-feedbacks",
+        "scope":  "admin",
+        "handler":  "AdminBilling::feedbacks"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/platform-feedbacks",
+        "scope":  "admin",
+        "handler":  "AdminBilling::createFeedback"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/exchange-products",
+        "scope":  "admin",
+        "handler":  "AdminExchange::products"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/exchange-products/{product_id}",
+        "scope":  "admin",
+        "handler":  "AdminExchange::product"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/exchanges/quote",
+        "scope":  "admin",
+        "handler":  "AdminExchange::quote"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/exchanges",
+        "scope":  "admin",
+        "handler":  "AdminExchange::orders"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/exchanges",
+        "scope":  "admin",
+        "handler":  "AdminExchange::exchange"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/exchanges/{exchange_id}",
+        "scope":  "admin",
+        "handler":  "AdminExchange::order"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/balance-logs",
+        "scope":  "admin",
+        "handler":  "AdminExchange::integralLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/community/posts",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::posts"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/community/posts",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/community/posts/{post_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/community/posts/{post_id}/comments",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::comment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/community/posts/{post_id}/reactions",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::reaction"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/community/posts/{post_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/poll-categories",
+        "scope":  "admin",
+        "handler":  "AdminPoll::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/poll-categories",
+        "scope":  "admin",
+        "handler":  "AdminPoll::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/poll-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminPoll::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/poll-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminPoll::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/polls",
+        "scope":  "admin",
+        "handler":  "AdminPoll::polls"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/polls",
+        "scope":  "admin",
+        "handler":  "AdminPoll::createPoll"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/polls/{poll_id}",
+        "scope":  "admin",
+        "handler":  "AdminPoll::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/polls/{poll_id}/vote",
+        "scope":  "admin",
+        "handler":  "AdminPoll::vote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/polls/{poll_id}/close",
+        "scope":  "admin",
+        "handler":  "AdminPoll::close"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/polls/{poll_id}",
+        "scope":  "admin",
+        "handler":  "AdminPoll::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/activities/balance",
+        "scope":  "admin",
+        "handler":  "AdminActivity::balance"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/activities",
+        "scope":  "admin",
+        "handler":  "AdminActivity::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities",
+        "scope":  "admin",
+        "handler":  "AdminActivity::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/activities/{activity_id}",
+        "scope":  "admin",
+        "handler":  "AdminActivity::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/claim",
+        "scope":  "admin",
+        "handler":  "AdminActivity::claim"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/draw",
+        "scope":  "admin",
+        "handler":  "AdminActivity::draw"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/submit",
+        "scope":  "admin",
+        "handler":  "AdminActivity::submit"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/award",
+        "scope":  "admin",
+        "handler":  "AdminActivity::award"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/close",
+        "scope":  "admin",
+        "handler":  "AdminActivity::close"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/activities/{activity_id}/cancel",
+        "scope":  "admin",
+        "handler":  "AdminActivity::cancel"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps",
+        "scope":  "admin",
+        "handler":  "AdminApp::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps",
+        "scope":  "admin",
+        "handler":  "AdminApp::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}",
+        "scope":  "admin",
+        "handler":  "AdminApp::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}",
+        "scope":  "admin",
+        "handler":  "AdminApp::update"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/enable",
+        "scope":  "admin",
+        "handler":  "AdminApp::enable"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/disable",
+        "scope":  "admin",
+        "handler":  "AdminApp::disable"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}",
+        "scope":  "admin",
+        "handler":  "AdminApp::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/secret/reset",
+        "scope":  "admin",
+        "handler":  "AdminApp::resetSecret"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/settings",
+        "scope":  "admin",
+        "handler":  "AdminApp::settings"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/settings",
+        "scope":  "admin",
+        "handler":  "AdminApp::saveSettings"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/features",
+        "scope":  "admin",
+        "handler":  "AdminApp::features"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/features",
+        "scope":  "admin",
+        "handler":  "AdminApp::saveFeatures"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/domains",
+        "scope":  "admin",
+        "handler":  "AdminApp::domains"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/domains",
+        "scope":  "admin",
+        "handler":  "AdminApp::createDomain"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/domains/{domain_id}",
+        "scope":  "admin",
+        "handler":  "AdminApp::deleteDomain"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/ai-knowledge",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/ai/status",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::status"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/ai-knowledge",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/ai-knowledge/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/ai-knowledge/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/ai-knowledge/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminAiKnowledge::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/reward-rules",
+        "scope":  "admin",
+        "handler":  "AdminReward::rules"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/reward-rules/{scene_code}",
+        "scope":  "admin",
+        "handler":  "AdminReward::updateRule"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/reward-events",
+        "scope":  "admin",
+        "handler":  "AdminReward::events"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/reward-events/{event_id}/review",
+        "scope":  "admin",
+        "handler":  "AdminReward::review"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/rewards/manual-grant",
+        "scope":  "admin",
+        "handler":  "AdminReward::manualGrant"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users/import",
+        "scope":  "admin",
+        "handler":  "AdminUser::import"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/user-tags",
+        "scope":  "admin",
+        "handler":  "AdminUser::tags"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/user-tags",
+        "scope":  "admin",
+        "handler":  "AdminUser::createTag"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/user-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::updateTag"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/user-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::deleteTag"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users",
+        "scope":  "admin",
+        "handler":  "AdminUser::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users",
+        "scope":  "admin",
+        "handler":  "AdminUser::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/batch-entitlement",
+        "scope":  "admin",
+        "handler":  "AdminUser::batchEntitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::show"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/permissions",
+        "scope":  "admin",
+        "handler":  "AdminUser::permissions"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/permissions",
+        "scope":  "admin",
+        "handler":  "AdminUser::savePermissions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/communications",
+        "scope":  "admin",
+        "handler":  "AdminUser::communications"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/communications/send",
+        "scope":  "admin",
+        "handler":  "AdminUser::participate"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/communications/{message_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::updateCommunication"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/communications/{message_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::deleteCommunication"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/communication-takeover-policy",
+        "scope":  "admin",
+        "handler":  "AdminUser::takeoverPolicy"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/communication-takeover-policy",
+        "scope":  "admin",
+        "handler":  "AdminUser::saveTakeoverPolicy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/communication-takeover-audits",
+        "scope":  "admin",
+        "handler":  "AdminUser::takeoverAudits"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/message-forwards/{forward_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::forwardBundle"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::update"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/password",
+        "scope":  "admin",
+        "handler":  "AdminUser::resetPassword"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/ban",
+        "scope":  "admin",
+        "handler":  "AdminUser::ban"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/unban",
+        "scope":  "admin",
+        "handler":  "AdminUser::unban"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}",
+        "scope":  "admin",
+        "handler":  "AdminUser::delete"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/wallet",
+        "scope":  "admin",
+        "handler":  "AdminUser::wallet"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/vip",
+        "scope":  "admin",
+        "handler":  "AdminUser::vip"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/entitlement",
+        "scope":  "admin",
+        "handler":  "AdminUser::entitlement"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/logs",
+        "scope":  "admin",
+        "handler":  "AdminUser::logs"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/tags",
+        "scope":  "admin",
+        "handler":  "AdminUser::setTags"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/transfer-policy",
+        "scope":  "admin",
+        "handler":  "AdminUser::transferPolicy"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/users/{user_id}/transfer-policy",
+        "scope":  "admin",
+        "handler":  "AdminUser::saveTransferPolicy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/documents",
+        "scope":  "admin",
+        "handler":  "AdminDocument::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/documents",
+        "scope":  "admin",
+        "handler":  "AdminDocument::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/documents/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminDocument::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/documents/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminDocument::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/documents/{document_id}",
+        "scope":  "admin",
+        "handler":  "AdminDocument::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/documents/{document_id}/restore",
+        "scope":  "admin",
+        "handler":  "AdminDocument::restore"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/document-shares",
+        "scope":  "admin",
+        "handler":  "AdminDocument::shares"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/document-rules",
+        "scope":  "admin",
+        "handler":  "AdminDocument::rules"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/notices",
+        "scope":  "admin",
+        "handler":  "AdminContent::notices"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/notices",
+        "scope":  "admin",
+        "handler":  "AdminContent::createNotice"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/notices/{notice_id}",
+        "scope":  "admin",
+        "handler":  "AdminContent::updateNotice"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/notices/{notice_id}",
+        "scope":  "admin",
+        "handler":  "AdminContent::deleteNotice"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/versions",
+        "scope":  "admin",
+        "handler":  "AdminContent::versions"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/versions",
+        "scope":  "admin",
+        "handler":  "AdminContent::publishVersion"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/maintenances",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::maintenances"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/maintenances",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::createMaintenance"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/maintenances/{policy_id}",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::updateMaintenance"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/maintenances/{policy_id}",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::deleteMaintenance"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/festival-themes",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::festivalThemes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/festival-themes",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::createFestivalTheme"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/festival-themes/{policy_id}",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::updateFestivalTheme"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/festival-themes/{policy_id}",
+        "scope":  "admin",
+        "handler":  "AdminLifecycle::deleteFestivalTheme"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/banners",
+        "scope":  "admin",
+        "handler":  "AdminContent::banners"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/banners",
+        "scope":  "admin",
+        "handler":  "AdminContent::createBanner"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/banners/{banner_id}",
+        "scope":  "admin",
+        "handler":  "AdminContent::updateBanner"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/banners/{banner_id}",
+        "scope":  "admin",
+        "handler":  "AdminContent::deleteBanner"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/remote-configs",
+        "scope":  "admin",
+        "handler":  "AdminContent::remoteConfigs"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/remote-configs",
+        "scope":  "admin",
+        "handler":  "AdminContent::saveRemoteConfigs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resource-categories",
+        "scope":  "admin",
+        "handler":  "AdminResource::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/resource-categories",
+        "scope":  "admin",
+        "handler":  "AdminResource::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/resource-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/resource-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resources",
+        "scope":  "admin",
+        "handler":  "AdminResource::resources"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/resources/{resource_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminResource::audit"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/resources/{resource_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::updateResource"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/resources/{resource_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::deleteResource"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/store-categories",
+        "scope":  "admin",
+        "handler":  "AdminResource::storeCategories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/store-categories",
+        "scope":  "admin",
+        "handler":  "AdminResource::createStoreCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/store-apps",
+        "scope":  "admin",
+        "handler":  "AdminResource::storeApps"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/store-apps",
+        "scope":  "admin",
+        "handler":  "AdminResource::createStoreApp"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-plates",
+        "scope":  "admin",
+        "handler":  "AdminForum::plates"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-categories",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-categories",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/forum-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-tags",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::tags"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-tags",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::createTag"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::updateTag"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/forum-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::deleteTag"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-structure-requests",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::requests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-structure-requests/{request_id}/review",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::reviewRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-moderators",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::moderators"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-moderators/{moderator_id}",
+        "scope":  "admin",
+        "handler":  "AdminForumStructure::updateModerator"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/bounty-categories",
+        "scope":  "admin",
+        "handler":  "AdminBounty::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/bounty-categories",
+        "scope":  "admin",
+        "handler":  "AdminBounty::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/bounty-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminBounty::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/bounty-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminBounty::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/bounty-category-requests",
+        "scope":  "admin",
+        "handler":  "AdminBounty::categoryRequests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/bounty-category-requests/{request_id}/review",
+        "scope":  "admin",
+        "handler":  "AdminBounty::reviewCategoryRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/bounties",
+        "scope":  "admin",
+        "handler":  "AdminBounty::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/bounties/{bounty_id}",
+        "scope":  "admin",
+        "handler":  "AdminBounty::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/bounties/{bounty_id}",
+        "scope":  "admin",
+        "handler":  "AdminBounty::update"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/bounties/{bounty_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminBounty::audit"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/bounties/{bounty_id}/cancel",
+        "scope":  "admin",
+        "handler":  "AdminBounty::cancel"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/bounties/{bounty_id}",
+        "scope":  "admin",
+        "handler":  "AdminBounty::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-plates",
+        "scope":  "admin",
+        "handler":  "AdminForum::createPlate"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-plates/{plate_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::updatePlate"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-posts",
+        "scope":  "admin",
+        "handler":  "AdminForum::posts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::showPost"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::updatePost"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}/top",
+        "scope":  "admin",
+        "handler":  "AdminForum::top"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}/essence",
+        "scope":  "admin",
+        "handler":  "AdminForum::essence"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}/lock",
+        "scope":  "admin",
+        "handler":  "AdminForum::lock"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminForum::audit"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/forum-posts/{post_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::deletePost"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-comments",
+        "scope":  "admin",
+        "handler":  "AdminForum::comments"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminForum::auditComment"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/forum-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::deleteComment"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-report-tags",
+        "scope":  "admin",
+        "handler":  "AdminForum::reportTags"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-report-tags",
+        "scope":  "admin",
+        "handler":  "AdminForum::createReportTag"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/forum-report-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::updateReportTag"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/forum-report-tags/{tag_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::deleteReportTag"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/reports",
+        "scope":  "admin",
+        "handler":  "AdminForum::reports"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/reports/{report_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::handleReport"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/system-messages",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::systemMessage"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/messages",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::messages"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/service-sessions",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::serviceSessions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/service-sessions/{session_id}/messages",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::serviceMessages"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/service-sessions/{session_id}/reply",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::serviceReply"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/service-sessions/{session_id}/close",
+        "scope":  "admin",
+        "handler":  "AdminCommunication::closeServiceSession"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms",
+        "scope":  "admin",
+        "handler":  "AdminGroup::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms",
+        "scope":  "admin",
+        "handler":  "AdminGroup::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members",
+        "scope":  "admin",
+        "handler":  "AdminGroup::members"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members",
+        "scope":  "admin",
+        "handler":  "AdminGroup::addMember"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members/{user_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::updateMember"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members/{user_id}/mute",
+        "scope":  "admin",
+        "handler":  "AdminGroup::muteMember"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members/{user_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::removeMember"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/messages",
+        "scope":  "admin",
+        "handler":  "AdminGroup::messages"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/messages/{message_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::deleteMessage"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/assets/{asset_type}/{asset_id}",
+        "scope":  "admin",
+        "handler":  "AdminGroup::deleteAsset"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/join-requests",
+        "scope":  "admin",
+        "handler":  "AdminGroup::joinRequests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/join-requests/{request_id}/decision",
+        "scope":  "admin",
+        "handler":  "AdminGroup::decideJoinRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/card-batches",
+        "scope":  "admin",
+        "handler":  "AdminCard::batches"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/card-batches",
+        "scope":  "admin",
+        "handler":  "AdminCard::createBatch"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/card-batches/{batch_id}",
+        "scope":  "admin",
+        "handler":  "AdminCard::updateBatch"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/cards",
+        "scope":  "admin",
+        "handler":  "AdminCard::cards"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/cards/{card_id}",
+        "scope":  "admin",
+        "handler":  "AdminCard::updateCard"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/card-redeem-logs",
+        "scope":  "admin",
+        "handler":  "AdminCard::redeemLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/card-login-bindings",
+        "scope":  "admin",
+        "handler":  "AdminCard::loginBindings"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/orders",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::orders"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/payments",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::payments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/payment-channels",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::paymentChannels"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/payment-channels",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::savePaymentChannel"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/shop-goods",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::goods"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/shop-goods",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::createGoods"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/shop-goods/{goods_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::updateGoods"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/shop-goods/{goods_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::deleteGoods"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/red-packets",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::redPackets"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/red-packets/{packet_id}/force-refund",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::forceRefundRedPacket"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/lottery-prizes",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::lotteryPrizes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/lottery-prizes",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::saveLotteryPrize"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/lottery-prizes/{prize_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::deleteLotteryPrize"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/votes",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::votes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/votes",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::createVote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/votes/{vote_id}/close",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::closeVote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/remote-files/folders",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::createFolder"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/remote-files",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::files"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/remote-files",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::createFile"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/remote-files/{file_id}",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::updateFile"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/remote-files/{file_id}",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::deleteFile"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/remote-files/{file_id}/versions",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::versions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/feedbacks",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::feedbacks"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/feedbacks/{feedback_id}/reply",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::replyFeedback"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/uploads",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::uploads"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/uploads",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::upload"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/uploads/{upload_id}",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::deleteUpload"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/bot-qa",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::botQa"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/bot-qa",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::saveBotQa"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/bot-qa/{qa_id}",
+        "scope":  "admin",
+        "handler":  "AdminFileFeedback::deleteBotQa"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/statistics",
+        "scope":  "admin",
+        "handler":  "AdminStatistics::overview"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/withdrawals",
+        "scope":  "admin",
+        "handler":  "AdminSocial::withdrawals"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/withdrawals/{withdrawal_id}/review",
+        "scope":  "admin",
+        "handler":  "AdminSocial::reviewWithdrawal"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/api-logs",
+        "scope":  "admin",
+        "handler":  "AdminStatistics::apiLogs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/operation-logs",
+        "scope":  "admin",
+        "handler":  "AdminStatistics::operationLogs"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/register",
+        "scope":  "user",
+        "handler":  "UserAuth::register"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/login",
+        "scope":  "user",
+        "handler":  "UserAuth::login"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/logout",
+        "scope":  "user",
+        "handler":  "UserAuth::logout"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/token/refresh",
+        "scope":  "user",
+        "handler":  "UserAuth::refresh"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/me",
+        "scope":  "user",
+        "handler":  "UserAuth::me"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/permissions",
+        "scope":  "user",
+        "handler":  "UserAuth::permissions"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/heartbeat",
+        "scope":  "user",
+        "handler":  "UserAuth::heartbeat"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/identity-unbind-requests",
+        "scope":  "user",
+        "handler":  "UserIdentity::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/identity-unbind-requests",
+        "scope":  "user",
+        "handler":  "UserIdentity::create"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/profile",
+        "scope":  "user",
+        "handler":  "UserAuth::profile"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/profile/avatar",
+        "scope":  "user",
+        "handler":  "UserAuth::avatar"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/profile/avatar-history",
+        "scope":  "user",
+        "handler":  "UserAuth::avatarHistory"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/profile/avatar-history/{history_id}/switch",
+        "scope":  "user",
+        "handler":  "UserAuth::switchAvatar"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/password",
+        "scope":  "user",
+        "handler":  "UserAuth::password"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/password/reset/code",
+        "scope":  "user",
+        "handler":  "UserAuth::issuePasswordResetCode"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/password/reset",
+        "scope":  "user",
+        "handler":  "UserAuth::resetPassword"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/sign",
+        "scope":  "user",
+        "handler":  "UserAuth::sign"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/wallet",
+        "scope":  "user",
+        "handler":  "UserAuth::wallet"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/wallet/logs",
+        "scope":  "user",
+        "handler":  "UserAuth::walletLogs"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/wallet/purchases",
+        "scope":  "user",
+        "handler":  "UserAuth::purchase"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/wallet/purchases",
+        "scope":  "user",
+        "handler":  "UserAuth::purchases"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/logs",
+        "scope":  "user",
+        "handler":  "UserAuth::logs"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/invite-code",
+        "scope":  "user",
+        "handler":  "UserAuth::inviteCode"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/invite-code",
+        "scope":  "user",
+        "handler":  "UserAuth::inviteCode"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/invites",
+        "scope":  "user",
+        "handler":  "UserAuth::invites"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/notices",
+        "scope":  "user",
+        "handler":  "UserNotice::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/rankings",
+        "scope":  "user",
+        "handler":  "UserAuth::rankings"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/wallet/transfer",
+        "scope":  "user",
+        "handler":  "UserCommerce::transfer"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/activities/balance",
+        "scope":  "user",
+        "handler":  "UserActivity::balance"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/activities",
+        "scope":  "user",
+        "handler":  "UserActivity::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/activities/{activity_id}",
+        "scope":  "user",
+        "handler":  "UserActivity::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/activities/{activity_id}/claim",
+        "scope":  "user",
+        "handler":  "UserActivity::claim"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/activities/{activity_id}/draw",
+        "scope":  "user",
+        "handler":  "UserActivity::draw"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/activities/{activity_id}/submit",
+        "scope":  "user",
+        "handler":  "UserActivity::submit"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/users/search",
+        "scope":  "user",
+        "handler":  "UserSocial::searchUsers"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/profiles/{user_id}",
+        "scope":  "user",
+        "handler":  "UserSocial::profile"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/profiles/{user_id}/follow",
+        "scope":  "user",
+        "handler":  "UserSocial::follow"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/profiles/{user_id}/follow-status",
+        "scope":  "user",
+        "handler":  "UserSocial::followStatus"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/profiles/{user_id}/likes",
+        "scope":  "user",
+        "handler":  "UserSocial::likeProfile"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/profiles/{user_id}/likes",
+        "scope":  "user",
+        "handler":  "UserSocial::unlikeProfile"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/following",
+        "scope":  "user",
+        "handler":  "UserSocial::following"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/followers",
+        "scope":  "user",
+        "handler":  "UserSocial::followers"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/blacklist",
+        "scope":  "user",
+        "handler":  "UserSocial::blacklist"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/blacklist/{user_id}",
+        "scope":  "user",
+        "handler":  "UserSocial::toggleBlacklist"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/notifications",
+        "scope":  "user",
+        "handler":  "UserSocial::notifications"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notifications/read-all",
+        "scope":  "user",
+        "handler":  "UserSocial::readAll"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notifications/groups/{group_key}/read",
+        "scope":  "user",
+        "handler":  "UserSocial::readNotificationGroup"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notifications/{notification_id}/read",
+        "scope":  "user",
+        "handler":  "UserSocial::readNotification"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/withdrawals",
+        "scope":  "user",
+        "handler":  "UserSocial::withdrawals"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/withdrawals",
+        "scope":  "user",
+        "handler":  "UserSocial::createWithdrawal"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/withdrawals/{withdrawal_id}/cancel",
+        "scope":  "user",
+        "handler":  "UserSocial::cancelWithdrawal"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/moments",
+        "scope":  "user",
+        "handler":  "UserMoment::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments",
+        "scope":  "user",
+        "handler":  "UserMoment::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/moments/{moment_id}",
+        "scope":  "user",
+        "handler":  "UserMoment::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/moments/{moment_id}",
+        "scope":  "user",
+        "handler":  "UserMoment::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/moments/{moment_id}",
+        "scope":  "user",
+        "handler":  "UserMoment::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/restore",
+        "scope":  "user",
+        "handler":  "UserMoment::restore"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/pin",
+        "scope":  "user",
+        "handler":  "UserMoment::setPin"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/like",
+        "scope":  "user",
+        "handler":  "UserMoment::toggleLike"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/moments/{moment_id}/likes",
+        "scope":  "user",
+        "handler":  "UserMoment::likes"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/moments/{moment_id}/comments",
+        "scope":  "user",
+        "handler":  "UserMoment::comments"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/comments",
+        "scope":  "user",
+        "handler":  "UserMoment::createComment"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/moments/{moment_id}/comments/{comment_id}",
+        "scope":  "user",
+        "handler":  "UserMoment::deleteComment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/favorite",
+        "scope":  "user",
+        "handler":  "UserMoment::toggleFavorite"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/forward",
+        "scope":  "user",
+        "handler":  "UserMoment::forward"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/notes",
+        "scope":  "user",
+        "handler":  "UserDocument::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notes",
+        "scope":  "user",
+        "handler":  "UserDocument::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/notes/{document_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/notes/{document_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::update"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notes/{document_id}/favorite",
+        "scope":  "user",
+        "handler":  "UserDocument::toggleFavorite"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/notes/{document_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/notes/{document_id}/share",
+        "scope":  "user",
+        "handler":  "UserDocument::currentShare"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/notes/{document_id}/share",
+        "scope":  "user",
+        "handler":  "UserDocument::share"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/note-shares/{share_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::cancelShare"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/note-folders",
+        "scope":  "user",
+        "handler":  "UserDocument::createFolder"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/note-folders/{folder_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::updateFolder"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/note-folders/{folder_id}",
+        "scope":  "user",
+        "handler":  "UserDocument::deleteFolder"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/resource-categories",
+        "scope":  "user",
+        "handler":  "UserResource::categories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/resource-submission-policy",
+        "scope":  "user",
+        "handler":  "UserResource::submissionPolicy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/resources",
+        "scope":  "user",
+        "handler":  "UserResource::resources"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/resources",
+        "scope":  "user",
+        "handler":  "UserResource::submit"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/resources/{resource_id}",
+        "scope":  "user",
+        "handler":  "UserResource::showResource"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/resources/{resource_id}/buy",
+        "scope":  "user",
+        "handler":  "UserResource::buy"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/resources/{resource_id}/comments",
+        "scope":  "user",
+        "handler":  "UserResource::comment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/resources/{resource_id}/rating",
+        "scope":  "user",
+        "handler":  "UserResource::rating"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/resources/{resource_id}/reactions",
+        "scope":  "user",
+        "handler":  "UserResource::resourceReaction"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/favorites/resources",
+        "scope":  "user",
+        "handler":  "UserResource::favoriteResources"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/favorites",
+        "scope":  "user",
+        "handler":  "UserFavorite::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/reward-rules",
+        "scope":  "user",
+        "handler":  "UserReward::rules"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/reward-events",
+        "scope":  "user",
+        "handler":  "UserReward::events"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/store-categories",
+        "scope":  "user",
+        "handler":  "UserResource::storeCategories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/store-submission-policy",
+        "scope":  "user",
+        "handler":  "UserResource::storeSubmissionPolicy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/store-apps",
+        "scope":  "user",
+        "handler":  "UserResource::storeApps"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/store-apps",
+        "scope":  "user",
+        "handler":  "UserResource::submitStoreApp"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/store-apps/{store_app_id}",
+        "scope":  "user",
+        "handler":  "UserResource::showStoreApp"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/store-apps/{store_app_id}/reactions",
+        "scope":  "user",
+        "handler":  "UserResource::storeReaction"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/favorites/store-apps",
+        "scope":  "user",
+        "handler":  "UserResource::favoriteStoreApps"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/favorites/uploads",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::favoriteUploads"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-plates",
+        "scope":  "user",
+        "handler":  "UserForum::plates"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-categories",
+        "scope":  "user",
+        "handler":  "UserForumStructure::categories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-tags",
+        "scope":  "user",
+        "handler":  "UserForumStructure::tags"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-structure-requests",
+        "scope":  "user",
+        "handler":  "UserForumStructure::requests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-structure-requests",
+        "scope":  "user",
+        "handler":  "UserForumStructure::createRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts",
+        "scope":  "user",
+        "handler":  "UserForum::posts"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts",
+        "scope":  "user",
+        "handler":  "UserForum::createPost"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/mine",
+        "scope":  "user",
+        "handler":  "UserForum::myPosts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/purchased",
+        "scope":  "user",
+        "handler":  "UserForum::purchasedPosts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/following",
+        "scope":  "user",
+        "handler":  "UserForum::followingPosts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/liked",
+        "scope":  "user",
+        "handler":  "UserForum::likedPosts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-report-tags",
+        "scope":  "user",
+        "handler":  "UserForum::reportTags"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-reports",
+        "scope":  "user",
+        "handler":  "UserForum::myReports"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/{post_id}",
+        "scope":  "user",
+        "handler":  "UserForum::showPost"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-posts/{post_id}",
+        "scope":  "user",
+        "handler":  "UserForum::updatePost"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/forum-posts/{post_id}",
+        "scope":  "user",
+        "handler":  "UserForum::deletePost"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/comments",
+        "scope":  "user",
+        "handler":  "UserForum::comment"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/{post_id}/comments",
+        "scope":  "user",
+        "handler":  "UserForum::comments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-posts/{post_id}/likes",
+        "scope":  "user",
+        "handler":  "UserForum::likes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/like",
+        "scope":  "user",
+        "handler":  "UserForum::like"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/favorite",
+        "scope":  "user",
+        "handler":  "UserForum::favorite"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-favorites",
+        "scope":  "user",
+        "handler":  "UserForum::favorites"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/forum-history",
+        "scope":  "user",
+        "handler":  "UserForum::history"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/reward",
+        "scope":  "user",
+        "handler":  "UserForum::reward"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-posts/{post_id}/paid-content",
+        "scope":  "user",
+        "handler":  "UserForum::setPaidContent"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/paid-content/buy",
+        "scope":  "user",
+        "handler":  "UserForum::buyPaidContent"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/sections",
+        "scope":  "user",
+        "handler":  "UserForum::createSection"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-posts/{post_id}/sections/reorder",
+        "scope":  "user",
+        "handler":  "UserForum::reorderSections"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-posts/{post_id}/sections/{section_id}",
+        "scope":  "user",
+        "handler":  "UserForum::updateSection"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/forum-posts/{post_id}/sections/{section_id}",
+        "scope":  "user",
+        "handler":  "UserForum::deleteSection"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-posts/{post_id}/sections/{section_id}/buy",
+        "scope":  "user",
+        "handler":  "UserForum::buySection"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-content/{target_type}/{target_id}/like",
+        "scope":  "user",
+        "handler":  "UserForum::contentLike"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-content/{target_type}/{target_id}/favorite",
+        "scope":  "user",
+        "handler":  "UserForum::contentFavorite"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-posts/{post_id}/comments/{comment_id}/pin",
+        "scope":  "user",
+        "handler":  "UserForum::pinComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/forum-personal/{target_type}/{target_id}/position",
+        "scope":  "user",
+        "handler":  "UserForum::personalPosition"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/forum-content/{target_type}/{target_id}/forward",
+        "scope":  "user",
+        "handler":  "UserForum::forwardContent"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/reports",
+        "scope":  "user",
+        "handler":  "UserForum::report"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/bounty-categories",
+        "scope":  "user",
+        "handler":  "UserBounty::categories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/bounty-category-requests",
+        "scope":  "user",
+        "handler":  "UserBounty::categoryRequests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounty-category-requests",
+        "scope":  "user",
+        "handler":  "UserBounty::createCategoryRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/bounties",
+        "scope":  "user",
+        "handler":  "UserBounty::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounties",
+        "scope":  "user",
+        "handler":  "UserBounty::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/bounties/{bounty_id}",
+        "scope":  "user",
+        "handler":  "UserBounty::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounties/{bounty_id}/submissions",
+        "scope":  "user",
+        "handler":  "UserBounty::submit"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounties/{bounty_id}/award",
+        "scope":  "user",
+        "handler":  "UserBounty::award"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounties/{bounty_id}/cancel",
+        "scope":  "user",
+        "handler":  "UserBounty::cancel"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bounties/{bounty_id}/reactions",
+        "scope":  "user",
+        "handler":  "UserBounty::reaction"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/audio/transcriptions",
+        "scope":  "user",
+        "handler":  "UserSpeech::transcribe"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/sticker-packs",
+        "scope":  "user",
+        "handler":  "UserSticker::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/sticker-packs",
+        "scope":  "user",
+        "handler":  "UserSticker::createPack"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/sticker-packs/{pack_id}",
+        "scope":  "user",
+        "handler":  "UserSticker::updatePack"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/sticker-packs/{pack_id}",
+        "scope":  "user",
+        "handler":  "UserSticker::deletePack"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/sticker-packs/{pack_id}/stickers",
+        "scope":  "user",
+        "handler":  "UserSticker::addSticker"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/sticker-packs/{pack_id}/stickers/batch",
+        "scope":  "user",
+        "handler":  "UserSticker::batchAdd"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/sticker-packs/{pack_id}/stickers/batch",
+        "scope":  "user",
+        "handler":  "UserSticker::batchDelete"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/sticker-packs/{pack_id}/stickers/{sticker_id}",
+        "scope":  "user",
+        "handler":  "UserSticker::deleteSticker"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/cloud-sync/policy",
+        "scope":  "user",
+        "handler":  "UserCloudSync::policy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/cloud-sync/snapshots",
+        "scope":  "user",
+        "handler":  "UserCloudSync::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/cloud-sync/snapshots",
+        "scope":  "user",
+        "handler":  "UserCloudSync::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/cloud-sync/snapshots/{snapshot_id}",
+        "scope":  "user",
+        "handler":  "UserCloudSync::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/cloud-sync/snapshots/{snapshot_id}/restore",
+        "scope":  "user",
+        "handler":  "UserCloudSync::restore"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/cloud-sync/snapshots/{snapshot_id}",
+        "scope":  "user",
+        "handler":  "UserCloudSync::delete"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-records/cleanup",
+        "scope":  "user",
+        "handler":  "UserCloudSync::cleanupChat"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/messages/unread",
+        "scope":  "user",
+        "handler":  "UserCommunication::unread"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/voice-calls",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::create"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/voice-calls/incoming",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::incoming"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/voice-calls/{call_id}",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/voice-calls/{call_id}/answer",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::answer"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/voice-calls/{call_id}/decline",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::decline"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/voice-calls/{call_id}/hangup",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::hangup"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/voice-calls/{call_id}/signals",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::signal"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/voice-calls/{call_id}/signals",
+        "scope":  "user",
+        "handler":  "UserVoiceCall::signals"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/message-center",
+        "scope":  "user",
+        "handler":  "UserCommunication::messageCenter"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/message-center/{target_type}/{target_id}/preference",
+        "scope":  "user",
+        "handler":  "UserCommunication::saveConversationPreference"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/message-settings",
+        "scope":  "user",
+        "handler":  "UserCommunication::messageSettings"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/message-settings",
+        "scope":  "user",
+        "handler":  "UserCommunication::saveMessageSettings"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/messages/system",
+        "scope":  "user",
+        "handler":  "UserCommunication::systemMessages"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/messages/private",
+        "scope":  "user",
+        "handler":  "UserCommunication::privateMessage"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/conversations",
+        "scope":  "user",
+        "handler":  "UserCommunication::conversations"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/conversations/{conversation_id}/messages",
+        "scope":  "user",
+        "handler":  "UserCommunication::conversationMessages"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/messages/{message_id}/state",
+        "scope":  "user",
+        "handler":  "UserCommunication::messageState"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/communication/{scope_type}/{target_id}/messages/{message_id}/state",
+        "scope":  "user",
+        "handler":  "UserCommunication::communicationMessageState"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/messages/{message_id}/recall",
+        "scope":  "user",
+        "handler":  "UserCommunication::recallMessage"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/messages/{message_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::editMessage"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/messages/{message_id}/edits",
+        "scope":  "user",
+        "handler":  "UserCommunication::messageEditHistory"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/message-forwards",
+        "scope":  "user",
+        "handler":  "UserCommunication::forwardMessages"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/message-forwards/{forward_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::forwardBundle"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-search",
+        "scope":  "user",
+        "handler":  "UserCommunication::searchMessages"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-search/history",
+        "scope":  "user",
+        "handler":  "UserCommunication::searchHistory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-search/history",
+        "scope":  "user",
+        "handler":  "UserCommunication::clearSearchHistory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/messages/favorites",
+        "scope":  "user",
+        "handler":  "UserCommunication::favoriteMessages"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/relationship-notices",
+        "scope":  "user",
+        "handler":  "UserCommunication::relationshipNotices"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/drafts/{target_type}/{target_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::draft"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/drafts/{target_type}/{target_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::saveDraft"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/drafts/{target_type}/{target_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::deleteDraft"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/friends/requests",
+        "scope":  "user",
+        "handler":  "UserCommunication::friendRequests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friends/requests",
+        "scope":  "user",
+        "handler":  "UserCommunication::sendFriendRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/friends/qr-code",
+        "scope":  "user",
+        "handler":  "UserCommunication::friendQrCode"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friends/scan-qr",
+        "scope":  "user",
+        "handler":  "UserCommunication::scanFriendQr"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friends/requests/{request_id}/accept",
+        "scope":  "user",
+        "handler":  "UserCommunication::acceptFriendRequest"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friends/requests/{request_id}/reject",
+        "scope":  "user",
+        "handler":  "UserCommunication::rejectFriendRequest"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friends/requests/{request_id}/ignore",
+        "scope":  "user",
+        "handler":  "UserCommunication::ignoreFriendRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/friends",
+        "scope":  "user",
+        "handler":  "UserCommunication::friends"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/friend-groups",
+        "scope":  "user",
+        "handler":  "UserCommunication::friendGroups"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/friend-groups",
+        "scope":  "user",
+        "handler":  "UserCommunication::createFriendGroup"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/friend-groups/{group_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::updateFriendGroup"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/friend-groups/{group_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::deleteFriendGroup"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/friends/{friend_user_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::updateFriend"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/friends/{friend_user_id}",
+        "scope":  "user",
+        "handler":  "UserCommunication::deleteFriend"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-room-groups",
+        "scope":  "user",
+        "handler":  "UserGroup::userGroups"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-room-groups",
+        "scope":  "user",
+        "handler":  "UserGroup::createUserGroup"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-room-groups/{group_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::updateUserGroup"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-room-groups/{group_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteUserGroup"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms",
+        "scope":  "user",
+        "handler":  "UserGroup::index"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms",
+        "scope":  "user",
+        "handler":  "UserGroup::create"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/scan-qr",
+        "scope":  "user",
+        "handler":  "UserGroup::scanQr"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/scan-qr/join",
+        "scope":  "user",
+        "handler":  "UserGroup::joinQr"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/dissolved",
+        "scope":  "user",
+        "handler":  "UserGroup::dissolved"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/qr-code",
+        "scope":  "user",
+        "handler":  "UserGroup::qrCode"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-rooms/{room_id}/user-settings",
+        "scope":  "user",
+        "handler":  "UserGroup::saveUserSettings"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-rooms/{room_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::update"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::dissolve"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/restore",
+        "scope":  "user",
+        "handler":  "UserGroup::restore"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/join",
+        "scope":  "user",
+        "handler":  "UserGroup::join"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/leave",
+        "scope":  "user",
+        "handler":  "UserGroup::leave"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/members",
+        "scope":  "user",
+        "handler":  "UserGroup::members"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-rooms/{room_id}/members/{user_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::updateMember"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-rooms/{room_id}/members/{user_id}/mute",
+        "scope":  "user",
+        "handler":  "UserGroup::muteMember"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/members/{user_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::removeMember"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/transfer",
+        "scope":  "user",
+        "handler":  "UserGroup::transfer"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/invitations",
+        "scope":  "user",
+        "handler":  "UserGroup::invite"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-room-invitations",
+        "scope":  "user",
+        "handler":  "UserGroup::invitations"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-room-invitations/{invitation_id}/accept",
+        "scope":  "user",
+        "handler":  "UserGroup::acceptInvitation"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-room-invitations/{invitation_id}/reject",
+        "scope":  "user",
+        "handler":  "UserGroup::rejectInvitation"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-room-invitations/{invitation_id}/ignore",
+        "scope":  "user",
+        "handler":  "UserGroup::ignoreInvitation"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/join-requests",
+        "scope":  "user",
+        "handler":  "UserGroup::joinRequests"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/join-requests/{request_id}/approve",
+        "scope":  "user",
+        "handler":  "UserGroup::approveJoinRequest"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/join-requests/{request_id}/reject",
+        "scope":  "user",
+        "handler":  "UserGroup::rejectJoinRequest"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/join-requests/{request_id}/ignore",
+        "scope":  "user",
+        "handler":  "UserGroup::ignoreJoinRequest"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/messages",
+        "scope":  "user",
+        "handler":  "UserGroup::messages"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/messages",
+        "scope":  "user",
+        "handler":  "UserGroup::sendMessage"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/chat-rooms/{room_id}/messages/{message_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::editMessage"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/messages/{message_id}/edits",
+        "scope":  "user",
+        "handler":  "UserGroup::messageEditHistory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/messages/{message_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteMessage"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/read",
+        "scope":  "user",
+        "handler":  "UserGroup::markRead"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/files",
+        "scope":  "user",
+        "handler":  "UserGroup::files"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/files",
+        "scope":  "user",
+        "handler":  "UserGroup::addFile"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/files/{file_id}/download",
+        "scope":  "user",
+        "handler":  "UserGroup::recordFileDownload"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/files/{file_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteFile"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/albums",
+        "scope":  "user",
+        "handler":  "UserGroup::albums"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/albums",
+        "scope":  "user",
+        "handler":  "UserGroup::createAlbum"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/albums/{album_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteAlbum"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/albums/{album_id}/photos",
+        "scope":  "user",
+        "handler":  "UserGroup::addPhoto"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/albums/{album_id}/photos/{photo_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deletePhoto"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/votes",
+        "scope":  "user",
+        "handler":  "UserGroup::groupVotes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/votes",
+        "scope":  "user",
+        "handler":  "UserGroup::createGroupVote"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/votes/{vote_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::showGroupVote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/votes/{vote_id}/submit",
+        "scope":  "user",
+        "handler":  "UserGroup::submitGroupVote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/votes/{vote_id}/close",
+        "scope":  "user",
+        "handler":  "UserGroup::closeGroupVote"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/votes/{vote_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteGroupVote"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires",
+        "scope":  "user",
+        "handler":  "UserGroup::solitaires"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires",
+        "scope":  "user",
+        "handler":  "UserGroup::createSolitaire"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires/{solitaire_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::showSolitaire"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires/{solitaire_id}/join",
+        "scope":  "user",
+        "handler":  "UserGroup::joinSolitaire"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires/{solitaire_id}/close",
+        "scope":  "user",
+        "handler":  "UserGroup::closeSolitaire"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/chat-rooms/{room_id}/solitaires/{solitaire_id}",
+        "scope":  "user",
+        "handler":  "UserGroup::deleteSolitaire"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/service/session",
+        "scope":  "user",
+        "handler":  "UserCommunication::serviceSession"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/service/messages",
+        "scope":  "user",
+        "handler":  "UserCommunication::serviceMessages"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/service/messages",
+        "scope":  "user",
+        "handler":  "UserCommunication::sendServiceMessage"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/cards/redeem",
+        "scope":  "user",
+        "handler":  "UserCard::redeem"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/cards/redeem-logs",
+        "scope":  "user",
+        "handler":  "UserCard::logs"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/orders",
+        "scope":  "user",
+        "handler":  "UserShop::orders"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/orders/{order_source}/{order_id}",
+        "scope":  "user",
+        "handler":  "UserShop::order"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/orders/{order_source}/{order_id}/cancel",
+        "scope":  "user",
+        "handler":  "UserShop::cancelOrder"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/orders/{order_id}/cancel",
+        "scope":  "user",
+        "handler":  "UserCommerce::cancelOrder"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/shop-categories",
+        "scope":  "user",
+        "handler":  "UserShop::categories"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/shop-goods",
+        "scope":  "user",
+        "handler":  "UserShop::goods"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/shop-goods/{goods_id}",
+        "scope":  "user",
+        "handler":  "UserShop::showGoods"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-goods/{goods_id}/buy",
+        "scope":  "user",
+        "handler":  "UserShop::buy"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/shop-goods/{goods_id}/comments",
+        "scope":  "user",
+        "handler":  "UserShop::comments"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-goods/{goods_id}/comments",
+        "scope":  "user",
+        "handler":  "UserShop::createComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/shop-comments/{comment_id}",
+        "scope":  "user",
+        "handler":  "UserShop::updateComment"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/shop-comments/{comment_id}",
+        "scope":  "user",
+        "handler":  "UserShop::deleteComment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-comments/{comment_id}/reactions",
+        "scope":  "user",
+        "handler":  "UserShop::commentReaction"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-goods/{goods_id}/reactions",
+        "scope":  "user",
+        "handler":  "UserShop::reaction"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-goods/{goods_id}/forward",
+        "scope":  "user",
+        "handler":  "UserShop::forward"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/shop-goods/{goods_id}/recommend",
+        "scope":  "user",
+        "handler":  "UserShop::recommend"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/favorites/shop-goods",
+        "scope":  "user",
+        "handler":  "UserShop::favorites"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/red-packets",
+        "scope":  "user",
+        "handler":  "UserCommerce::redPackets"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/red-packets",
+        "scope":  "user",
+        "handler":  "UserCommerce::createRedPacket"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/red-packets/{packet_id}",
+        "scope":  "user",
+        "handler":  "UserCommerce::redPacketDetail"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/red-packets/{packet_id}/claim",
+        "scope":  "user",
+        "handler":  "UserCommerce::claimRedPacket"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/red-packets/{packet_id}/refund",
+        "scope":  "user",
+        "handler":  "UserCommerce::refundRedPacket"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/transfers",
+        "scope":  "user",
+        "handler":  "UserCommerce::transfers"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/transfers",
+        "scope":  "user",
+        "handler":  "UserCommerce::createTransfers"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/transfers/{transfer_id}",
+        "scope":  "user",
+        "handler":  "UserCommerce::transferDetail"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/transfers/{transfer_id}/accept",
+        "scope":  "user",
+        "handler":  "UserCommerce::acceptTransfer"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/transfers/{transfer_id}/refund",
+        "scope":  "user",
+        "handler":  "UserCommerce::refundTransfer"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/gift-catalog",
+        "scope":  "user",
+        "handler":  "UserCommerce::giftCatalog"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/gifts",
+        "scope":  "user",
+        "handler":  "UserCommerce::gifts"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/gifts",
+        "scope":  "user",
+        "handler":  "UserCommerce::createGifts"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/gifts/{gift_id}",
+        "scope":  "user",
+        "handler":  "UserCommerce::giftDetail"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/gifts/{gift_id}/accept",
+        "scope":  "user",
+        "handler":  "UserCommerce::acceptGift"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/gifts/{gift_id}/refund",
+        "scope":  "user",
+        "handler":  "UserCommerce::refundGift"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/lottery-prizes",
+        "scope":  "user",
+        "handler":  "UserCommerce::lotteryPrizes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/lottery/draw",
+        "scope":  "user",
+        "handler":  "UserCommerce::drawLottery"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/votes",
+        "scope":  "user",
+        "handler":  "UserCommerce::votes"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/votes/{vote_id}/submit",
+        "scope":  "user",
+        "handler":  "UserCommerce::submitVote"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/poll-categories",
+        "scope":  "user",
+        "handler":  "UserPoll::categories"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/poll-categories",
+        "scope":  "user",
+        "handler":  "UserPoll::createCategory"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/user/poll-categories/{category_id}",
+        "scope":  "user",
+        "handler":  "UserPoll::updateCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/poll-categories/{category_id}",
+        "scope":  "user",
+        "handler":  "UserPoll::deleteCategory"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/polls",
+        "scope":  "user",
+        "handler":  "UserPoll::polls"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/polls",
+        "scope":  "user",
+        "handler":  "UserPoll::createPoll"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/polls/{poll_id}",
+        "scope":  "user",
+        "handler":  "UserPoll::show"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/polls/{poll_id}/vote",
+        "scope":  "user",
+        "handler":  "UserPoll::vote"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/polls/{poll_id}/close",
+        "scope":  "user",
+        "handler":  "UserPoll::close"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/polls/{poll_id}",
+        "scope":  "user",
+        "handler":  "UserPoll::delete"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/remote-files",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::files"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/remote-files/{file_id}",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::showFile"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/uploads",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::uploads"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/uploads",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::upload"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/uploads/{upload_id}",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::deleteUpload"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/uploads/{upload_id}/favorite",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::favoriteUpload"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/feedbacks",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::createFeedback"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/feedbacks",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::feedbacks"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/bot/ask",
+        "scope":  "user",
+        "handler":  "UserFileFeedback::botAsk"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/ai/conversations",
+        "scope":  "user",
+        "handler":  "UserAiConversation::index"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/ai/conversations/{conversation_id}/messages",
+        "scope":  "user",
+        "handler":  "UserAiConversation::messages"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/user/ai/conversations/{conversation_id}",
+        "scope":  "user",
+        "handler":  "UserAiConversation::delete"
+    }
+]

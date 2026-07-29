@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1769E0</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#E8F1FF</color>
+    <color name="on_primary_container">#123A72</color>
+    <color name="secondary">#4B78B8</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="secondary_container">#EAF2FF</color>
+    <color name="on_secondary_container">#254A7A</color>
+    <color name="tertiary">#476DA5</color>
+    <color name="error">#BA1A1A</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_container">#F5F8FC</color>
+    <color name="surface_container_high">#EAF0F7</color>
+    <color name="glass_surface">#E8FFFFFF</color>
+    <color name="glass_surface_strong">#F5FFFFFF</color>
+    <color name="glass_outline">#80C4CFDD</color>
+    <color name="on_surface">#17243A</color>
+    <color name="on_surface_variant">#5B687A</color>
+    <color name="outline">#AAB7C8</color>
+    <color name="outline_variant">#D6DEE9</color>
+    <color name="success">#238A57</color>
+    <color name="warning">#9B5B00</color>
+    <color name="white">#FFFFFF</color>
+    <color name="transparent">#00000000</color>
+    <color name="accent_blue">#1769E0</color>
+    <color name="accent_blue_container">#E8F1FF</color>
+    <color name="on_accent_blue_container">#123A72</color>
+    <color name="accent_teal">#00796B</color>
+    <color name="accent_teal_container">#D7F4EF</color>
+    <color name="on_accent_teal_container">#063F38</color>
+    <color name="accent_rose">#A83968</color>
+    <color name="accent_rose_container">#FFE8F0</color>
+    <color name="on_accent_rose_container">#66113A</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="tag_dialog_card_animated" type="id" />
+    <item name="tag_dialog_appearance_applied" type="id" />
+    <item name="tag_dialog_safe_insets" type="id" />
+    <item name="tag_glass_action_button_styled" type="id" />
+    <item name="tag_runtime_localized_text" type="id" />
+    <item name="tag_runtime_localized_hint" type="id" />
+    <item name="tag_runtime_dynamic_text" type="id" />
+</resources>

@@ -1,0 +1,22 @@
+<VirtualHost *:80>
+    ServerName appht.jjmxg.xyz
+    DocumentRoot "/www/wwwroot/appht.jjmxg.xyz/yiyunying-backend/public"
+
+    <Directory "/www/wwwroot/appht.jjmxg.xyz/yiyunying-backend/public">
+        Options -Indexes
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    SetEnv APP_ENV production
+    SetEnv APP_DEBUG false
+    SetEnv APP_URL http://appht.jjmxg.xyz
+    SetEnv DB_HOST 127.0.0.1
+    SetEnv DB_PORT 3306
+    SetEnv DB_NAME appht
+    SetEnv DB_USER appht
+    SetEnv DB_PASSWORD appht
+
+    ErrorLog ${APACHE_LOG_DIR}/appht-error.log
+    CustomLog ${APACHE_LOG_DIR}/appht-access.log combined
+</VirtualHost>

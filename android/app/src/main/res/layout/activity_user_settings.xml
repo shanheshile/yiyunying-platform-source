@@ -1,0 +1,897 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:title="设置"
+        app:navigationIcon="@drawable/ic_back" />
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:visibility="invisible" />
+
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/settingsScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="28dp">
+
+            <LinearLayout
+                android:id="@+id/categoryList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="12dp"
+                    android:text="设置中心"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="10dp"
+                    android:text="账号、隐私、通知和存储集中管理"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                    android:textColor="@color/on_surface_variant" />
+
+                <LinearLayout
+                    android:id="@+id/categoryAppearanceButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="外观与显示"
+                        android:src="@drawable/ic_settings"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="外观与显示"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="主题模式与界面显示"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/categoryPrivacyButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="消息与隐私"
+                        android:src="@drawable/ic_chat"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="消息与隐私"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="好友申请、陌生消息与黑名单"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/categoryDynamicButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="动态展示"
+                        android:src="@drawable/ic_content"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="动态展示"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="笔记、帖子、悬赏、关注与粉丝可见范围"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/categoryNotificationButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="通知、来电与后台"
+                        android:src="@drawable/ic_settings"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="通知、来电与后台"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="消息提醒、通话权限与后台存活"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/categoryAccountButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="账号与安全"
+                        android:src="@drawable/ic_person"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="账号与安全"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="找回密码、账号安全与退出登录"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/categoryStorageButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="存储与软件"
+                        android:src="@drawable/ic_file"
+                        app:tint="?attr/colorPrimary" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="存储与软件"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="缓存、拍摄保存、版本与维护"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="进入"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="@color/on_surface_variant" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dynamicPrivacyGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="4dp"
+                    android:text="谁能在我的主页看到这些内容"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingBottom="8dp"
+                    android:text="关闭某项后，其他用户只能看到你允许公开的基础资料；平台管理范围内的审核权限不受影响。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="开放我的动态主页" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dynamicVisibilityModeButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="start|center_vertical"
+                    android:text="默认可见对象：所有人" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dynamicVisibleDaysButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="start|center_vertical"
+                    android:text="默认可见时间：永久" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/dynamicAllowUsersLayout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="只允许这些用户：UID 或账号"
+                    android:visibility="gone">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/dynamicAllowUsersInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:maxLines="3" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/dynamicDenyUsersLayout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="不允许这些用户：UID 或账号"
+                    android:visibility="gone">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/dynamicDenyUsersInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:maxLines="3" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/profileNotesVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="展示笔记动态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/profileForumVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="展示论坛帖子与互动" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/profileBountiesVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="展示悬赏发布与参与" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/profileFollowingVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="展示我的关注列表" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/profileFollowersVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="展示我的粉丝列表" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="4dp"
+                    android:text="可见对象"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicVisibleToFriends"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="好友可以查看动态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicVisibleToFollowers"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="关注我的用户可以查看动态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicVisibleToStrangers"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="陌生人可以查看动态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicVisibleToHiddenContacts"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="隐藏会话联系人可以查看动态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dynamicVisibleToSpecialCare"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="特别关心联系人可以查看动态" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dynamicSaveButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginTop="12dp"
+                    android:text="保存动态展示设置" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/appearanceGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:text="外观与显示"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/themeButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="外观：跟随系统"
+                    app:icon="@drawable/ic_settings" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/languageButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="界面语言：简体中文"
+                    app:icon="@drawable/ic_content" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/accentColorButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="软件主色：易运盈蓝"
+                    app:icon="@drawable/ic_apps" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/chatBackgroundButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="全局聊天背景：默认"
+                    app:icon="@drawable/ic_album" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/fontButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="字体：系统默认"
+                    app:icon="@drawable/ic_content" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/appIconButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="桌面图标：默认"
+                    app:icon="@drawable/ic_logo_foreground" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/privacyGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:text="消息与隐私"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/relationshipNoticeButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="好友与群聊申请管理"
+                    app:icon="@drawable/ic_users" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/friendDirectoryButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="好友列表与分组"
+                    app:icon="@drawable/ic_person" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/hiddenConversationButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="隐藏会话"
+                    app:icon="@drawable/ic_more" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="4dp"
+                    android:text="添加我的方式"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowCardAdd"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过名片添加我" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowQrAdd"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过好友码或二维码添加我" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowUidSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过 UID 或账号名称找到我" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowPhoneSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过已绑定手机号找到我" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowEmailSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过已绑定邮箱找到我" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowGroupMemberAdd"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许通过群成员列表添加我" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="4dp"
+                    android:text="申请与会话权限"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowFriendRequests"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许其他用户申请加我为好友" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/acceptStrangerMessages"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="接收陌生人消息" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/allowGroupInvitations"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="允许其他用户邀请我加入群聊" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/showOnlineStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="向其他用户显示在线状态" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/readReceiptsEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="发送和接收消息已读状态" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="撤回消息提示后缀"
+                    app:helperText="最多 6 个字，例如：并坏笑了一下">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/recallSuffix"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:maxLength="6"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/saveButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginTop="12dp"
+                    android:text="保存消息与隐私设置" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/notificationGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:text="通知、来电与后台"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/systemNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="系统与客服通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/privateNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="私聊消息通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/groupNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="群聊消息通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/roomNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="聊天室消息通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/forumNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="论坛互动通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/bountyNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="悬赏进度与互动通知" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/mentionNotifications"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="被 @ 时强提醒" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="4dp"
+                    android:text="通知呈现"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/notificationPreviewEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="通知栏显示消息预览" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/notificationSoundEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="播放通知提示音" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/notificationVibrationEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="收到通知时振动" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/systemPermissionButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:gravity="start|center_vertical"
+                    android:text="通知、来电与后台运行权限"
+                    app:icon="@drawable/ic_settings" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/notificationSaveButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginTop="12dp"
+                    android:text="保存通知设置" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/accountGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:text="账号与安全"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/remoteLoginProtection"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="异地登录保护" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:text="开启后，新设备或异常网络登录会生成安全提醒并记录设备与地址；关闭后仍保留登录记录。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/forgotPasswordButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="找回或重置密码"
+                    app:icon="@drawable/ic_person" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/blacklistButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="黑名单管理"
+                    app:icon="@drawable/ic_users" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/permissionCenterButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="我的权限与限制"
+                    app:icon="@drawable/ic_settings" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/storageGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:text="存储与软件"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/saveCaptureToGallery"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="拍照或录像后保存到系统相册"
+                    app:icon="@drawable/ic_camera" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="8dp"
+                    android:text="关闭后，拍摄内容只保存在应用缓存中用于发送，不会写入系统相册；清理缓存时会一并删除。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/cacheButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="存储、下载与缓存"
+                    app:icon="@drawable/ic_file" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/updateButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="软件更新与维护状态"
+                    app:icon="@drawable/ic_refresh" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</LinearLayout>

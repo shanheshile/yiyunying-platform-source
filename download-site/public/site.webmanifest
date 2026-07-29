@@ -1,0 +1,16 @@
+{
+  "name": "易运盈官方下载中心",
+  "short_name": "易运盈下载",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#176b5b",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

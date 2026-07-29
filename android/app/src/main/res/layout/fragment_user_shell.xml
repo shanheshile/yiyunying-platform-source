@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/topActions"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <ImageButton
+            android:id="@+id/menuButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="打开功能菜单"
+            android:padding="12dp"
+            android:src="@drawable/ic_menu"
+            android:tooltipText="功能菜单" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/searchLayout"
+            style="@style/Widget.Material3.TextInputLayout.FilledBox.Dense"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_marginHorizontal="4dp"
+            android:layout_weight="1"
+            app:boxBackgroundColor="@color/surface_container"
+            app:boxCornerRadiusBottomEnd="8dp"
+            app:boxCornerRadiusBottomStart="8dp"
+            app:boxCornerRadiusTopEnd="8dp"
+            app:boxCornerRadiusTopStart="8dp"
+            app:endIconDrawable="@drawable/ic_search"
+            app:endIconMode="custom">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/searchInput"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textSize="15sp" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <ImageButton
+            android:id="@+id/notesButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="我的笔记"
+            android:padding="12dp"
+            android:src="@drawable/ic_document"
+            android:tooltipText="我的笔记" />
+
+        <ImageButton
+            android:id="@+id/primaryAction"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="页面操作"
+            android:padding="12dp"
+            android:src="@drawable/ic_add" />
+    </LinearLayout>
+
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/pager"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottomNavigation"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_dock_height"
+        android:minHeight="0dp"
+        android:background="@color/glass_surface_strong"
+        android:elevation="8dp"
+        app:itemActiveIndicatorStyle="@style/Widget.Material3.BottomNavigationView.ActiveIndicator"
+        app:itemIconSize="24dp"
+        app:itemIconTint="@color/bottom_navigation_tint"
+        app:itemTextAppearanceActive="@style/TextAppearance.Yiyunying.BottomNavigation.Active"
+        app:itemTextAppearanceInactive="@style/TextAppearance.Yiyunying.BottomNavigation.Inactive"
+        app:itemTextColor="@color/bottom_navigation_tint"
+        app:labelVisibilityMode="labeled"
+        app:menu="@menu/user_bottom_navigation" />
+</LinearLayout>

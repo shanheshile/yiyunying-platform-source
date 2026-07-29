@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="104dp"
+    android:layout_margin="2dp"
+    android:background="@color/surface_container_high"
+    android:foreground="?attr/selectableItemBackground">
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/mediaImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="动态媒体"
+        android:scaleType="centerCrop"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small"
+        app:srcCompat="@drawable/ic_album" />
+
+    <ImageView
+        android:id="@+id/videoBadge"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_media_play"
+        android:contentDescription="视频"
+        android:padding="7dp"
+        android:src="@drawable/ic_play"
+        android:visibility="gone"
+        app:tint="@android:color/white" />
+</FrameLayout>

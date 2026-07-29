@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "versionName": "2.7.2",
+  "versionCode": 47,
+  "releaseDate": "2026-07-29",
+  "generatedAt": "2026-07-29T00:00:00+08:00",
+  "downloadRootBase": "http://127.0.0.1:8788/downloads",
+  "releaseNotes": "统一四端版本、底部 Dock 与弹层；修复消息、收藏、帖子、订单和媒体相关异常。",
+  "releases": [
+    {
+      "id": "user",
+      "name": "易运盈用户端",
+      "shortName": "用户端",
+      "audience": "普通用户",
+      "description": "面向普通用户的聊天、动态、论坛、活动与个人中心客户端。",
+      "fileName": "yiyunying-user-v2.7.2-debug.apk",
+      "sizeBytes": 96347454,
+      "size": "91.88 MB",
+      "sha256": "F45746B1C68C24541F4EB51131534F8A0C03E3807D94DE07ABD5EAE95C03BFB4",
+      "accent": "#2563EB"
+    },
+    {
+      "id": "admin",
+      "name": "易运盈管理员",
+      "shortName": "管理员",
+      "audience": "管理员",
+      "description": "面向管理员的内容审核、用户管理、通知与运营管理客户端。",
+      "fileName": "yiyunying-admin-v2.7.2-debug.apk",
+      "sizeBytes": 31962238,
+      "size": "30.48 MB",
+      "sha256": "25BB82B5AF76F653EB0001F9C89193EDD1CD2EA12C2F86BB932DFD2E7CA46102",
+      "accent": "#0F766E"
+    },
+    {
+      "id": "authorized",
+      "name": "易运盈授权平台",
+      "shortName": "授权平台",
+      "audience": "授权运营方",
+      "description": "面向授权运营方的应用、下级账号、资源与业务管理客户端。",
+      "fileName": "yiyunying-authorized-platform-v2.7.2-debug.apk",
+      "sizeBytes": 31962246,
+      "size": "30.48 MB",
+      "sha256": "671FFEB684107C7821DCA6A0E2C59C02BF107370A5383B2990D9E9D782472281",
+      "accent": "#7C3AED"
+    },
+    {
+      "id": "owner",
+      "name": "易运盈平台总控",
+      "shortName": "平台总控",
+      "audience": "平台所有者",
+      "description": "面向平台所有者的全局配置、授权、审计与系统管理客户端。",
+      "fileName": "yiyunying-platform-owner-v2.7.2-debug.apk",
+      "sizeBytes": 31962246,
+      "size": "30.48 MB",
+      "sha256": "A9BE78AE0D2973A74D9E29ECFFA5F1A27DA4FF0BC7CF19D7A0CDA1387E6458A9",
+      "accent": "#B45309"
+    }
+  ]
+}

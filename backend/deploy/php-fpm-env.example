@@ -1,0 +1,59 @@
+; 将这些配置写入实际使用的 PHP-FPM pool，例如 /etc/php/8.2/fpm/pool.d/appht.conf。
+; 数据库密码和签名密钥必须替换成生产环境真实值。
+clear_env = no
+env[APP_ENV] = production
+env[APP_DEBUG] = false
+env[APP_URL] = http://appht.jjmxg.xyz
+env[DB_HOST] = 127.0.0.1
+env[DB_PORT] = 3306
+env[DB_NAME] = appht
+env[DB_USER] = appht
+env[DB_PASSWORD] = appht
+env[QR_SIGNING_KEY] = "请替换为至少32位随机字符串"
+env[MAIL_TRANSPORT] = "native"
+env[MAIL_FROM_ADDRESS] = "no-reply@appht.jjmxg.xyz"
+env[MAIL_FROM_NAME] = "易运盈后台"
+
+; 服务器本地 AI。Ollama 只监听 127.0.0.1，Android 端不会获得模型地址。
+; 约 4 GB 可用内存使用 1.5b，6-8 GB 使用 3b，12 GB 以上可使用 7b。
+env[AI_ENABLED] = true
+env[AI_PROVIDER] = "openai"
+env[AI_API_URL] = "http://127.0.0.1:18080/v1"
+env[AI_MODEL] = "qwen2.5-1.5b-instruct"
+env[AI_CONNECT_TIMEOUT] = 2
+env[AI_TIMEOUT] = 60
+env[AI_MAX_TOKENS] = 1200
+env[AI_TEMPERATURE] = 0.35
+env[AI_HISTORY_LIMIT] = 12
+env[AI_KNOWLEDGE_LIMIT] = 8
+env[AI_CONTEXT_DOCUMENT_LIMIT] = 3
+env[AI_CONTEXT_CHARS_PER_DOCUMENT] = 1400
+env[AI_HISTORY_MESSAGE_CHARS] = 1600
+env[AI_RETRY_AFTER_SECONDS] = 20
+env[AI_FALLBACK_ENABLED] = true
+env[AI_PUBLIC_KNOWLEDGE_ENABLED] = true
+env[AI_PUBLIC_KNOWLEDGE_TIMEOUT] = 6
+env[AI_PUBLIC_KNOWLEDGE_CACHE_SECONDS] = 604800
+env[AI_PUBLIC_KNOWLEDGE_LIMIT] = 3
+
+; 任意城市、区县和国外地点均先走通用地理编码，不使用写死城市表。
+env[WEATHER_GEOCODING_URL] = "https://geocoding-api.open-meteo.com/v1/search"
+env[WEATHER_SECONDARY_GEOCODING_URL] = "https://nominatim.openstreetmap.org/search"
+
+; 推荐直接执行 bash deploy/install-local-stt.sh。安装完成后后端会自动发现本地插件。
+; 下面两行可覆盖本地插件默认模型和超时；服务器内存较小时使用 base。
+env[STT_MODEL] = "small"
+env[STT_TIMEOUT] = 300
+env[STT_MAX_BYTES] = 104857600
+
+; 如需改用 OpenAI 兼容服务，再启用以下配置覆盖本地插件。
+; env[STT_PROVIDER] = "openai-compatible"
+; env[STT_API_URL] = "https://api.openai.com/v1/audio/transcriptions"
+; env[STT_API_KEY] = "请替换为语音转写服务密钥"
+; env[STT_MODEL] = "whisper-1"
+
+; 应用内网络语音通话。生产环境建议部署自有 TURN，并用一行合法 JSON 配置。
+; env[VOICE_CALL_ICE_SERVERS] = '[{"urls":["stun:stun.example.com:3478"]},{"urls":["turn:turn.example.com:3478?transport=udp","turn:turn.example.com:3478?transport=tcp"],"username":"yiyunying","credential":"请替换"}]'
+env[VOICE_CALL_RING_TIMEOUT_SECONDS] = 60
+env[VOICE_CALL_ACTIVE_TIMEOUT_SECONDS] = 45
+env[VOICE_CALL_SIGNAL_POLL_MS] = 500

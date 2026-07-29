@@ -1,0 +1,64 @@
+__pycache__/
+*.py[cod]
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+local.properties
+android/keystore.properties
+
+# Android outputs
+.gradle/
+**/build/
+android/.cxx/
+android/captures/
+android/.version.lock
+android/version-history.jsonl
+
+# PHP runtime data
+backend/vendor/
+backend/storage/cache/*
+backend/storage/logs/*
+backend/storage/sessions/*
+backend/storage/tmp/*
+backend/storage/uploads/*
+backend/public/uploads/*
+!backend/storage/**/.gitkeep
+!backend/public/uploads/.gitkeep
+
+# JavaScript outputs
+download-site/node_modules/
+download-site/.next/
+download-site/dist/
+download-site/static-dist/
+download-site/.vinext/
+download-site/.wrangler/
+download-site/.dev.vars
+
+# Deliverables and production data
+*.apk
+*.aab
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.log
+database/*.sql
+!backend/database/install.sql
+release/
+releases/
+outputs/
+

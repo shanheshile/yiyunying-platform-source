@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="@drawable/ic_back" />
+
+    <TextView
+        android:id="@+id/viewContext"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorPrimaryContainer"
+        android:clickable="true"
+        android:focusable="true"
+        android:minHeight="56dp"
+        android:paddingStart="16dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="9dp"
+        android:text="正在确认具体对话参与者"
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+        android:textColor="?attr/colorOnPrimaryContainer" />
+
+    <TextView
+        android:id="@+id/auditNotice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSecondaryContainer"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:text="合规审计视图会显示已撤回消息原文"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="?attr/colorOnSecondaryContainer" />
+
+    <TextView
+        android:id="@+id/policyStatus"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/surface_container"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:text="正在读取通信接管权限"
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+        android:textColor="?attr/colorPrimary" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="8dp">
+
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:hint="搜索正文、文件名或标签">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/searchInput"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:imeOptions="actionSearch"
+                android:inputType="text" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/searchButton"
+            style="@style/Widget.Material3.Button.IconButton.Filled.Tonal"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="搜索通信记录"
+            app:icon="@drawable/ic_search"
+            app:iconPadding="0dp" />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/searchFilterGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="6dp"
+        app:checkedButton="@id/filterAll"
+        app:selectionRequired="true"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/filterAll"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="72dp"
+            android:layout_height="40dp"
+            android:text="全部" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/filterFile"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="88dp"
+            android:layout_height="40dp"
+            android:text="文件媒体" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/filterTag"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="72dp"
+            android:layout_height="40dp"
+            android:text="标签" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/filterSnapshot"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="76dp"
+            android:layout_height="40dp"
+            android:text="快照" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:visibility="invisible" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:padding="12dp" />
+
+    <TextView
+        android:id="@+id/readOnlyNotice"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:gravity="center"
+        android:text="当前接管策略仅允许查看，不能发送系统消息"
+        android:textColor="@color/on_surface_variant"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/composer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="bottom"
+        android:orientation="horizontal"
+        android:padding="10dp">
+
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="以系统消息发言（不加入成员列表）">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/messageInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textMultiLine"
+                android:maxLines="4" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/sendButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="发送系统接管消息"
+            android:minWidth="52dp"
+            app:icon="@drawable/ic_send"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
+    </LinearLayout>
+</LinearLayout>

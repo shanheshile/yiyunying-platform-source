@@ -1,0 +1,18 @@
+# 将以下配置放进 appht.jjmxg.xyz 的 server { ... } 内，和 root、index 同级。
+# 保存后在宝塔中重载 Nginx；不要只修改伪静态规则。
+client_max_body_size 1100m;
+client_body_timeout 900s;
+client_body_buffer_size 2m;
+fastcgi_read_timeout 900s;
+fastcgi_send_timeout 900s;
+
+# PHP 8.0 还需要在 php.ini 中同步设置：
+# upload_max_filesize = 1024M
+# post_max_size = 1100M
+# max_execution_time = 900
+# max_input_time = 900
+# memory_limit = 512M
+#
+# 修改 php.ini 后必须重启 PHP-80。可用下面两个地址检查：
+# GET /api/health
+# POST /api/user/uploads（multipart/form-data，文件字段名必须是 file）

@@ -1,0 +1,231 @@
+plugins {
+    id 'com.android.application'
+}
+
+def versionPropertiesFile = rootProject.file('version.properties')
+if (!versionPropertiesFile.isFile()) {
+    throw new GradleException("Missing version.properties at ${versionPropertiesFile}")
+}
+
+def versionProperties = new Properties()
+versionPropertiesFile.withInputStream { stream -> versionProperties.load(stream) }
+def appVersionName = versionProperties.getProperty('VERSION_NAME')?.trim()
+def versionCodeValue = versionProperties.getProperty('VERSION_CODE')?.trim()
+if (!(appVersionName ==~ /\d+\.\d+\.\d+/)) {
+    throw new GradleException('VERSION_NAME must use major.minor.patch format')
+}
+if (!(versionCodeValue ==~ /[1-9]\d*/)) {
+    throw new GradleException('VERSION_CODE must be a positive integer')
+}
+def appVersionCode = versionCodeValue.toInteger()
+
+def configValue = { String propertyName, String environmentName, String fallback ->
+    (project.findProperty(propertyName) ?: System.getenv(environmentName) ?: fallback).toString()
+}
+def asBuildConfigString = { String value ->
+    '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+}
+def defaultApiBaseUrl = configValue('apiBaseUrl', 'YIYUNYING_API_BASE_URL', 'http://10.0.2.2:8788/')
+if (!defaultApiBaseUrl.endsWith('/')) {
+    defaultApiBaseUrl += '/'
+}
+def defaultAppKey = configValue('appKey', 'YIYUNYING_APP_KEY', 'yiyunying-local')
+def defaultPlatformKey = configValue('platformKey', 'YIYUNYING_PLATFORM_KEY', 'local-platform')
+def authorizedPlatformKey = configValue(
+        'authorizedPlatformKey',
+        'YIYUNYING_AUTHORIZED_PLATFORM_KEY',
+        'local-authorized-platform'
+)
+
+tasks.register('printVersion') {
+    group = 'versioning'
+    description = 'Prints the shared application version without building an APK.'
+    doLast { println "${appVersionName} (${appVersionCode})" }
+}
+
+android {
+    namespace 'xyz.jjmxg.yiyunying'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'xyz.jjmxg.yiyunying'
+        minSdk 24
+        targetSdk 36
+        versionCode appVersionCode
+        versionName appVersionName
+
+        ndk {
+            if (project.findProperty('includeEmulatorAbi') == 'true') {
+                abiFilters 'x86_64'
+            } else {
+                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            }
+        }
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        buildConfigField 'String', 'DEFAULT_API_BASE_URL', asBuildConfigString(defaultApiBaseUrl)
+        buildConfigField 'String', 'DEFAULT_APP_KEY', asBuildConfigString(defaultAppKey)
+        buildConfigField 'String', 'DEFAULT_PLATFORM_KEY', asBuildConfigString(defaultPlatformKey)
+    }
+
+    flavorDimensions += 'edition'
+    productFlavors {
+        platformOwner {
+            dimension 'edition'
+            applicationIdSuffix '.platformowner'
+            versionNameSuffix '-platform-owner'
+            buildConfigField 'String', 'APP_EDITION', '"platform_owner"'
+            buildConfigField 'String', 'FIXED_ROLE', '"platform"'
+            buildConfigField 'int', 'REQUIRED_PLATFORM_LEVEL', '1'
+            buildConfigField 'boolean', 'ALLOW_SELF_REGISTER', 'false'
+            buildConfigField 'String', 'DEFAULT_ACCOUNT', '"root"'
+            resValue 'string', 'app_name', '易运盈平台总控'
+            resValue 'string', 'login_title', '登录平台总控'
+            resValue 'string', 'login_subtitle', '仅限一级平台所有者使用'
+        }
+        authorizedPlatform {
+            dimension 'edition'
+            applicationIdSuffix '.authorized'
+            versionNameSuffix '-authorized-platform'
+            buildConfigField 'String', 'APP_EDITION', '"authorized_platform"'
+            buildConfigField 'String', 'FIXED_ROLE', '"platform"'
+            buildConfigField 'int', 'REQUIRED_PLATFORM_LEVEL', '2'
+            buildConfigField 'boolean', 'ALLOW_SELF_REGISTER', 'false'
+            buildConfigField 'String', 'DEFAULT_ACCOUNT', '"authorized"'
+            buildConfigField 'String', 'DEFAULT_PLATFORM_KEY', asBuildConfigString(authorizedPlatformKey)
+            resValue 'string', 'app_name', '易运盈授权平台'
+            resValue 'string', 'login_title', '登录授权平台'
+            resValue 'string', 'login_subtitle', '仅限已授权的二级平台使用'
+        }
+        admin {
+            dimension 'edition'
+            applicationIdSuffix '.admin'
+            versionNameSuffix '-admin'
+            buildConfigField 'String', 'APP_EDITION', '"admin"'
+            buildConfigField 'String', 'FIXED_ROLE', '"admin"'
+            buildConfigField 'int', 'REQUIRED_PLATFORM_LEVEL', '0'
+            buildConfigField 'boolean', 'ALLOW_SELF_REGISTER', 'true'
+            buildConfigField 'String', 'DEFAULT_ACCOUNT', '"admin"'
+            resValue 'string', 'app_name', '易运盈管理员'
+            resValue 'string', 'login_title', '登录管理员后台'
+            resValue 'string', 'login_subtitle', '管理自己的应用、用户与内容'
+        }
+        user {
+            dimension 'edition'
+            applicationIdSuffix '.user'
+            versionNameSuffix '-user'
+            buildConfigField 'String', 'APP_EDITION', '"user"'
+            buildConfigField 'String', 'FIXED_ROLE', '"user"'
+            buildConfigField 'int', 'REQUIRED_PLATFORM_LEVEL', '0'
+            buildConfigField 'boolean', 'ALLOW_SELF_REGISTER', 'true'
+            buildConfigField 'String', 'DEFAULT_ACCOUNT', '"user"'
+            resValue 'string', 'app_name', '易运盈用户端'
+            resValue 'string', 'login_title', '登录易运盈用户端'
+            resValue 'string', 'login_subtitle', '使用所属应用提供的消息与社区服务'
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+        resValues = true
+        viewBinding = true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'true'
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'false'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    testOptions {
+        unitTests {
+            returnDefaultValues = true
+            includeAndroidResources = true
+        }
+    }
+
+    packaging {
+        resources.excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1']
+    }
+}
+
+tasks.withType(Test).configureEach {
+    maxParallelForks = 1
+    forkEvery = 24
+    maxHeapSize = '1536m'
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.activity:activity:1.10.1'
+    implementation 'androidx.fragment:fragment:1.8.9'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel:2.9.1'
+    implementation 'androidx.lifecycle:lifecycle-livedata:2.9.1'
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'androidx.viewpager2:viewpager2:1.1.0'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.2.1'
+    implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    implementation 'com.google.android.material:material:1.13.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.google.code.gson:gson:2.13.1'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+    implementation 'androidx.exifinterface:exifinterface:1.4.1'
+    implementation 'androidx.media3:media3-common:1.10.1'
+    implementation 'androidx.media3:media3-effect:1.10.1'
+    implementation 'androidx.media3:media3-transformer:1.10.1'
+    implementation 'io.github.webrtc-sdk:android:144.7559.05'
+    userImplementation 'net.java.dev.jna:jna:5.18.1@aar'
+    userImplementation 'com.alphacephei:vosk-android:0.3.75@aar'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+}
+
+// JDK 17 on a Chinese Windows locale can misread Gradle test-worker argument
+// files when the project path contains non-ASCII characters. Use an ASCII
+// pathing JAR for the worker classpath in that case.
+if (!(rootProject.projectDir.absolutePath ==~ /\p{ASCII}*/)) {
+    tasks.withType(Test).configureEach { testTask ->
+        doFirst {
+            def originalClasspath = testTask.classpath.files.findAll { it.exists() }
+            def pathingDir = new File(System.getProperty('user.home'), '.gradle/yiyunying-test-classpath')
+            if (!pathingDir.exists() && !pathingDir.mkdirs()) {
+                throw new GradleException("Unable to create test classpath directory: ${pathingDir}")
+            }
+            def safeName = "${rootProject.name}-${project.name}-${testTask.name}"
+                    .replaceAll(/[^A-Za-z0-9._-]/, '_')
+            def pathingJar = new File(pathingDir, "${safeName}.jar")
+            def manifest = new java.util.jar.Manifest()
+            manifest.mainAttributes.put(java.util.jar.Attributes.Name.MANIFEST_VERSION, '1.0')
+            manifest.mainAttributes.putValue(
+                    'Class-Path',
+                    originalClasspath.collect { it.toURI().toASCIIString() }.join(' ')
+            )
+            pathingJar.withOutputStream { output ->
+                new java.util.jar.JarOutputStream(output, manifest).close()
+            }
+            testTask.classpath = project.files(pathingJar)
+        }
+    }
+}
+

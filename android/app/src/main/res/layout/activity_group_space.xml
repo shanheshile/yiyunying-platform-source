@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:title="群空间"
+        app:navigationIcon="@drawable/ic_back" />
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:visibility="invisible" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="16dp">
+        <TextView android:id="@+id/groupName" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@style/TextAppearance.Material3.TitleLarge" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/groupMeta"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="@color/on_surface_variant" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/groupQrButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:minWidth="0dp"
+                android:text="群二维码"
+                android:textSize="12sp"
+                app:icon="@drawable/ic_qr"
+                app:iconSize="18dp" />
+        </LinearLayout>
+        <TextView android:id="@+id/announcement" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="?attr/colorSecondary" />
+    </LinearLayout>
+
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/tabs"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+            <com.google.android.material.chip.Chip android:id="@+id/tabMembers" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:text="成员" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabFiles" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群文件" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabAlbums" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群相册" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabVotes" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群投票" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabSolitaires" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群接龙" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout android:id="@+id/swipeRefresh" android:layout_width="match_parent" android:layout_height="match_parent">
+            <androidx.recyclerview.widget.RecyclerView android:id="@+id/recycler" android:layout_width="match_parent" android:layout_height="match_parent" android:clipToPadding="false" android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingBottom="84dp" />
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+        <TextView android:id="@+id/emptyText" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="暂无内容" android:textColor="@color/on_surface_variant" android:visibility="gone" />
+        <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+            android:id="@+id/actionButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="18dp"
+            android:text="上传群文件"
+            app:icon="@drawable/ic_add" />
+    </FrameLayout>
+</LinearLayout>

@@ -1,0 +1,792 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="@drawable/ic_back" />
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:indeterminate="true"
+        android:visibility="invisible" />
+    <LinearLayout
+        android:id="@+id/searchPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:hint="搜索聊天内容、发送者或上下文">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/searchInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text" />
+            </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/searchClose"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="64dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="4dp"
+                android:text="关闭" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <HorizontalScrollView
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:scrollbars="none">
+                <LinearLayout
+                    android:id="@+id/searchHistoryContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/searchClearHistory"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="清空历史" />
+        </LinearLayout>
+        <TextView
+            android:id="@+id/searchSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="6dp"
+            android:text="搜索结果会同时保留命中消息前后各 3 条上下文"
+            android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+            android:textColor="@color/on_surface_variant" />
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:scrollbars="none">
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/searchFilterGroup"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:gravity="center_vertical"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+                <com.google.android.material.chip.Chip android:id="@+id/searchAll" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:checked="true" android:text="全部" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchImages" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="图片" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchVideos" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="视频" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchAudio" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="语音" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchFiles" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="文件" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchStickers" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="表情" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchTags" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="标签" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchLinks" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="链接" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchFavorites" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="收藏" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchTransfers" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="转账" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchRedPackets" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="红包" />
+                <com.google.android.material.chip.Chip android:id="@+id/searchLocations" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="40dp" android:text="位置" />
+            </com.google.android.material.chip.ChipGroup>
+        </HorizontalScrollView>
+    </LinearLayout>
+    <FrameLayout
+        android:id="@+id/messageStage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <ImageView
+            android:id="@+id/chatBackground"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="聊天背景"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recycler"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:clipToPadding="false"
+            android:padding="12dp"
+            android:scrollbars="vertical" />
+        <TextView
+            android:id="@+id/emptyText"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="暂无消息"
+            android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+            android:textColor="@color/on_surface_variant"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/newMessageIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_gravity="start|bottom"
+            android:layout_marginStart="16dp"
+            android:layout_marginBottom="14dp"
+            android:contentDescription="滚动到最新消息"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="新消息(1) ↓"
+            android:textColor="?attr/colorOnPrimary"
+            android:textSize="13sp"
+            android:visibility="gone"
+            app:backgroundTint="?attr/colorPrimary"
+            app:cornerRadius="22dp" />
+
+        <FrameLayout
+            android:id="@+id/rangeStartOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:clickable="false"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:layout_gravity="center_vertical"
+                android:background="@drawable/bg_range_horizontal_dashed" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/rangeStartAnchor"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="16dp"
+                android:clickable="true"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="从这里开始"
+                android:textSize="12sp"
+                app:cornerRadius="18dp" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/rangeEndOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:clickable="false"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:layout_gravity="center_vertical"
+                android:background="@drawable/bg_range_horizontal_dashed" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/rangeEndAnchor"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="16dp"
+                android:clickable="true"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="选择到这里"
+                android:textSize="12sp"
+                app:cornerRadius="18dp" />
+        </FrameLayout>
+    </FrameLayout>
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/recentSuggestion"
+        android:layout_width="match_parent"
+        android:layout_height="78dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="@color/surface_container"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="0dp">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="7dp">
+            <ImageView
+                android:id="@+id/recentSuggestionImage"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:background="@color/surface_container_high"
+                android:contentDescription="最近一张照片"
+                android:scaleType="centerCrop" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="你可能要发送的照片："
+                    android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                    android:textColor="@color/on_surface" />
+                <TextView
+                    android:id="@+id/recentSuggestionName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="最近照片"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
+            </LinearLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/recentSuggestionAdd"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:text="添加" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+    <HorizontalScrollView
+        android:id="@+id/pendingScroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="false"
+        android:scrollbars="none"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/pendingContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="2dp" />
+    </HorizontalScrollView>
+    <HorizontalScrollView
+        android:id="@+id/selectionBar"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:background="@color/surface_container_high"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp">
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionForward" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="转发" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionFavorite" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="收藏" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionDelete" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="本地删除" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionStart" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="从这里开始" android:visibility="gone" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionEnd" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="选择到这里" android:visibility="gone" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionMore" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="更多" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionCancel" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="取消" />
+        </LinearLayout>
+    </HorizontalScrollView>
+    <LinearLayout
+        android:id="@+id/quoteBar"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:background="@color/surface_container_high"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="8dp"
+        android:visibility="gone">
+        <View
+            android:layout_width="3dp"
+            android:layout_height="32dp"
+            android:background="?attr/colorPrimary" />
+        <TextView
+            android:id="@+id/quotePreview"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+            android:textColor="@color/on_surface_variant" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/quoteCancel"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:text="取消引用" />
+    </LinearLayout>
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/voiceRecordingPanel"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="2dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="?attr/colorPrimaryContainer"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="0dp"
+        app:strokeColor="?attr/colorPrimary"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/voiceRecordingStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="松开发送 · 上滑取消"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                    android:textColor="?attr/colorPrimary" />
+
+                <TextView
+                    android:id="@+id/voiceRecordingTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="00:00 / 01:00"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+                    android:textColor="?attr/colorOnPrimaryContainer" />
+            </LinearLayout>
+
+            <xyz.jjmxg.yiyunying.ui.chat.VoiceWaveformView
+                android:id="@+id/voiceRecordingWaveform"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+    <LinearLayout
+        android:id="@+id/composer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="bottom"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="10dp">
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/voiceModeButton"
+            style="@style/Widget.Material3.Button.IconButton.Filled.Tonal"
+            android:layout_width="44dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="切换按住说话"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:minWidth="44dp"
+            android:padding="10dp"
+            app:icon="@drawable/ic_voice"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1">
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/messageInputLayout"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="消息"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconMode="custom"
+                app:endIconContentDescription="语音转文字">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/messageInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:imeOptions="actionSend"
+                    android:inputType="textCapSentences|textMultiLine"
+                    android:maxLines="5" />
+            </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/holdToTalkButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="按住 说话"
+                android:textSize="16sp"
+                android:visibility="gone" />
+        </FrameLayout>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/emojiButton"
+            style="@style/Widget.Material3.Button.IconButton"
+            android:layout_width="44dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="3dp"
+            android:contentDescription="表情"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:minWidth="44dp"
+            android:padding="10dp"
+            app:icon="@drawable/ic_emoji"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/attachButton"
+            style="@style/Widget.Material3.Button.IconButton"
+            android:layout_width="44dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="2dp"
+            android:contentDescription="更多功能"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:minWidth="44dp"
+            android:padding="9dp"
+            app:icon="@drawable/ic_add"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/sendButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="发送消息"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:minWidth="52dp"
+            android:padding="14dp"
+            android:visibility="gone"
+            app:icon="@drawable/ic_send"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/mediaPanel"
+        android:layout_width="match_parent"
+        android:layout_height="246dp"
+        android:background="@color/surface_container"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/functionPane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/functionPaneTitle"
+                android:layout_width="match_parent"
+                android:layout_height="34dp"
+                android:gravity="center_vertical"
+                android:text="功能"
+                android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                android:textColor="@color/on_surface" />
+            <xyz.jjmxg.yiyunying.ui.chat.HalfPageHorizontalScrollView
+                android:id="@+id/functionPager"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:fillViewport="true"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+                <LinearLayout
+                    android:id="@+id/functionPages"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal">
+                <GridLayout
+                    android:id="@+id/functionGrid"
+                    android:layout_width="320dp"
+                    android:layout_height="match_parent"
+                    android:columnCount="4"
+                    android:rowCount="2"
+                    android:useDefaultMargins="false">
+                    <LinearLayout android:id="@+id/albumAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="相册" app:srcCompat="@drawable/ic_album" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="相册" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/cameraAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="拍摄" app:srcCompat="@drawable/ic_camera" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="拍摄" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/fileAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="文件" app:srcCompat="@drawable/ic_folder" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="文件" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/favoriteAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="收藏" app:srcCompat="@drawable/ic_favorite" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="收藏" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/redPacketAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="红包" app:srcCompat="@drawable/ic_red_packet" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="红包" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/transferAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="转账" app:srcCompat="@drawable/ic_transfer" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="转账" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/contactCardAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="名片" app:srcCompat="@drawable/ic_contact_card" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="名片" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                    <LinearLayout android:id="@+id/giftAction" android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" android:gravity="center" android:orientation="vertical"><androidx.appcompat.widget.AppCompatImageView style="@style/Widget.Yiyunying.ChatFunctionIcon" android:contentDescription="礼物" app:srcCompat="@drawable/ic_gift" /><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="礼物" android:textColor="@color/on_surface_variant" /></LinearLayout>
+                </GridLayout>
+                <GridLayout
+                    android:id="@+id/functionGridSecond"
+                    android:layout_width="320dp"
+                    android:layout_height="match_parent"
+                    android:columnCount="4"
+                    android:rowCount="2"
+                    android:useDefaultMargins="false">
+                    <LinearLayout
+                        android:id="@+id/voiceCallAction"
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_rowWeight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <androidx.appcompat.widget.AppCompatImageView
+                            style="@style/Widget.Yiyunying.ChatFunctionIcon"
+                            android:contentDescription="网络语音通话"
+                            app:srcCompat="@drawable/ic_phone" />
+                        <TextView
+                            android:id="@+id/voiceCallLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="语音电话"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:id="@+id/videoCallAction"
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_rowWeight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <androidx.appcompat.widget.AppCompatImageView
+                            style="@style/Widget.Yiyunying.ChatFunctionIcon"
+                            android:contentDescription="网络视频通话"
+                            app:srcCompat="@drawable/ic_videocam" />
+                        <TextView
+                            android:id="@+id/videoCallLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="视频通话"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:id="@+id/locationAction"
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_rowWeight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <androidx.appcompat.widget.AppCompatImageView
+                            style="@style/Widget.Yiyunying.ChatFunctionIcon"
+                            android:contentDescription="位置"
+                            app:srcCompat="@drawable/ic_location" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="位置"
+                            android:textColor="@color/on_surface_variant" />
+                    </LinearLayout>
+                    <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" />
+                    <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" />
+                    <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" />
+                    <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" />
+                    <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_columnWeight="1" android:layout_rowWeight="1" />
+                </GridLayout>
+                </LinearLayout>
+            </xyz.jjmxg.yiyunying.ui.chat.HalfPageHorizontalScrollView>
+            <TextView
+                android:id="@+id/functionPageIndicator"
+                android:layout_width="match_parent"
+                android:layout_height="20dp"
+                android:gravity="center"
+                android:text="1 / 2"
+                android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
+                android:textColor="@color/on_surface_variant" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/inlineAlbumPane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/inlineAlbumBack"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:contentDescription="返回功能列表"
+                    android:insetLeft="0dp"
+                    android:insetRight="0dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    app:icon="@drawable/ic_back"
+                    app:iconPadding="0dp" />
+
+                <TextView
+                    android:id="@+id/inlineAlbumTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="最近照片和视频"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                    android:textColor="@color/on_surface" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/inlineAlbumOpen"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="完整相册" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/inlineAlbumList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clipToPadding="false"
+                    android:overScrollMode="never"
+                    android:paddingVertical="4dp"
+                    android:scrollbars="none" />
+
+                <TextView
+                    android:id="@+id/inlineAlbumEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text="正在读取最近照片和视频"
+                    android:textColor="@color/on_surface_variant" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/inlineAlbumOriginal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:text="原图/原视频" />
+
+                <TextView
+                    android:id="@+id/inlineAlbumCount"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:text="未选择"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/inlineAlbumSend"
+                    style="@style/Widget.Yiyunying.Button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:enabled="false"
+                    android:text="添加" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/emojiPane"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="42dp" android:gravity="center_vertical" android:orientation="horizontal"><TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Emoji" android:textAppearance="@style/TextAppearance.Material3.TitleSmall" /><com.google.android.material.button.MaterialButton android:id="@+id/showStickersButton" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="40dp" android:text="表情包" /></LinearLayout>
+                <GridLayout android:id="@+id/emojiGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="8" android:paddingTop="4dp" />
+            </LinearLayout>
+        </ScrollView>
+
+        <LinearLayout
+            android:id="@+id/stickerPane"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="gone">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="我的表情包"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                    android:textColor="@color/on_surface_variant" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/showEmojiButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="Emoji" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton android:id="@+id/openStickersButton" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="刷新表情包" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/uploadStickerButton" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="上传新表情" />
+            </LinearLayout>
+            <HorizontalScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:scrollbars="none">
+                <GridLayout android:id="@+id/stickerGrid" android:layout_width="wrap_content" android:layout_height="match_parent" android:columnCount="4" android:paddingTop="4dp" />
+            </HorizontalScrollView>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
