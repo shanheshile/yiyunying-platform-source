@@ -11,7 +11,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$workspaceRoot = (Resolve-Path (Join-Path $projectRoot '..')).Path
 $versionFile = Join-Path $projectRoot 'version.properties'
+$downloadPackageFile = Join-Path $workspaceRoot 'download-site\package.json'
 $lockFile = Join-Path $projectRoot '.version.lock'
 $historyFile = Join-Path $projectRoot 'version-history.jsonl'
 
@@ -91,6 +93,28 @@ function Write-VersionState([string] $Name, [int] $Code) {
     }
 }
 
+function Read-DownloadPackageVersion {
+    if (-not (Test-Path -LiteralPath $downloadPackageFile)) {
+        throw "缺少下载站版本文件：$downloadPackageFile"
+    }
+    $package = Get-Content -LiteralPath $downloadPackageFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace([string] $package.version)) {
+        throw '下载站 package.json 缺少 version。'
+    }
+    return [string] $package.version
+}
+
+function Write-DownloadPackageVersion([string] $Name) {
+    $package = Get-Content -LiteralPath $downloadPackageFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $package.version = $Name
+    $json = $package | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText(
+        $downloadPackageFile,
+        $json + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+}
+
 function Write-Result($Result) {
     if ($Json) {
         $Result | ConvertTo-Json -Compress
@@ -112,6 +136,10 @@ function Write-Result($Result) {
 $lock = Open-VersionLock
 try {
     $current = Read-VersionState
+    $downloadVersion = Read-DownloadPackageVersion
+    if ($downloadVersion -ne $current.versionName) {
+        throw "版本链不一致：Android=$($current.versionName)，下载站=$downloadVersion。请先修复再发布。"
+    }
     $nextName = $current.versionName
     $nextCode = $current.versionCode
 
@@ -167,10 +195,24 @@ try {
         versionName = $nextName
         versionCode = $nextCode
         versionFile = $versionFile
+        downloadPackageFile = $downloadPackageFile
     }
 
     if ($changed -and -not $DryRun) {
-        Write-VersionState -Name $nextName -Code $nextCode
+        $originalPackage = Get-Content -LiteralPath $downloadPackageFile -Raw -Encoding UTF8
+        try {
+            Write-VersionState -Name $nextName -Code $nextCode
+            Write-DownloadPackageVersion -Name $nextName
+        }
+        catch {
+            Write-VersionState -Name $current.versionName -Code $current.versionCode
+            [System.IO.File]::WriteAllText(
+                $downloadPackageFile,
+                $originalPackage,
+                (New-Object System.Text.UTF8Encoding($false))
+            )
+            throw
+        }
         $audit = [ordered]@{
             timestamp = [DateTimeOffset]::Now.ToString('o')
             action = $Action

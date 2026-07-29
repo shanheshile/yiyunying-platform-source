@@ -281,14 +281,7 @@ public final class GlassBottomSheet {
     public static void styleActionButton(MaterialButton button, Context context, boolean primary,
                                          int radiusDp) {
         if (button == null) return;
-        boolean firstStylePass = !Boolean.TRUE.equals(
-            button.getTag(R.id.tag_glass_action_button_styled));
-        if (firstStylePass) {
-            // Insets belong to MaterialButton's managed background. Reset them exactly once,
-            // before replacing that background; calling these APIs on later passes is unsafe.
-            button.setInsetTop(0);
-            button.setInsetBottom(0);
-        }
+
         float radius = dp(context, Math.max(8, radiusDp));
         button.setMinHeight(dp(context, 48));
         button.setMinimumHeight(dp(context, 48));

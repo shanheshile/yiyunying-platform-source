@@ -5,6 +5,30 @@ import test from "node:test";
 const releaseMetadata = JSON.parse(
   await readFile(new URL("../release-metadata.json", import.meta.url), "utf8"),
 );
+const packageMetadata = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
+
+function escapedVersion(value) {
+  return value.replaceAll(".", "\\.");
+}
+
+function normalizedReleaseNotes(value) {
+  return Array.isArray(value) ? value : [value];
+}
+
+function assertProductionDownloadRoot(value) {
+  assert.equal(typeof value, "string");
+  assert.ok(value.length > 0, "downloadRootBase must not be empty");
+  if (value === "/downloads") return;
+
+  const parsed = new URL(value);
+  assert.match(parsed.protocol, /^https?:$/);
+  assert.ok(
+    !["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(parsed.hostname),
+    "downloadRootBase must not point to a local machine",
+  );
+}
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -39,7 +63,7 @@ test("server-renders the download center", async () => {
   assert.match(html, />管理员</);
   assert.match(html, />授权平台</);
   assert.match(html, />平台总控</);
-  assert.match(html, new RegExp(releaseMetadata.versionName.replaceAll(".", "\\.")));
+  assert.match(html, new RegExp(escapedVersion(releaseMetadata.versionName)));
   assert.doesNotMatch(html, /2\.6\.36/);
   assert.doesNotMatch(html, /2\.6\.35/);
   assert.doesNotMatch(html, /2\.6\.34/);
@@ -47,27 +71,48 @@ test("server-renders the download center", async () => {
 });
 
 test("keeps release metadata and download links consistent", async () => {
-  const [page, layout, packageJson, exporter, nginx] = await Promise.all([
+  const [page, layout, exporter, nginx] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../scripts/export-static.mjs", import.meta.url), "utf8"),
     readFile(new URL("../deploy/nginx-download-center.conf", import.meta.url), "utf8"),
   ]);
 
+  assert.equal(packageMetadata.version, releaseMetadata.versionName);
+  assertProductionDownloadRoot(releaseMetadata.downloadRootBase);
+
+  const notes = normalizedReleaseNotes(releaseMetadata.releaseNotes);
+  assert.ok(notes.length > 0, "release notes must not be empty");
+  for (const note of notes) {
+    assert.equal(typeof note, "string");
+    assert.ok(note.trim().length > 0, "release note must not be blank");
+    assert.ok(!note.includes("\uFFFD"), "release note contains a replacement character");
+  }
+
   assert.match(page, /import releaseMetadata from "\.\.\/release-metadata\.json"/);
   assert.match(exporter, /release-metadata\.json/);
   assert.doesNotMatch(page, /const VERSION = "\d+\.\d+\.\d+"/);
+
   assert.equal(releaseMetadata.releases.length, 4);
+  assert.equal(new Set(releaseMetadata.releases.map(({ id }) => id)).size, 4);
+  assert.equal(new Set(releaseMetadata.releases.map(({ fileName }) => fileName)).size, 4);
+
   for (const release of releaseMetadata.releases) {
     assert.match(page, /releaseMetadata\.releases/);
     assert.match(exporter, /releaseMetadata\.releases/);
-    assert.match(release.fileName, new RegExp(`v${releaseMetadata.versionName.replaceAll(".", "\\.")}`));
+    assert.match(
+      release.fileName,
+      new RegExp(`v${escapedVersion(releaseMetadata.versionName)}.*\\.apk$`, "i"),
+    );
+    assert.equal(release.versionCode, releaseMetadata.versionCode);
+    assert.match(release.versionName, new RegExp(`^${escapedVersion(releaseMetadata.versionName)}-`));
+    assert.match(release.packageName, /^xyz\.jjmxg\.yiyunying\./);
     assert.match(release.sha256, /^[A-F0-9]{64}$/);
-    assert.ok(release.sizeBytes > 0);
+    assert.ok(release.sizeBytes > 1024 * 1024, "APK must be larger than 1 MiB");
   }
+
   assert.match(layout, /title:\s*"易运盈官方下载中心"/);
-  assert.match(packageJson, /"lucide-react":\s*"[^"]+"/);
+  assert.match(packageMetadata.dependencies["lucide-react"], /.+/);
   assert.match(page, /\?sha256=/);
   assert.match(page, /download=\{selected\.fileName\}/);
   assert.match(exporter, /downloadButton\.download = current\.fileName/);

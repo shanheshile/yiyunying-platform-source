@@ -61,4 +61,5 @@ database/*.sql
 release/
 releases/
 outputs/
-
+!docs/releases/
+!docs/releases/*.md

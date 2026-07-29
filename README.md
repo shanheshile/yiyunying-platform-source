@@ -2,7 +2,9 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-当前统一版本：`2.7.2 (47)`。
+当前统一版本：`2.7.3 (48)`。
+
+本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；当前能力边界、阻塞项和验收证据请先阅读[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
 ## 目录
 
@@ -12,7 +14,7 @@
 | `backend/` | PHP 8.1 + MySQL API、上传、通知、聊天、论坛、动态、订单与管理能力 |
 | `download-site/` | React/Next/Vinext 下载中心，可构建为服务端或静态站点 |
 | `database/` | 数据库说明；开发初始化脚本位于 `backend/database/install.sql` |
-| `docs/` | 架构、本地开发、部署、测试、发布和需求追踪文档 |
+| `docs/` | 架构、本地开发、部署、测试、发布、历史和需求追踪文档 |
 | `scripts/` | 一键校验与构建脚本 |
 
 ## 四类角色
@@ -73,7 +75,14 @@ corepack pnpm export:static
 
 ## 开发前必读
 
+- [项目文档索引](docs/PROJECT_INDEX.md)
+- [2.7.3 发布说明与下一步开发目标](docs/releases/2.7.3.md)
 - [架构说明](ARCHITECTURE.md)
+- [当前状态与交付边界](docs/CURRENT_STATUS.md)
+- [开发历史与版本时间线](docs/history/README.md)
+- [源码来源与可追溯性](docs/history/SOURCE_PROVENANCE.md)
+- [后续开发路线图](docs/ROADMAP.md)
+- [风险登记](docs/RISK_REGISTER.md)
 - [本地开发](docs/LOCAL_DEVELOPMENT.md)
 - [部署说明](docs/DEPLOYMENT.md)
 - [测试说明](docs/TESTING.md)

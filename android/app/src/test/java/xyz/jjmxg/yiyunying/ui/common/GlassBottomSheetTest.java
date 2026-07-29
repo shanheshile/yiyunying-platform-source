@@ -1,6 +1,8 @@
 package xyz.jjmxg.yiyunying.ui.common;
 
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.view.ContextThemeWrapper;
 import android.view.View;
@@ -29,6 +31,9 @@ public final class GlassBottomSheetTest {
         Context application = ApplicationProvider.getApplicationContext();
         Context context = new ContextThemeWrapper(application, R.style.Theme_Yiyunying);
         MaterialButton button = new MaterialButton(context);
+        // Reproduce the production path where another appearance pass already replaced the
+        // MaterialButton-managed background before the shared bottom sheet is restyled.
+        button.setBackground(new ColorDrawable(Color.RED));
 
         GlassBottomSheet.styleActionButton(button, context, true, 16);
         // Dialog appearance can be applied by both attach and show callbacks. Reapplying must
@@ -39,8 +44,7 @@ public final class GlassBottomSheetTest {
         assertNull(button.getOutlineProvider());
         assertFalse(button.getClipToOutline());
         assertEquals(View.LAYER_TYPE_SOFTWARE, button.getLayerType());
-        assertEquals(0, button.getInsetTop());
-        assertEquals(0, button.getInsetBottom());
+
         assertTrue(button.getMinimumHeight() >= dp(context, 48));
         assertTrue(button.getMinimumWidth() >= dp(context, 48));
     }

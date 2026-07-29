@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$SkipInstall
 )
@@ -20,7 +20,60 @@ if ($versionProperties.VERSION_NAME -ne $package.version -or $versionProperties.
 if ([int]$versionProperties.VERSION_CODE -ne [int]$release.versionCode) {
     throw "Version code mismatch: Android=$($versionProperties.VERSION_CODE), release=$($release.versionCode)"
 }
+
+$downloadRoot = [string]$release.downloadRootBase
+if ([string]::IsNullOrWhiteSpace($downloadRoot)) {
+    throw 'Release downloadRootBase must not be empty.'
+}
+if ($downloadRoot -ne '/downloads') {
+    $downloadUri = $null
+    if (-not [Uri]::TryCreate($downloadRoot, [UriKind]::Absolute, [ref]$downloadUri) -or
+        $downloadUri.Scheme -notin @('http', 'https') -or
+        $downloadUri.Host -in @('localhost', '127.0.0.1', '0.0.0.0', '::1')) {
+        throw "Release downloadRootBase is not production-safe: $downloadRoot"
+    }
+}
+
+$releaseEntries = @($release.releases)
+if ($releaseEntries.Count -ne 4) {
+    throw "Release metadata must contain exactly four APK entries; found $($releaseEntries.Count)."
+}
+$versionPattern = [Regex]::Escape([string]$release.versionName)
+foreach ($entry in $releaseEntries) {
+    if ([int]$entry.versionCode -ne [int]$release.versionCode -or
+        [string]$entry.versionName -notmatch "^$versionPattern-" -or
+        [string]$entry.fileName -notmatch "v$versionPattern.*\.apk$") {
+        throw "Release APK metadata mismatch: $($entry.id) / $($entry.fileName)"
+    }
+}
+
+$releaseNotes = @($release.releaseNotes)
+if ($releaseNotes.Count -eq 0 -or ($releaseNotes | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) })) {
+    throw 'Release notes must contain at least one non-empty item.'
+}
 Write-Host "Version chain passed: $($release.versionName) ($($release.versionCode))." -ForegroundColor Green
+
+$userShell = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/res/layout/fragment_user_shell.xml') -Raw -Encoding UTF8
+$managementShell = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/res/layout/fragment_management_shell.xml') -Raw -Encoding UTF8
+$dimensions = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/res/values/dimens.xml') -Raw -Encoding UTF8
+$glassSheet = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/common/GlassBottomSheet.java') -Raw -Encoding UTF8
+$glassSheetTest = Get-Content -LiteralPath (Join-Path $root 'android/app/src/test/java/xyz/jjmxg/yiyunying/ui/common/GlassBottomSheetTest.java') -Raw -Encoding UTF8
+
+foreach ($shell in @($userShell, $managementShell)) {
+    if ($shell -notmatch 'app:labelVisibilityMode="labeled"' -or
+        $shell -notmatch 'app:itemHorizontalTranslationEnabled="false"') {
+        throw 'Bottom dock must keep labels visible and disable horizontal translation.'
+    }
+}
+if ($dimensions -notmatch '<dimen name="bottom_dock_height">(?:6[0-9]|[7-9][0-9])dp</dimen>') {
+    throw 'Bottom dock height must reserve at least 60dp before navigation insets.'
+}
+if ($glassSheet -match 'setInset(?:Top|Bottom)\(') {
+    throw 'GlassBottomSheet must not mutate MaterialButton insets after installing a custom background.'
+}
+if ($glassSheetTest -notmatch 'actionButtonKeepsSoftwareDrawnRoundedRippleWithoutVendorOutline') {
+    throw 'GlassBottomSheet custom-background regression test is missing.'
+}
 
 Write-Host 'Linting PHP files...'
 Get-ChildItem -LiteralPath (Join-Path $root 'backend') -Recurse -Filter '*.php' -File | ForEach-Object {
