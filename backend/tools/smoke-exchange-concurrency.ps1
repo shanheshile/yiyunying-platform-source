@@ -6,10 +6,14 @@ param(
     [int]$DbPort = 3306,
     [string]$DbName = 'appht',
     [string]$DbUser = 'appht',
-    [string]$DbPassword = 'appht'
+    [string]$DbPassword = $env:YIYUNYING_TEST_DB_PASSWORD
 )
 
 $ErrorActionPreference = 'Stop'
+$DbPassword = if ($null -eq $DbPassword) { '' } else { $DbPassword.Trim() }
+if ([string]::IsNullOrWhiteSpace($DbPassword)) {
+    throw 'Set YIYUNYING_TEST_DB_PASSWORD or pass -DbPassword explicitly before running this smoke test.'
+}
 $BaseUrl = $BaseUrl.TrimEnd('/')
 $root = Split-Path -Parent $PSScriptRoot
 $worker = Join-Path $PSScriptRoot 'exchange-concurrency-worker.php'

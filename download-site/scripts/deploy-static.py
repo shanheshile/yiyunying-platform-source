@@ -229,6 +229,11 @@ def main() -> int:
         run(ssh, f"rm -rf {quote(remote_site + '.previous')} {quote(staging_root)}")
         print(f"Deployed download center {args.version}; verified four APK artifacts.")
         print(f"Backup: {backup_root}")
+        print(
+            "WARNING: static deployment does not update software_update_policies. "
+            "Run backend/tools/publish-android-ssh.py and "
+            "backend/tools/verify-production-release-ssh.py before announcing the release."
+        )
         return 0
     finally:
         ssh.close()

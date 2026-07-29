@@ -104,6 +104,39 @@ def connect_ssh(args: argparse.Namespace, password: str) -> paramiko.SSHClient:
     raise last_error
 
 
+def probe_public_apk(
+    client: paramiko.SSHClient,
+    url: str,
+    expected_size: int,
+    edition: str,
+) -> None:
+    """Read public headers and the first four bytes without downloading the APK."""
+    script = f"""set -eu
+headers=$(mktemp)
+body=$(mktemp)
+trap 'rm -f "$headers" "$body"' EXIT
+curl -fsSIL --max-time 30 -D "$headers" -o /dev/null {quote(url)}
+mime=$(awk 'BEGIN {{IGNORECASE=1}} /^Content-Type:/ {{gsub(/\\r/, ""); value=$2}} END {{print value}}' "$headers")
+length=$(awk 'BEGIN {{IGNORECASE=1}} /^Content-Length:/ {{gsub(/\\r/, ""); value=$2}} END {{print value}}' "$headers")
+curl -fsS --max-time 30 --max-filesize 1024 --range 0-3 -o "$body" {quote(url)}
+magic=$(od -An -tx1 -N4 "$body" | tr -d ' \\n')
+printf '%s\\t%s\\t%s' "$mime" "$length" "$magic"
+"""
+    raw = run(client, script, f"public-apk-{edition}").strip()
+    parts = raw.split("\t")
+    if len(parts) != 3:
+        raise RuntimeError(f"{edition} public APK probe returned malformed output: {raw!r}")
+    mime, length, magic = parts
+    if mime.lower() != "application/vnd.android.package-archive":
+        raise RuntimeError(f"{edition} public APK has invalid MIME type: {mime!r}")
+    if not length.isdigit() or int(length) != expected_size:
+        raise RuntimeError(
+            f"{edition} public APK length mismatch: expected {expected_size}, got {length!r}"
+        )
+    if magic.lower() != "504b0304":
+        raise RuntimeError(f"{edition} public APK is not a ZIP/APK payload: {magic!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
@@ -196,9 +229,15 @@ def main() -> int:
             failed = [name for name, passed in checks.items() if not passed]
             if failed:
                 raise RuntimeError(f"{edition} lifecycle validation failed: {', '.join(failed)}")
+            probe_public_apk(
+                client,
+                str(update["download_url"]),
+                int(release["size"]),
+                edition,
+            )
             print(
                 f"[ok] {edition}: version={update['version_code']}, package={update['package_name']}, "
-                f"size={update['size_bytes']}, force_update=false"
+                f"size={update['size_bytes']}, force_update=false, public-apk=valid"
             )
         print("[complete] lifecycle verification passed: 4/4")
     finally:

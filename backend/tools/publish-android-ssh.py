@@ -327,8 +327,26 @@ def main() -> int:
             "apk-backup",
         )
 
+        reused_editions: set[str] = set()
+        for release in args.release:
+            remote_stage = posixpath.join(stage_dir, release.remote_filename)
+            remote_final = posixpath.join(release_dir, release.remote_filename)
+            reused = run(
+                client,
+                f"if [ -f {quote(remote_final)} ] "
+                f"&& [ $(stat -c %s {quote(remote_final)}) -eq {release.size_bytes} ] "
+                f"&& [ $(sha256sum {quote(remote_final)} | awk '{{print $1}}') = {quote(release.sha256)} ]; "
+                f"then cp -f {quote(remote_final)} {quote(remote_stage)} && echo reused; fi",
+                f"reuse-{release.edition}",
+            ).strip()
+            if reused == "reused":
+                reused_editions.add(release.edition)
+
         client.close()
         for release in args.release:
+            if release.edition in reused_editions:
+                print(f"[upload] {release.edition}: reused verified production artifact")
+                continue
             remote_stage = posixpath.join(stage_dir, release.remote_filename)
             print(
                 f"[upload] {release.edition}: {release.size_bytes} bytes, sha256={release.sha256}"

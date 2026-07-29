@@ -36,6 +36,7 @@
 - [本地开发](LOCAL_DEVELOPMENT.md)
 - [测试说明](TESTING.md)
 - [部署说明](DEPLOYMENT.md)
+- [版本完整性与生产发布规范](RELEASE_INTEGRITY.md)
 - [发布检查表](RELEASE_CHECKLIST.md)
 - [贡献指南](../CONTRIBUTING.md)
 - [安全策略](../SECURITY.md)
