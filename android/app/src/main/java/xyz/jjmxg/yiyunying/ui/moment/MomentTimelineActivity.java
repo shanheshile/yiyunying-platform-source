@@ -116,6 +116,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private JsonObject pendingForwardMoment;
     private long replyingCommentId;
     private long targetUserId;
+    private boolean pinSectionVisible;
     private long targetMomentId;
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
@@ -222,6 +223,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         super.onCreate(state);
         targetUserId = getIntent().getLongExtra(EXTRA_USER_ID, 0L);
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
+        // 置顶分区仅在「本人/指定联系人」动态内可见；公共动态不展示他人置顶
+        pinSectionVisible = targetUserId > 0L;
         targetUserTitle = getIntent().getStringExtra(EXTRA_USER_TITLE);
         if (targetUserTitle == null) targetUserTitle = "";
         binding = ActivityMomentTimelineBinding.inflate(getLayoutInflater());
@@ -726,6 +729,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         List<String> labels = new ArrayList<>();
         if (flag(snapshot, "can_pin")) labels.add(flag(snapshot, "is_pinned") ? "取消置顶" : "置顶动态");
         if (flag(snapshot, "can_edit")) labels.add("编辑动态");
+        if (flag(snapshot, "can_hide")) labels.add(flag(snapshot, "is_hidden") ? "取消隐藏" : "隐藏动态");
         if (flag(snapshot, "can_delete")) labels.add("删除动态");
         if (labels.isEmpty()) return;
         new YiyunyingDialogBuilder(this).setTitle("动态操作")
@@ -740,6 +744,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     if ("置顶动态".equals(action)) setMomentPinned(id, true);
                     else if ("取消置顶".equals(action)) setMomentPinned(id, false);
                     else if ("编辑动态".equals(action)) showComposer(snapshot);
+                    else if ("隐藏动态".equals(action)) setMomentHidden(id, true);
+                    else if ("取消隐藏".equals(action)) setMomentHidden(id, false);
                     else if ("删除动态".equals(action)) confirmDelete(snapshot);
                 }, 80L);
             }).setNegativeButton("取消", null).show();
@@ -767,6 +773,32 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             JsonObject updated = Jsons.object(result.dataObject(), "moment");
             adapter.applyPinned(updated, id, pinned);
             message(result.message().isEmpty() ? (pinned ? "动态已置顶" : "已取消置顶") : result.message());
+            binding.getRoot().postDelayed(() -> {
+                if (isUiActive()) load(false);
+            }, 120L);
+        });
+    }
+
+    private void setMomentHidden(long id, boolean hidden) {
+        if (!isUiActive() || actionRequest != null || id <= 0) return;
+        ++listGeneration;
+        if (listRequest != null) {
+            listRequest.cancel();
+            listRequest = null;
+        }
+        binding.progress.setVisibility(View.INVISIBLE);
+        binding.swipeRefresh.setRefreshing(false);
+        JsonObject body = new JsonObject();
+        body.addProperty("hidden", hidden);
+        actionRequest = AppAccess.from(this).repository().post("/api/user/moments/" + id + "/hide", body, result -> {
+            actionRequest = null;
+            if (binding == null || isFinishing() || isDestroyed()) return;
+            if (result.isAuthenticationFailure()) { login(); return; }
+            if (!result.isSuccessful()) {
+                message(result.message().isEmpty() ? (hidden ? "隐藏失败" : "取消隐藏失败") : result.message());
+                return;
+            }
+            message(result.message().isEmpty() ? (hidden ? "动态已隐藏" : "已取消隐藏") : result.message());
             binding.getRoot().postDelayed(() -> {
                 if (isUiActive()) load(false);
             }, 120L);
@@ -1466,6 +1498,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     : null);
                 boolean profileTimeline = targetMomentId <= 0 && targetUserId > 0;
                 row.pinBadge.setVisibility(profileTimeline && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
+                boolean lastPinned = profileTimeline && flag(item, "is_pinned");
+                if (lastPinned) {
+                    int next = position + 1;
+                    boolean nextIsPinned = next < items.size() && flag(items.get(next), "is_pinned");
+                    lastPinned = !nextIsPinned;
+                }
+                row.pinDivider.setVisibility(lastPinned ? View.VISIBLE : View.GONE);
+                boolean immersive = targetMomentId > 0;
+                row.dayText.setVisibility(immersive ? View.GONE : View.VISIBLE);
+                row.monthText.setVisibility(immersive ? View.GONE : View.VISIBLE);
                 StringBuilder meta = new StringBuilder();
                 meta.append(Jsons.string(item, "time_label"));
                 if (flag(item, "is_edited")) meta.append(" · 已编辑");
