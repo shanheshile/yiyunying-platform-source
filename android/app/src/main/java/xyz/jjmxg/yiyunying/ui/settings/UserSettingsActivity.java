@@ -155,6 +155,8 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         binding.appIconButton.setOnClickListener(view -> chooseAppIcon());
         binding.dynamicVisibilityModeButton.setOnClickListener(view -> chooseDynamicVisibilityMode());
         binding.dynamicVisibleDaysButton.setOnClickListener(view -> chooseDynamicVisibleDays());
+        binding.dynamicAllowPickButton.setOnClickListener(view -> binding.dynamicAllowUsersInput.performClick());
+        binding.dynamicDenyPickButton.setOnClickListener(view -> binding.dynamicDenyUsersInput.performClick());
         binding.dynamicEnabled.setOnCheckedChangeListener((button, checked) -> renderDynamicPrivacy());
         configureDynamicUserPicker(binding.dynamicAllowUsersInput, dynamicAllowUsersPicker,
             dynamicAllowUsers, "选择可以查看动态的好友");
@@ -751,6 +753,10 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             ? View.VISIBLE : View.GONE);
         renderDynamicUserSummary(binding.dynamicAllowUsersInput, dynamicAllowUsers);
         renderDynamicUserSummary(binding.dynamicDenyUsersInput, dynamicDenyUsers);
+        binding.dynamicAllowPickButton.setVisibility(enabled && "selected".equals(dynamicVisibilityMode)
+            ? View.VISIBLE : View.GONE);
+        binding.dynamicDenyPickButton.setVisibility(enabled && "exclude".equals(dynamicVisibilityMode)
+            ? View.VISIBLE : View.GONE);
     }
 
     private String dynamicModeLabel(String mode) {
@@ -793,6 +799,7 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         }
         return output.toString();
     }
+
 
     private static JsonArray tokens(CharSequence text) {
         JsonArray values = new JsonArray();

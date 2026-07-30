@@ -139,6 +139,9 @@
             android:name=".ui.social.SocialDirectoryActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.social.FriendPickerActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.social.AddFriendActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity

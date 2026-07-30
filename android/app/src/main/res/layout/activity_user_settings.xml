@@ -375,6 +375,15 @@
                         android:maxLines="2" />
                 </com.google.android.material.textfield.TextInputLayout>
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dynamicAllowPickButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="6dp"
+                    android:text="从好友中选择"
+                    android:visibility="gone" />
+
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/dynamicDenyUsersLayout"
                     style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
@@ -393,6 +402,15 @@
                         android:focusable="false"
                         android:maxLines="2" />
                 </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dynamicDenyPickButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="6dp"
+                    android:text="从好友中选择"
+                    android:visibility="gone" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/profileNotesVisible"
