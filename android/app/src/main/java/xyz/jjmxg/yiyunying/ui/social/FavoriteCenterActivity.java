@@ -443,7 +443,7 @@ public final class FavoriteCenterActivity extends xyz.jjmxg.yiyunying.ui.common.
             }
             long messageId = Jsons.longValue(item, "message_id");
             if (messageId <= 0) messageId = Jsons.longValue(item, "target_id");
-            if (messageId > 0) ChatActivity.focusMessage(intent, messageId);
+            if (messageId > 0) ChatActivity.scrollToMessage(intent, messageId);
             startActivity(intent);
             return;
         }

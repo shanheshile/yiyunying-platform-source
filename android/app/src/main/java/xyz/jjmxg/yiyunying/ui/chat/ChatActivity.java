@@ -146,6 +146,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private static final String EXTRA_PEER_ID = "peer_id";
     private static final String EXTRA_TITLE = "title";
     private static final String EXTRA_FOCUS_MESSAGE_ID = "focus_message_id";
+    private static final String EXTRA_SCROLL_MESSAGE_ID = "scroll_message_id";
     private static final String MODE_ROOM = "room";
     private static final String MODE_CONVERSATION = "conversation";
     private static final String MODE_SERVICE_USER = "service_user";
@@ -256,6 +257,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private long serviceSessionId;
     private long resolvedPeerId;
     private long pendingFocusMessageId;
+    private long pendingScrollMessageId;
     private final List<PendingAttachment> pendingAttachments = new ArrayList<>();
     private final Set<String> preparingAttachmentUris = new LinkedHashSet<>();
     private int attachmentPreparationCount;
@@ -482,6 +484,15 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         return intent.putExtra(EXTRA_FOCUS_MESSAGE_ID, Math.max(0L, messageId));
     }
 
+    /**
+     * Scrolls to and gently highlights a message when opening it as a normal source
+     * (e.g. from "我的收藏"), without implying the user was @-mentioned. Unlike
+     * {@link #focusMessage(Intent, long)} this must NOT show the "已定位到 @ 你的消息" tip.
+     */
+    public static Intent scrollToMessage(Intent intent, long messageId) {
+        return intent.putExtra(EXTRA_SCROLL_MESSAGE_ID, Math.max(0L, messageId));
+    }
+
     public static void openAdminService(Context context, long sessionId, String title) {
         context.startActivity(intent(context, MODE_SERVICE_ADMIN, sessionId, 0, title));
     }
@@ -504,6 +515,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         applyChatBackground();
         resolvedPeerId = Math.max(0L, getIntent().getLongExtra(EXTRA_PEER_ID, 0L));
         pendingFocusMessageId = getIntent().getLongExtra(EXTRA_FOCUS_MESSAGE_ID, 0L);
+        pendingScrollMessageId = getIntent().getLongExtra(EXTRA_SCROLL_MESSAGE_ID, 0L);
         normalTitle = getIntent().getStringExtra(EXTRA_TITLE);
         if (normalTitle == null || normalTitle.trim().isEmpty()) normalTitle = "聊天";
         xyz.jjmxg.yiyunying.core.RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, normalTitle);
@@ -4151,6 +4163,8 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 } else {
                     if (pendingFocusMessageId > 0L) {
                         focusPendingMention();
+                    } else if (pendingScrollMessageId > 0L) {
+                        scrollToPendingMessage();
                     } else if (firstLoad || wasAtLatest) {
                         scrollToLatestMessage(false);
                         markGroupRead();
@@ -5613,7 +5627,36 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         }, 180L);
     }
 
+    /**
+     * Scrolls to a message opened as a normal source (e.g. from "我的收藏") and highlights it,
+     * but does NOT show the @-mention tip. See {@link #focusPendingMention()}.
+     */
+    private void scrollToPendingMessage() {
+        if (pendingScrollMessageId <= 0L || adapter == null || binding == null) return;
+        long requested = pendingScrollMessageId;
+        pendingScrollMessageId = 0L;
+        int position = adapter.positionOf(requested);
+        if (position < 0) {
+            loadTargetMessage(requested, false);
+            return;
+        }
+        binding.recycler.scrollToPosition(position);
+        binding.recycler.postDelayed(() -> {
+            if (binding == null) return;
+            jumpToMessage(requested);
+        }, 180L);
+    }
+
     private void loadMentionTarget(long messageId) {
+        loadTargetMessage(messageId, true);
+    }
+
+    /**
+     * Loads a single message by id (chat-search) and scrolls to it once merged.
+     * When {@code mentionTip} is true the "@ 你的消息" tip is shown (real @-mention jumps);
+     * when false the message is simply highlighted without that tip (e.g. opening a collection).
+     */
+    private void loadTargetMessage(long messageId, boolean mentionTip) {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("scope_type", searchScope());
         query.put("target_id", String.valueOf(searchTargetId()));
@@ -5622,13 +5665,20 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         AppAccess.from(this).repository().get("/api/user/chat-search", query, result -> {
             if (binding == null) return;
             if (!result.isSuccessful() || result.items().size() == 0) {
-                Snackbar.make(binding.getRoot(), "被提及的消息已撤回、删除或暂时无法读取", Snackbar.LENGTH_LONG).show();
+                Snackbar.make(binding.getRoot(),
+                    mentionTip ? "被提及的消息已撤回、删除或暂时无法读取" : "收藏的消息已撤回、删除或暂时无法读取",
+                    Snackbar.LENGTH_LONG).show();
                 return;
             }
             merge(result.items());
             adapter.submit(orderedMessageSnapshot());
-            pendingFocusMessageId = messageId;
-            binding.recycler.post(this::focusPendingMention);
+            if (mentionTip) {
+                pendingFocusMessageId = messageId;
+                binding.recycler.post(this::focusPendingMention);
+            } else {
+                pendingScrollMessageId = messageId;
+                binding.recycler.post(this::scrollToPendingMessage);
+            }
         });
     }
 
@@ -5638,11 +5688,14 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         String nextConversation = conversationIdentity(intent);
         setIntent(intent);
         pendingFocusMessageId = intent.getLongExtra(EXTRA_FOCUS_MESSAGE_ID, 0L);
+        pendingScrollMessageId = intent.getLongExtra(EXTRA_SCROLL_MESSAGE_ID, 0L);
         if (!previousConversation.equals(nextConversation)) {
             resetForConversationIntent();
             if (running) loadMessages();
         } else if (pendingFocusMessageId > 0L) {
             focusPendingMention();
+        } else if (pendingScrollMessageId > 0L) {
+            scrollToPendingMessage();
         } else {
             refreshMessagesNow();
         }
