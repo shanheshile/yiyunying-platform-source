@@ -109,7 +109,9 @@ public final class ResourceSubmitActivity extends SystemInsetActivity {
         configureMode();
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         binding.chooseFileButton.setOnClickListener(view ->
-            filePicker.launch(FilePickerActivity.pickerIntent(this, 1)));
+            filePicker.launch(mode == MODE_APPS
+                ? FilePickerActivity.appPackageIntent(this)
+                : FilePickerActivity.pickerIntent(this, 1)));
         binding.chooseCoverButton.setOnClickListener(view ->
             coverPicker.launch(MediaPickerActivity.imageIntent(this, 1)));
         binding.submitButton.setOnClickListener(view -> submit());

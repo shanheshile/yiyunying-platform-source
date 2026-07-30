@@ -49,6 +49,7 @@ import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 public final class FilePickerActivity extends SystemInsetActivity {
     public static final String EXTRA_SELECTED_URIS = "selected_file_uris";
     private static final String EXTRA_MAX_COUNT = "max_count";
+    private static final String EXTRA_APP_ONLY = "app_only";
     private static final String STATE_URIS = "state_uris";
     private static final int MAX_QUERY_COUNT = 5000;
 
@@ -60,6 +61,7 @@ public final class FilePickerActivity extends SystemInsetActivity {
     private final ExecutorService loader = Executors.newSingleThreadExecutor();
     private final FileAdapter adapter = new FileAdapter();
     private int maxCount = 50;
+    private boolean appOnly;
     private int activeFilter = R.id.filterAll;
     private boolean loading;
     private boolean loaded;
@@ -82,12 +84,29 @@ public final class FilePickerActivity extends SystemInsetActivity {
             .putExtra(EXTRA_MAX_COUNT, Math.max(1, maxCount));
     }
 
+    /** Restrict the picker to application packages only (apk/hap/ipa/exe). Used by 投稿应用. */
+    public static Intent appPackageIntent(Context context) {
+        return new Intent(context, FilePickerActivity.class)
+            .putExtra(EXTRA_MAX_COUNT, 1)
+            .putExtra(EXTRA_APP_ONLY, true);
+    }
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         binding = ActivityFilePickerBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         maxCount = Math.max(1, getIntent().getIntExtra(EXTRA_MAX_COUNT, 50));
+        appOnly = getIntent().getBooleanExtra(EXTRA_APP_ONLY, false);
         permissionKnownGranted = hasFilePermission();
+        if (appOnly) {
+            activeFilter = R.id.filterApp;
+            binding.filterGroup.check(R.id.filterApp);
+            binding.filterAll.setVisibility(View.GONE);
+            binding.filterDocument.setVisibility(View.GONE);
+            binding.filterArchive.setVisibility(View.GONE);
+            binding.filterMedia.setVisibility(View.GONE);
+            binding.searchInput.setHint("搜索安装包（apk / hap / ipa / exe）");
+        }
 
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         binding.fileList.setLayoutManager(new LinearLayoutManager(this));
@@ -257,6 +276,7 @@ public final class FilePickerActivity extends SystemInsetActivity {
     }
 
     private boolean matchesActiveFilter(LocalFile file) {
+        if (appOnly) return "app".equals(category(file));
         if (activeFilter == R.id.filterAll) return true;
         String category = category(file);
         if (activeFilter == R.id.filterDocument) return "document".equals(category);
@@ -269,7 +289,8 @@ public final class FilePickerActivity extends SystemInsetActivity {
     private String category(LocalFile file) {
         String mime = file.mime.toLowerCase(Locale.ROOT);
         String extension = extensionOf(file.name).toLowerCase(Locale.ROOT);
-        if ("apk".equals(extension) || mime.contains("android.package")) return "app";
+        if ("apk".equals(extension) || "hap".equals(extension) || "ipa".equals(extension)
+            || "exe".equals(extension) || mime.contains("android.package")) return "app";
         if (mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")) return "media";
         if ("zip".equals(extension) || "7z".equals(extension) || "rar".equals(extension)
             || "tar".equals(extension) || "gz".equals(extension) || "bz2".equals(extension)

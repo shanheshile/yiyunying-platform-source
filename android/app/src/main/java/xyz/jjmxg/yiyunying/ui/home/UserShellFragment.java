@@ -23,6 +23,7 @@ import com.google.android.material.badge.BadgeDrawable;
 import java.util.LinkedHashMap;
 
 import xyz.jjmxg.yiyunying.R;
+import xyz.jjmxg.yiyunying.core.UnreadRefreshBus;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.FragmentUserShellBinding;
@@ -39,6 +40,9 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private final Handler unreadHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshUnread = this::refreshUnreadBadges;
+    private final UnreadRefreshBus.Listener unreadRefreshListener = context -> {
+        if (isResumed()) refreshUnreadBadges();
+    };
     private final Runnable dispatchSearch = () -> {
         if (binding != null) currentPageSearch(queries[binding.pager.getCurrentItem()]);
     };
@@ -108,7 +112,16 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
             binding.topActions.setVisibility(View.VISIBLE);
             binding.topActions.setTranslationY(0f);
         }
+        UnreadRefreshBus.setListener(unreadRefreshListener);
         refreshUnreadBadges();
+    }
+
+    @Override public void onPause() {
+        unreadHandler.removeCallbacks(refreshUnread);
+        if (unreadRequest != null) unreadRequest.cancel();
+        unreadRequest = null;
+        UnreadRefreshBus.clearListener(unreadRefreshListener);
+        super.onPause();
     }
 
     @Override public void onPause() {

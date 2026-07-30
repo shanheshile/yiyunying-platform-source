@@ -26,6 +26,7 @@ import java.util.Map;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.CrashReporter;
+import xyz.jjmxg.yiyunying.core.UnreadRefreshBus;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.FragmentNotificationCenterBinding;
@@ -429,6 +430,7 @@ public final class NotificationCenterFragment extends BaseFragment {
                     decrementCenter(1);
                 }
                 render(currentUnread());
+                UnreadRefreshBus.requestRefresh(requireContext());
             });
     }
 
@@ -460,6 +462,7 @@ public final class NotificationCenterFragment extends BaseFragment {
                 setGroupUnread(key, 0);
                 decrementCenter(unreadBefore);
                 render(currentUnread());
+                UnreadRefreshBus.requestRefresh(requireContext());
                 Snackbar.make(binding.getRoot(), result.message(), Snackbar.LENGTH_SHORT).show();
             });
     }
@@ -476,6 +479,7 @@ public final class NotificationCenterFragment extends BaseFragment {
             for (JsonObject group : groups) group.addProperty("unread_count", 0);
             setCenterUnread(selectedCenter, 0);
             render(0);
+            UnreadRefreshBus.requestRefresh(requireContext());
             Snackbar.make(binding.getRoot(), centerName(selectedCenter) + "已全部标记为已读", Snackbar.LENGTH_SHORT).show();
         });
     }
