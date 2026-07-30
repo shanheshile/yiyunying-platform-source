@@ -13,6 +13,7 @@ import android.text.TextUtils;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.LinearLayout;
+import android.widget.NumberPicker;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -86,6 +87,18 @@ public final class BountyPublishActivity extends SystemInsetActivity {
             }
         });
         loadCategories();
+        setupDeadlinePicker();
+    }
+
+    private void setupDeadlinePicker() {
+        binding.deadlineCustomDays.setMinValue(1);
+        binding.deadlineCustomDays.setMaxValue(365);
+        binding.deadlineCustomDays.setValue(30);
+        binding.deadlineCustomDays.setWrapSelectorWheel(false);
+        binding.deadlineGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            boolean custom = checkedId == R.id.deadlineCustom && isChecked;
+            binding.deadlineCustomLayout.setVisibility(custom ? View.VISIBLE : View.GONE);
+        });
     }
 
     private void loadCategories() {
@@ -307,6 +320,7 @@ public final class BountyPublishActivity extends SystemInsetActivity {
         if (checked == R.id.deadline1Day) days = 1;
         else if (checked == R.id.deadline3Days) days = 3;
         else if (checked == R.id.deadline30Days) days = 30;
+        else if (checked == R.id.deadlineCustom) days = binding.deadlineCustomDays.getValue();
         Calendar calendar = Calendar.getInstance();
         calendar.add(Calendar.DAY_OF_MONTH, days);
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(calendar.getTime());

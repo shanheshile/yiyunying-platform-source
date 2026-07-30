@@ -188,7 +188,37 @@
                     android:layout_height="48dp"
                     android:layout_weight="1"
                     android:text="30天" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/deadlineCustom"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="自定义" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <LinearLayout
+                android:id="@+id/deadlineCustomLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <NumberPicker
+                    android:id="@+id/deadlineCustomDays"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="天（最长 365 天）"
+                    android:textColor="@color/on_surface" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 style="@style/Widget.Yiyunying.Card"
