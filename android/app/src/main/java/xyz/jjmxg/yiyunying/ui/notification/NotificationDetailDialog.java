@@ -222,7 +222,8 @@ final class NotificationDetailDialog {
         if (containsAny(source, "lottery", "vote", "activity", "抽奖", "投票", "活动")) {
             return "活动通知";
         }
-        return "其他通知";
+        String serverCategory = fallback(value(item, "group_name"), value(item, "center_name"));
+        return serverCategory.isEmpty() ? "其他通知" : serverCategory;
     }
 
     private static boolean containsAny(String value, String... needles) {
