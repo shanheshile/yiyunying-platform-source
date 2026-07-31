@@ -84,4 +84,5 @@
     <string name="background_system_default_applied">システム既定のチャット背景に戻しました</string>
     <string name="private_chat_subtitle">タップしてユーザー情報を表示</string>
     <string name="group_chat_subtitle">タップしてグループ情報とメンバーを表示</string>
+    <string name="chat_room_subtitle">タップしてチャットルーム情報とメンバーを表示</string>
 </resources>

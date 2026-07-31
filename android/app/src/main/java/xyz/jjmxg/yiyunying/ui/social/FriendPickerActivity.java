@@ -32,7 +32,7 @@ import java.util.Map;
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
 import xyz.jjmxg.yiyunying.core.CrashReporter;
-import xyz.jjmxg.yiyunying.core.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
@@ -56,7 +56,7 @@ public final class FriendPickerActivity extends SystemInsetActivity {
     public static Intent pickerIntent(Context context, List<Long> preselected, String title) {
         Intent intent = new Intent(context, FriendPickerActivity.class);
         if (preselected != null && !preselected.isEmpty()) {
-            intent.putLongArrayListExtra(EXTRA_SELECTED_IDS, new ArrayList<>(preselected));
+            intent.putExtra(EXTRA_SELECTED_IDS, toLongArray(preselected));
         }
         if (title != null && !title.isEmpty()) intent.putExtra(EXTRA_TITLE, title);
         return intent;
@@ -66,8 +66,8 @@ public final class FriendPickerActivity extends SystemInsetActivity {
         super.onCreate(state);
         binding = ActivityFriendPickerBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        ArrayList<Long> preset = getIntent().getLongArrayListExtra(EXTRA_SELECTED_IDS);
-        if (preset != null) selected.addAll(preset);
+        long[] preset = getIntent().getLongArrayExtra(EXTRA_SELECTED_IDS);
+        if (preset != null) for (long id : preset) selected.add(id);
         String title = getIntent().getStringExtra(EXTRA_TITLE);
         binding.toolbar.setTitle(RuntimeLanguage.translate(this, title == null || title.isEmpty() ? "选择好友" : title));
         binding.toolbar.setNavigationOnClickListener(view -> finish());
@@ -80,7 +80,7 @@ public final class FriendPickerActivity extends SystemInsetActivity {
         });
         binding.confirmButton.setOnClickListener(view -> {
             Intent data = new Intent();
-            data.putLongArrayListExtra(EXTRA_SELECTED_IDS, new ArrayList<>(selected));
+            data.putExtra(EXTRA_SELECTED_IDS, toLongArray(selected));
             setResult(Activity.RESULT_OK, data);
             finish();
         });
@@ -143,6 +143,7 @@ public final class FriendPickerActivity extends SystemInsetActivity {
             JsonObject item = shown.get(position);
             long id = Jsons.longValue(item, "user_id");
             if (id <= 0) id = Jsons.longValue(item, "id");
+            final long selectedId = id;
             holder.name.setText(Jsons.string(item, "display_name"));
             String title = Jsons.string(item, "user_title");
             holder.title.setVisibility(title.isEmpty() ? View.GONE : View.VISIBLE);
@@ -150,11 +151,11 @@ public final class FriendPickerActivity extends SystemInsetActivity {
             ImageLoader.get().loadThumbnail(
                 ImageLoader.get().absoluteUrl(FriendPickerActivity.this, Jsons.string(item, "avatar")),
                 holder.avatar, R.drawable.ic_person);
-            holder.check.setChecked(selected.contains(id));
+            holder.check.setChecked(selected.contains(selectedId));
             holder.itemView.setOnClickListener(view -> {
-                if (selected.contains(id)) selected.remove(id);
-                else selected.add(id);
-                holder.check.setChecked(selected.contains(id));
+                if (selected.contains(selectedId)) selected.remove(selectedId);
+                else selected.add(selectedId);
+                holder.check.setChecked(selected.contains(selectedId));
                 updateCount();
             });
         }
@@ -180,6 +181,15 @@ public final class FriendPickerActivity extends SystemInsetActivity {
         binding.confirmButton.setText(RuntimeLanguage.translate(this, "确定") + "（" + selected.size() + "）");
     }
 
+    private static long[] toLongArray(List<Long> values) {
+        if (values == null || values.isEmpty()) return new long[0];
+        long[] result = new long[values.size()];
+        for (int index = 0; index < values.size(); index++) {
+            Long value = values.get(index);
+            result[index] = value == null ? 0L : value;
+        }
+        return result;
+    }
     @Override protected void onDestroy() {
         if (request != null) request.cancel();
         binding = null;

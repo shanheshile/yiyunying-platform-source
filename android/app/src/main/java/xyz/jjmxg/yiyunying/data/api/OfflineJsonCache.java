@@ -14,23 +14,37 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Comparator;
 
+import xyz.jjmxg.yiyunying.data.cache.AutoCachePolicyStore;
+import xyz.jjmxg.yiyunying.data.cache.LocalCacheManager;
+
 /** Durable, account-isolated cache for successful read-only API responses. */
 final class OfflineJsonCache {
-    private static final long MAX_BYTES = 128L * 1024L * 1024L;
     private static final long MAX_ENTRY_BYTES = 8L * 1024L * 1024L;
-    private static final int MAX_FILES = 2000;
 
     private final File directory;
+    private final LocalCacheManager manager;
 
     OfflineJsonCache(Context context) {
-        directory = new File(context.getFilesDir(), "offline_json_v1");
+        Context application = context.getApplicationContext();
+        directory = new File(application.getFilesDir(), "offline_json_v1");
         if (!directory.exists()) directory.mkdirs();
+        manager = LocalCacheManager.get(application);
     }
 
-    synchronized void put(String key, String resourceKey, String contentKind, ApiResult result) {
+    synchronized void put(
+        String key,
+        String resourceKey,
+        String contentKind,
+        ApiResult result
+    ) {
         if (key == null || key.isEmpty() || result == null || !result.isSuccessful()) return;
+        String category = AutoCachePolicyStore.categoryForContentKind(contentKind);
+        if (!manager.policy().accepts(category)) return;
+
         JsonObject stored = new JsonObject();
         stored.addProperty("saved_at", System.currentTimeMillis());
+        stored.addProperty("account_key", manager.accountKey());
+        stored.addProperty("origin_key", key);
         stored.addProperty("resource_key", resourceKey == null ? "" : resourceKey);
         stored.addProperty("content_kind", contentKind == null ? "只读内容" : contentKind);
         stored.addProperty("http_code", result.httpCode());
@@ -49,7 +63,7 @@ final class OfflineJsonCache {
             if (target.exists() && !target.delete()) return;
             if (!temporary.renameTo(target)) return;
             target.setLastModified(System.currentTimeMillis());
-            trim();
+            manager.registerApiCache(target, key, resourceKey, contentKind);
         } catch (Exception ignored) {
             temporary.delete();
         }
@@ -57,9 +71,10 @@ final class OfflineJsonCache {
 
     synchronized ApiResult get(String key, String resourceKey) {
         if (key == null || key.isEmpty()) return null;
+        String accountKey = manager.accountKey();
         File source = fileFor(key);
         JsonObject exact = read(source);
-        if (exact != null) return toResult(source, exact);
+        if (belongsToAccount(exact, accountKey)) return toResult(source, exact);
         if (resourceKey == null || resourceKey.isEmpty()) return null;
 
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".json"));
@@ -68,7 +83,8 @@ final class OfflineJsonCache {
         for (File candidate : files) {
             if (candidate.equals(source)) continue;
             JsonObject value = read(candidate);
-            if (value != null && resourceKey.equals(string(value, "resource_key"))) {
+            if (belongsToAccount(value, accountKey)
+                && resourceKey.equals(string(value, "resource_key"))) {
                 return toResult(candidate, value);
             }
         }
@@ -77,7 +93,9 @@ final class OfflineJsonCache {
 
     private JsonObject read(File source) {
         if (source == null || !source.isFile() || source.length() <= 0L
-            || source.length() > MAX_ENTRY_BYTES) return null;
+            || source.length() > MAX_ENTRY_BYTES) {
+            return null;
+        }
         try (FileInputStream input = new FileInputStream(source)) {
             byte[] bytes = new byte[(int) source.length()];
             int offset = 0;
@@ -88,8 +106,7 @@ final class OfflineJsonCache {
             }
             if (offset != bytes.length) return null;
             JsonElement parsed = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8));
-            if (!parsed.isJsonObject()) return null;
-            return parsed.getAsJsonObject();
+            return parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
         } catch (Exception ignored) {
             source.delete();
             return null;
@@ -99,7 +116,9 @@ final class OfflineJsonCache {
     private ApiResult toResult(File source, JsonObject value) {
         JsonElement data = value.has("data") ? value.get("data") : new JsonObject();
         String kind = string(value, "content_kind");
+        String originKey = string(value, "origin_key");
         source.setLastModified(System.currentTimeMillis());
+        if (!originKey.isEmpty()) manager.touch(originKey);
         return ApiResult.response(
             200,
             1,
@@ -109,7 +128,13 @@ final class OfflineJsonCache {
         );
     }
 
+    private static boolean belongsToAccount(JsonObject object, String accountKey) {
+        if (object == null || accountKey == null || accountKey.isEmpty()) return false;
+        return accountKey.equals(string(object, "account_key"));
+    }
+
     private static String string(JsonObject object, String key) {
+        if (object == null) return "";
         try {
             JsonElement value = object.get(key);
             return value == null || value.isJsonNull() ? "" : value.getAsString();
@@ -120,21 +145,6 @@ final class OfflineJsonCache {
 
     private File fileFor(String key) {
         return new File(directory, digest(key) + ".json");
-    }
-
-    private void trim() {
-        File[] files = directory.listFiles((dir, name) -> name.endsWith(".json"));
-        if (files == null || files.length == 0) return;
-        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        long total = 0L;
-        for (File file : files) total += file.length();
-        int remaining = files.length;
-        for (File file : files) {
-            if (total <= MAX_BYTES && remaining <= MAX_FILES) break;
-            long length = file.length();
-            if (file.delete()) total -= length;
-            remaining--;
-        }
     }
 
     private static String digest(String value) {

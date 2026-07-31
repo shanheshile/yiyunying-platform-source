@@ -157,11 +157,11 @@ function ConvertFrom-AaptPackageLine {
 }
 
 function Assert-ApkIdentityParser {
-    $fixture = "package: name='xyz.jjmxg.yiyunying.user.debug' versionCode='48' versionName='2.7.3-user-debug' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'"
+    $fixture = "package: name='xyz.jjmxg.yiyunying.user.debug' versionCode='123' versionName='9.8.7-user-debug' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'"
     $identity = ConvertFrom-AaptPackageLine -PackageLine $fixture -Source '内置回归样例'
     if ($identity.packageName -ne 'xyz.jjmxg.yiyunying.user.debug' -or
-        $identity.versionCode -ne 48 -or
-        $identity.versionName -ne '2.7.3-user-debug') {
+        $identity.versionCode -ne 123 -or
+        $identity.versionName -ne '9.8.7-user-debug') {
         throw 'APK 元数据解析回归检查失败。'
     }
 }
@@ -361,10 +361,10 @@ try {
     }
     else {
         @(
-            '修复共享底部弹层重复应用外观时的崩溃',
-            '优化小米与 vivo 等设备的底部 Dock 标签、安全区与留白',
-            '统一源码、APK、更新接口与下载站版本链路并增加签名校验',
-            '补全开发历史、需求追踪、风险登记与下一阶段实施路线图'
+            '新增账号隔离的自动缓存策略、分类清理与服务端平台上限',
+            '优化图片原图、GIF 动图、动态照片、视频、语音、音频、文档与普通文件的类型化预览',
+            '完善视频封面、缓冲、进度、倍速、全屏和按网络自动播放策略',
+            '补齐数据库迁移、十一领域验收矩阵与发布前静态检查'
         )
     }
     Assert-ReleaseNotes -Notes $notes

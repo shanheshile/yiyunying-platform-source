@@ -200,6 +200,9 @@
             android:name=".ui.upload.DownloadsActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.upload.CacheBrowserActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.upload.CacheManagementActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize" />

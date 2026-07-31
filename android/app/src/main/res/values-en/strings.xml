@@ -84,4 +84,5 @@
     <string name="background_system_default_applied">System default chat background restored</string>
     <string name="private_chat_subtitle">Tap to view the user profile</string>
     <string name="group_chat_subtitle">Tap to view group details and members</string>
+    <string name="chat_room_subtitle">Tap to view chat room details and members</string>
 </resources>

@@ -62,6 +62,16 @@ try {
         cloud_favorite_sync_enabled = $true
         cloud_favorite_sync_price = 0
         cloud_backup_max_items = 100
+        auto_download_cache_enabled = $true
+        auto_cache_allowed_categories = @('chat_record', 'profile', 'image', 'video', 'voice', 'audio', 'document', 'file', 'sticker')
+        auto_cache_default_max_bytes = 536870912
+        auto_cache_max_bytes_limit = 2147483648
+        auto_cache_retention_days = 90
+        auto_cache_network = 'wifi_mobile'
+        auto_cache_force_wifi_only = $false
+        video_autoplay_enabled = $true
+        video_autoplay_network = 'wifi_mobile'
+        video_autoplay_default_network = 'wifi'
     } } | Out-Null
 
     $a = Invoke-Api POST '/api/user/register' @{} @{ app_key = $appKey; account = "sync_a_$suffix"; password = '123456'; password_confirmation = '123456'; nickname = 'A' }
@@ -106,6 +116,12 @@ try {
     Invoke-Api POST "/api/user/messages/$($text.message_id)/state" $headersA @{ action = 'favorite' } | Out-Null
     $policy = Invoke-Api GET '/api/user/cloud-sync/policy' $headersA
     Assert-True ([int]$policy.media_cache_max_bytes -eq 536870912) 'cloud policy exposes local media cache limit'
+    Assert-True ([bool]$policy.auto_cache_policy.enabled) 'automatic cache policy is enabled'
+    Assert-True ([string]$policy.auto_cache_policy.network -eq 'wifi_mobile') 'automatic cache network policy is returned'
+    Assert-True ([int]$policy.auto_cache_policy.default_max_bytes -eq 536870912) 'automatic cache default capacity is returned'
+    Assert-True (@($policy.auto_cache_policy.allowed_categories).Count -eq 9) 'automatic cache category allow-list is returned'
+    Assert-True ([bool]$policy.video_autoplay_policy.enabled) 'video autoplay policy is enabled'
+    Assert-True ([string]$policy.video_autoplay_policy.network -eq 'wifi_mobile') 'video autoplay network policy is returned'
     Assert-True ([bool]$policy.items.chat.available) 'chat backup policy is available'
 
     $chatBackup = Invoke-Api POST '/api/user/cloud-sync/snapshots' $headersA @{

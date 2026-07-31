@@ -278,10 +278,11 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         if (attachments.isEmpty()) return "";
         JsonObject first = attachments.get(0).isJsonObject() ? attachments.get(0).getAsJsonObject() : new JsonObject();
         String type = Jsons.string(first, "media_type");
-        if ("image".equals(type)) return "[图片]";
-        if ("video".equals(type)) return "[视频]";
-        if ("audio".equals(type)) return "[语音]";
         if ("sticker".equals(type)) return "[表情包]";
+        if (isVideoAttachment(first)) return "[视频]";
+        if (isDynamicImage(first)) return "[动图]";
+        if (isImageAttachment(first)) return "[图片]";
+        if (isAudioAttachment(first)) return isRecordedVoice(first) ? "[语音]" : "[音频]";
         return "[附件]";
     }
 
@@ -313,8 +314,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (!element.isJsonObject()) continue;
             JsonObject attachment = element.getAsJsonObject();
             String type = Jsons.string(attachment, "media_type");
-            if ("image".equals(type) || "video".equals(type)) visualMedia.add(attachment);
-            else if ("sticker".equals(type)) stickers.add(attachment);
+            if ("sticker".equals(type)) stickers.add(attachment);
+            else if (isVisualAttachment(attachment)) visualMedia.add(attachment);
             else others.add(attachment);
         }
         long messageId = itemId(item);
@@ -522,7 +523,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (preview.isEmpty()) preview = Jsons.string(attachment, "url");
             if (!preview.isEmpty()) ImageLoader.get().load(absolute(context, preview), image, R.drawable.ic_file);
             layerCard.addView(image);
-            if (layer == 0 && "video".equals(Jsons.string(attachment, "media_type"))) layerCard.addView(playOverlay(context));
+            if (layer == 0 && isVideoAttachment(attachment)) layerCard.addView(playOverlay(context));
             stage.addView(layerCard);
         }
     }
@@ -630,12 +631,28 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setBackgroundColor(context.getColor(R.color.surface_container));
         String preview = Jsons.string(attachment, "thumbnail_url");
-        boolean video = "video".equals(Jsons.string(attachment, "media_type"));
+        boolean video = isVideoAttachment(attachment);
         if (preview.isEmpty()) preview = Jsons.string(attachment, "url");
         if (!preview.isEmpty()) ImageLoader.get().load(absolute(context, preview), image, R.drawable.ic_file);
         frame.addView(image);
         if (video) frame.addView(playOverlay(context));
-        frame.setContentDescription(sticker ? "表情包" : (video ? "聊天视频" : "聊天图片"));
+        String badgeText = mediaBadge(attachment);
+        if (!badgeText.isEmpty() && !sticker) {
+            TextView badge = new TextView(context);
+            badge.setText(badgeText);
+            badge.setTextSize(10f);
+            badge.setTextColor(context.getColor(R.color.on_surface));
+            badge.setGravity(Gravity.CENTER);
+            badge.setPadding(dp(context, 7), dp(context, 3), dp(context, 7), dp(context, 3));
+            applyGlassBackground(badge);
+            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.START | Gravity.TOP);
+            badgeParams.setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8));
+            frame.addView(badge, badgeParams);
+        }
+        frame.setContentDescription(sticker ? "表情包" : (video ? "聊天视频"
+            : (isDynamicImage(attachment) ? "聊天动图" : "聊天图片")));
         frame.setOnClickListener(view -> {
             openConversationGallery(context, attachment);
         });
@@ -682,7 +699,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private View fileRow(Holder holder, JsonObject message, JsonObject attachment) {
         Context context = holder.itemView.getContext();
         String type = Jsons.string(attachment, "media_type");
-        if ("audio".equals(type)) {
+        if (isAudioAttachment(attachment)) {
             LinearLayout audioBlock = new LinearLayout(context);
             audioBlock.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams blockParams = new LinearLayout.LayoutParams(
@@ -829,9 +846,11 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         if ("zip".equals(extension) || "7z".equals(extension) || "rar".equals(extension)
             || "tar".equals(extension) || "gz".equals(extension) || "bz2".equals(extension)
             || "xz".equals(extension)) return extension.toUpperCase(Locale.ROOT) + " 压缩包";
-        if ("video".equals(type) || mime.startsWith("video/")) return "视频文件";
-        if ("audio".equals(type) || mime.startsWith("audio/")) return "音频文件";
-        if ("image".equals(type) || mime.startsWith("image/")) return "图片文件";
+        if (isVideoAttachment(attachment)) return "视频文件";
+        if (isRecordedVoice(attachment)) return "语音消息";
+        if (isAudioAttachment(attachment)) return "音频文件";
+        if (isDynamicImage(attachment)) return "动态图片";
+        if (isImageAttachment(attachment)) return "图片文件";
         if (isSourceExtension(extension)) return extension.toUpperCase(Locale.ROOT) + " 源码";
         return extension.isEmpty() ? "文件" : extension.toUpperCase(Locale.ROOT) + " 文件";
     }
@@ -845,6 +864,46 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         return R.drawable.ic_file;
     }
 
+    private boolean isVisualAttachment(JsonObject attachment) {
+        return isImageAttachment(attachment) || isVideoAttachment(attachment);
+    }
+
+    private boolean isImageAttachment(JsonObject attachment) {
+        String type = Jsons.string(attachment, "media_type").toLowerCase(Locale.ROOT);
+        String mime = Jsons.string(attachment, "mime_type").toLowerCase(Locale.ROOT);
+        return "image".equals(type) || "gif".equals(type) || "motion_photo".equals(type)
+            || mime.startsWith("image/");
+    }
+
+    private boolean isVideoAttachment(JsonObject attachment) {
+        String type = Jsons.string(attachment, "media_type").toLowerCase(Locale.ROOT);
+        String mime = Jsons.string(attachment, "mime_type").toLowerCase(Locale.ROOT);
+        return "video".equals(type) || mime.startsWith("video/");
+    }
+
+    private boolean isAudioAttachment(JsonObject attachment) {
+        String type = Jsons.string(attachment, "media_type").toLowerCase(Locale.ROOT);
+        String mime = Jsons.string(attachment, "mime_type").toLowerCase(Locale.ROOT);
+        return "audio".equals(type) || "voice".equals(type) || "recorded_voice".equals(type)
+            || mime.startsWith("audio/");
+    }
+
+    private boolean isDynamicImage(JsonObject attachment) {
+        String type = Jsons.string(attachment, "media_type").toLowerCase(Locale.ROOT);
+        String mime = Jsons.string(attachment, "mime_type").toLowerCase(Locale.ROOT);
+        String name = Jsons.string(attachment, "original_name");
+        if (name.isEmpty()) name = Jsons.string(attachment, "file_name");
+        return "gif".equals(type) || "motion_photo".equals(type) || "image/gif".equals(mime)
+            || name.toLowerCase(Locale.ROOT).endsWith(".gif");
+    }
+
+    private String mediaBadge(JsonObject attachment) {
+        String type = Jsons.string(attachment, "media_type").toLowerCase(Locale.ROOT);
+        if ("motion_photo".equals(type)) return "动态照片";
+        if (isDynamicImage(attachment)) return "GIF";
+        if (isVideoAttachment(attachment)) return "视频";
+        return "";
+    }
     private String extensionOf(String name) {
         int dot = name == null ? -1 : name.lastIndexOf('.');
         return dot < 0 || dot == name.length() - 1
@@ -1221,7 +1280,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                 JsonObject attachment = element.getAsJsonObject();
                 String type = Jsons.string(attachment, "media_type");
                 if (stickerGallery ? !"sticker".equals(type)
-                    : (!"image".equals(type) && !"video".equals(type))) continue;
+                    : ("sticker".equals(type) || !isVisualAttachment(attachment))) continue;
                 if (Jsons.string(attachment, "url").equals(selectedUrl)) selectedIndex = gallery.size();
                 gallery.add(attachment);
             }
@@ -1233,11 +1292,11 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private String mediaLabel(JsonObject attachment) {
         String type = Jsons.string(attachment, "media_type");
         String name = Jsons.string(attachment, "file_name");
-        if ("audio".equals(type)) {
+        if (isAudioAttachment(attachment)) {
             long seconds = Math.max(1, Jsons.longValue(attachment, "duration_ms") / 1000L);
-            return "语音  " + seconds + " 秒\n点击播放";
+            return (isRecordedVoice(attachment) ? "语音" : "音频") + "  " + seconds + " 秒\n点击播放";
         }
-        if ("video".equals(type)) return "视频" + (name.isEmpty() ? "" : "  " + name) + "\n点击播放";
+        if (isVideoAttachment(attachment)) return "视频" + (name.isEmpty() ? "" : "  " + name) + "\n点击播放";
         long bytes = Jsons.longValue(attachment, "size_bytes");
         return "文件  " + (name.isEmpty() ? "未命名文件" : name) + (bytes > 0 ? "\n" + sizeText(bytes) : "");
     }
@@ -1245,7 +1304,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private void previewAttachment(Context context, JsonObject attachment) {
         JsonObject file = attachment.deepCopy();
         file.addProperty("file_url", Jsons.string(attachment, "url"));
-        file.addProperty("original_name", Jsons.string(attachment, "file_name"));
+        file.addProperty("original_name", attachmentName(attachment));
         FilePreviewActivity.open(context, file);
     }
 

@@ -13,10 +13,13 @@ import android.media.PlaybackParams;
 import android.view.MenuItem;
 import android.view.View;
 import android.webkit.WebViewClient;
-import android.widget.MediaController;
+
 import android.widget.SeekBar;
 
-import androidx.appcompat.app.AppCompatActivity;
+import androidx.activity.OnBackPressedCallback;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.android.material.snackbar.Snackbar;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
@@ -30,6 +33,7 @@ import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
+import xyz.jjmxg.yiyunying.data.cache.AutoCachePolicyStore;
 import xyz.jjmxg.yiyunying.databinding.ActivityFilePreviewBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
@@ -44,6 +48,8 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
     private MediaPlayer mediaPlayer;
     private float playbackSpeed = 1f;
     private boolean audioMode;
+    private boolean videoMode;
+    private boolean fullscreenVideo;
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private final Runnable updateAudioProgress = new Runnable() {
         @Override public void run() {
@@ -60,6 +66,23 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         }
     };
 
+    private final Runnable updateVideoProgress = new Runnable() {
+        @Override public void run() {
+            if (binding == null || !videoMode || mediaPlayer == null) return;
+            try {
+                int duration = Math.max(0, mediaPlayer.getDuration());
+                int position = Math.max(0, mediaPlayer.getCurrentPosition());
+                binding.videoSeek.setMax(duration);
+                binding.videoSeek.setProgress(position);
+                binding.videoTime.setText(formatTime(position) + " / " + formatTime(duration));
+                boolean playing = mediaPlayer.isPlaying();
+                binding.videoPlay.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+                binding.videoCenterPlay.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+                binding.videoCenterPlay.setVisibility(playing ? View.GONE : View.VISIBLE);
+            } catch (IllegalStateException ignored) { }
+            progressHandler.postDelayed(this, 350L);
+        }
+    };
     public static void open(Context context, JsonObject file) {
         context.startActivity(new Intent(context, FilePreviewActivity.class).putExtra(EXTRA_FILE, file.toString()));
     }
@@ -74,6 +97,15 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         super.onCreate(state);
         binding = ActivityFilePreviewBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (fullscreenVideo) {
+                    toggleVideoFullscreen();
+                    return;
+                }
+                finish();
+            }
+        });
         try { file = JsonParser.parseString(getIntent().getStringExtra(EXTRA_FILE)).getAsJsonObject(); }
         catch (RuntimeException exception) { file = new JsonObject(); }
         xyz.jjmxg.yiyunying.core.RuntimeLanguage.setDynamicToolbarTitle(
@@ -102,6 +134,23 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         });
         binding.image.setOnLongClickListener(view -> { confirmDownload(); return true; });
         binding.audioPlay.setOnClickListener(view -> toggleAudioPlayback());
+        binding.videoPlay.setOnClickListener(view -> toggleVideoPlayback());
+        binding.videoCenterPlay.setOnClickListener(view -> toggleVideoPlayback());
+        binding.videoSpeed.setOnClickListener(view -> showSpeedSelector());
+        binding.videoFullscreen.setOnClickListener(view -> toggleVideoFullscreen());
+        binding.video.setOnClickListener(view -> {
+            int next = binding.videoControls.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE;
+            binding.videoControls.setVisibility(next);
+        });
+        binding.videoSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser && videoMode && mediaPlayer != null) {
+                    try { mediaPlayer.seekTo(progress); } catch (IllegalStateException ignored) { }
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
         binding.audioSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 if (fromUser && audioMode && mediaPlayer != null) {
@@ -132,18 +181,42 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         }
         if (mime.startsWith("video/") || "video".equals(category)) {
             audioMode = false;
-            binding.video.setVisibility(View.VISIBLE);
+            videoMode = true;
+            binding.videoPanel.setVisibility(View.VISIBLE);
             binding.content.setZoomTarget(binding.video);
             speedMenu.setVisible(true);
-            MediaController controls = new MediaController(this);
-            controls.setAnchorView(binding.video);
-            binding.video.setMediaController(controls);
+            String poster = Jsons.string(file, "thumbnail_url");
+            if (poster.isEmpty()) poster = Jsons.string(file, "poster_url");
+            if (!poster.isEmpty()) {
+                binding.videoPoster.setVisibility(View.VISIBLE);
+                ImageLoader.get().load(previewUrl(poster), binding.videoPoster, R.drawable.ic_video);
+            } else {
+                binding.videoPoster.setVisibility(View.GONE);
+            }
             binding.video.setVideoURI(Uri.parse(url));
             binding.video.setOnPreparedListener(player -> {
                 mediaPlayer = player;
                 applyPlaybackSpeed();
                 binding.progress.setVisibility(View.INVISIBLE);
-                binding.video.start();
+                binding.videoSeek.setMax(Math.max(0, player.getDuration()));
+                boolean autoplay = new AutoCachePolicyStore(this).videoAutoplayAllowed();
+                if (autoplay) {
+                    binding.videoPoster.setVisibility(View.GONE);
+                    binding.video.start();
+                } else {
+                    binding.video.seekTo(1);
+                }
+                progressHandler.removeCallbacks(updateVideoProgress);
+                progressHandler.post(updateVideoProgress);
+            });
+            binding.video.setOnInfoListener((player, what, extra) -> {
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) binding.videoBuffer.setVisibility(View.VISIBLE);
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) binding.videoBuffer.setVisibility(View.GONE);
+                return false;
+            });
+            binding.video.setOnCompletionListener(player -> {
+                binding.videoCenterPlay.setVisibility(View.VISIBLE);
+                binding.videoPlay.setImageResource(R.drawable.ic_play);
             });
             binding.video.setOnErrorListener((player, what, extra) -> { showUnsupported(); return true; });
             return;
@@ -196,6 +269,40 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         }
     }
 
+    private void toggleVideoPlayback() {
+        if (!videoMode || mediaPlayer == null) return;
+        try {
+            if (mediaPlayer.isPlaying()) {
+                binding.video.pause();
+            } else {
+                if (mediaPlayer.getCurrentPosition() >= Math.max(0, mediaPlayer.getDuration() - 250)) {
+                    binding.video.seekTo(0);
+                }
+                binding.videoPoster.setVisibility(View.GONE);
+                binding.video.start();
+            }
+            progressHandler.removeCallbacks(updateVideoProgress);
+            progressHandler.post(updateVideoProgress);
+        } catch (IllegalStateException ignored) { }
+    }
+
+    private void toggleVideoFullscreen() {
+        fullscreenVideo = !fullscreenVideo;
+        binding.toolbar.setVisibility(fullscreenVideo ? View.GONE : View.VISIBLE);
+        binding.progress.setVisibility(fullscreenVideo ? View.GONE : View.INVISIBLE);
+        binding.videoFullscreen.setImageResource(fullscreenVideo
+            ? R.drawable.ic_fullscreen_exit : R.drawable.ic_fullscreen);
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
+            getWindow(), getWindow().getDecorView());
+        if (fullscreenVideo) {
+            controller.setSystemBarsBehavior(
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars());
+        }
+    }
+
     private void toggleAudioPlayback() {
         if (!audioMode || mediaPlayer == null) return;
         try {
@@ -244,7 +351,7 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         binding.audioPanel.setVisibility(View.GONE);
         binding.web.setVisibility(View.GONE);
         binding.image.setVisibility(View.GONE);
-        binding.unsupported.setVisibility(View.VISIBLE);
+        binding.unsupportedCard.setVisibility(View.VISIBLE);
     }
 
     private void toggleFavorite() {

@@ -36,6 +36,20 @@ final class CloudSyncService
                         : ((float) $wallet['balance'] < $price ? '余额不足' : '')),
             ];
         }
+        $allCacheCategories = ['chat_record', 'profile', 'image', 'video', 'voice', 'audio', 'document', 'file', 'sticker'];
+        $configuredCategories = AppService::setting((int) $user['app_id'], 'auto_cache_allowed_categories', $allCacheCategories);
+        $cacheCategories = is_array($configuredCategories)
+            ? array_values(array_intersect($allCacheCategories, array_map('strval', $configuredCategories)))
+            : $allCacheCategories;
+        if ($cacheCategories === []) $cacheCategories = $allCacheCategories;
+        $cacheNetwork = strtolower(trim((string) AppService::setting((int) $user['app_id'], 'auto_cache_network', 'wifi_mobile')));
+        if (!in_array($cacheNetwork, ['wifi', 'wifi_mobile', 'never'], true)) $cacheNetwork = 'wifi_mobile';
+        $forceWifi = (bool) AppService::setting((int) $user['app_id'], 'auto_cache_force_wifi_only', false);
+        if ($forceWifi && $cacheNetwork !== 'never') $cacheNetwork = 'wifi';
+        $videoNetwork = strtolower(trim((string) AppService::setting((int) $user['app_id'], 'video_autoplay_network', 'wifi_mobile')));
+        if (!in_array($videoNetwork, ['wifi', 'wifi_mobile', 'never'], true)) $videoNetwork = 'wifi_mobile';
+        $videoDefaultNetwork = strtolower(trim((string) AppService::setting((int) $user['app_id'], 'video_autoplay_default_network', 'wifi')));
+        if (!in_array($videoDefaultNetwork, ['wifi', 'wifi_mobile', 'never'], true)) $videoDefaultNetwork = 'wifi';
         return [
             'items' => $items, 'is_vip' => $vip, 'vip_expired_at' => $wallet['vip_expired_at'],
             'balance' => (float) $wallet['balance'],
@@ -43,6 +57,21 @@ final class CloudSyncService
             'retention_days' => max(0, (int) AppService::setting((int) $user['app_id'], 'cloud_backup_retention_days', 3650)),
             'local_cache_days' => max(0, (int) AppService::setting((int) $user['app_id'], 'chat_local_cache_days', 90)),
             'media_cache_max_bytes' => max(0, (int) AppService::setting((int) $user['app_id'], 'media_cache_max_bytes', 536870912)),
+            'auto_cache_policy' => [
+                'enabled' => (bool) AppService::setting((int) $user['app_id'], 'auto_download_cache_enabled', true),
+                'allowed_categories' => $cacheCategories,
+                'default_max_bytes' => max(67108864, (int) AppService::setting((int) $user['app_id'], 'auto_cache_default_max_bytes', 536870912)),
+                'max_bytes_limit' => max(67108864, (int) AppService::setting((int) $user['app_id'], 'auto_cache_max_bytes_limit', 2147483648)),
+                'retention_days' => max(0, (int) AppService::setting((int) $user['app_id'], 'auto_cache_retention_days', 90)),
+                'network' => $cacheNetwork,
+                'force_wifi_only' => $forceWifi,
+                'policy_version' => (string) AppService::setting((int) $user['app_id'], 'auto_cache_policy_version', '2026.08.01'),
+            ],
+            'video_autoplay_policy' => [
+                'enabled' => (bool) AppService::setting((int) $user['app_id'], 'video_autoplay_enabled', true),
+                'network' => $videoNetwork,
+                'default_network' => $videoDefaultNetwork,
+            ],
         ];
     }
 

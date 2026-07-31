@@ -173,13 +173,36 @@ final class AppService
             'upload_audio_max_bytes', 'upload_file_max_bytes', 'sticker_target_max_bytes',
             'cloud_chat_backup_price', 'cloud_sticker_sync_price', 'cloud_favorite_sync_price',
             'cloud_backup_max_items', 'cloud_backup_retention_days', 'chat_local_cache_days',
-            'media_cache_max_bytes',
+            'media_cache_max_bytes', 'auto_cache_default_max_bytes', 'auto_cache_max_bytes_limit',
+            'auto_cache_retention_days',
             'heartbeat_online_seconds', 'group_restore_days',
             'relationship_request_valid_days',
         ] as $key) {
             if (array_key_exists($key, $settings) && (!is_numeric($settings[$key]) || (float) $settings[$key] < 0)) {
                 throw new HttpException($key . ' 不能小于 0', 0, 422);
             }
+        }
+        foreach (['auto_cache_network', 'video_autoplay_network', 'video_autoplay_default_network'] as $key) {
+            if (array_key_exists($key, $settings)
+                && !in_array(strtolower(trim((string) $settings[$key])), ['wifi', 'wifi_mobile', 'never'], true)) {
+                throw new HttpException($key . ' 仅支持 wifi、wifi_mobile 或 never', 0, 422);
+            }
+        }
+        if (array_key_exists('auto_cache_allowed_categories', $settings)) {
+            if (!is_array($settings['auto_cache_allowed_categories'])) {
+                throw new HttpException('auto_cache_allowed_categories 必须是缓存类别数组', 0, 422);
+            }
+            $allowedCategories = ['chat_record', 'profile', 'image', 'video', 'voice', 'audio', 'document', 'file', 'sticker'];
+            foreach ($settings['auto_cache_allowed_categories'] as $category) {
+                if (!in_array((string) $category, $allowedCategories, true)) {
+                    throw new HttpException('不支持的自动缓存类别：' . (string) $category, 0, 422);
+                }
+            }
+        }
+        $cacheDefaultBytes = (int) ($merged['auto_cache_default_max_bytes'] ?? 536870912);
+        $cacheLimitBytes = (int) ($merged['auto_cache_max_bytes_limit'] ?? 2147483648);
+        if ($cacheDefaultBytes > $cacheLimitBytes) {
+            throw new HttpException('自动缓存默认容量不能大于管理员容量上限', 0, 422);
         }
         if (array_key_exists('message_recall_seconds', $settings)
             && (int) $settings['message_recall_seconds'] > 31536000) {
@@ -305,6 +328,17 @@ final class AppService
             'cloud_backup_retention_days' => 3650,
             'chat_local_cache_days' => 90,
             'media_cache_max_bytes' => 536870912,
+            'auto_download_cache_enabled' => true,
+            'auto_cache_allowed_categories' => ['chat_record', 'profile', 'image', 'video', 'voice', 'audio', 'document', 'file', 'sticker'],
+            'auto_cache_default_max_bytes' => 536870912,
+            'auto_cache_max_bytes_limit' => 2147483648,
+            'auto_cache_retention_days' => 90,
+            'auto_cache_network' => 'wifi_mobile',
+            'auto_cache_force_wifi_only' => false,
+            'auto_cache_policy_version' => '2026.08.01',
+            'video_autoplay_enabled' => true,
+            'video_autoplay_network' => 'wifi_mobile',
+            'video_autoplay_default_network' => 'wifi',
             'lottery_daily_limit' => 3,
             'wallet_transfer_enabled' => true,
             'wallet_transfer_max' => 1000000,

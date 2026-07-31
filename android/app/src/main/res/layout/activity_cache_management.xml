@@ -19,68 +19,175 @@
         android:layout_height="4dp"
         android:visibility="invisible" />
 
-    <LinearLayout
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="true">
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="缓存占用"
-            android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="@color/on_surface_variant" />
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="28dp">
 
-        <TextView
-            android:id="@+id/cacheSize"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="正在计算"
-            android:textAppearance="@style/TextAppearance.Material3.DisplaySmall"
-            android:textColor="@color/on_surface" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="本机占用"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="@color/on_surface_variant" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="包括图片、GIF、视频缩略图、接口临时文件和 WebView 缓存。清理缓存不会删除账号和聊天云端记录。"
-            android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-            android:textColor="@color/on_surface_variant" />
+            <TextView
+                android:id="@+id/cacheSize"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="正在计算"
+                android:textAppearance="@style/TextAppearance.Material3.DisplaySmall"
+                android:textColor="@color/on_surface" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/clearCacheButton"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_marginTop="24dp"
-            android:text="清理缓存"
-            app:icon="@drawable/ic_refresh" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="聊天记录、资料和媒体会按账号分开缓存。手动下载默认保留，不会被自动清理。"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="@color/on_surface_variant" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/downloadsButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_marginTop="8dp"
-            android:text="管理本机下载"
-            app:icon="@drawable/ic_file" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="自动下载与缓存"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="@color/on_surface" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/clearDataButton"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_marginTop="20dp"
-            android:text="清除全部应用数据"
-            android:textColor="@color/error" />
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/autoCacheSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
+                android:text="自动缓存常用内容" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="此操作会移除登录状态、本地草稿、缓存和下载文件，不能撤销。"
-            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-            android:textColor="@color/error" />
-    </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/wifiOnlySwitch"
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cacheNetworkButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="4dp"
+                android:text="缓存使用的网络" />
+
+            <TextView
+                android:id="@+id/cachePolicySummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@color/surface_container"
+                android:padding="12dp"
+                android:text="正在读取缓存策略"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="@color/on_surface_variant" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cacheCategoriesButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="12dp"
+                android:text="缓存内容类别" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cacheLimitButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:text="容量与保留时间" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cacheDetailsButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:text="查看与选择清理缓存"
+                app:icon="@drawable/ic_file" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="视频播放"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="@color/on_surface" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/videoAutoplaySwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
+                android:text="自动播放视频" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/videoPlaybackNetworkButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="4dp"
+                android:text="自动播放使用的网络" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="其他存储操作"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="@color/on_surface" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/clearCacheButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:text="清理可自动删除的缓存"
+                app:icon="@drawable/ic_refresh" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/downloadsButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:text="管理本机下载"
+                app:icon="@drawable/ic_file" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/clearDataButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="20dp"
+                android:text="清除全部应用数据"
+                android:textColor="@color/error" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="此操作会移除登录状态、本地草稿、缓存和下载文件，不能撤销。"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="@color/error" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 </LinearLayout>

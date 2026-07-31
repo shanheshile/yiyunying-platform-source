@@ -108,57 +108,11 @@ public final class SharedDocumentActivity extends xyz.jjmxg.yiyunying.ui.common.
     }
 
     private void renderAttachments(JsonObject document) {
-        binding.attachmentContainer.removeAllViews();
-        for (JsonElement element : Jsons.array(document, "attachments")) {
-            if (!element.isJsonObject()) continue;
-            JsonObject attachment = element.getAsJsonObject();
-            String name = Jsons.string(attachment, "file_name");
-            String type = Jsons.string(attachment, "media_type");
-            String mime = Jsons.string(attachment, "mime_type");
-            String url = Jsons.string(attachment, "url");
-            long size = Jsons.longValue(attachment, "size_bytes");
-
-            MaterialCardView card = new MaterialCardView(this);
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(68));
-            cardParams.bottomMargin = dp(8);
-            card.setLayoutParams(cardParams);
-            card.setRadius(dp(6));
-            card.setCardElevation(0f);
-            card.setCardBackgroundColor(getColor(xyz.jjmxg.yiyunying.R.color.surface_container));
-
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(12), dp(6), dp(8), dp(6));
-            TextView details = new TextView(this);
-            details.setText(typeLabel(type) + "\n" + (name.isEmpty() ? "附件" : name)
-                + (size > 0 ? " · " + readableSize(size) : ""));
-            details.setMaxLines(2);
-            row.addView(details, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-            MaterialButton open = new MaterialButton(this);
-            open.setText("预览");
-            open.setOnClickListener(view -> FilePreviewActivity.open(
-                this, name.isEmpty() ? "附件" : name, url, mime));
-            row.addView(open, new LinearLayout.LayoutParams(dp(76), dp(48)));
-            card.addView(row);
-            binding.attachmentContainer.addView(card);
-        }
-        boolean visible = binding.attachmentContainer.getChildCount() > 0;
+        xyz.jjmxg.yiyunying.ui.common.MediaViewRenderer.render(
+            this, binding.attachmentContainer, Jsons.array(document, "attachments"));
+        boolean visible = binding.attachmentContainer.getVisibility() == View.VISIBLE
+            && binding.attachmentContainer.getChildCount() > 0;
         binding.attachmentTitle.setVisibility(visible ? View.VISIBLE : View.GONE);
-        binding.attachmentContainer.setVisibility(visible ? View.VISIBLE : View.GONE);
-    }
-
-    private String typeLabel(String type) {
-        if ("image".equals(type)) return "图片";
-        if ("video".equals(type)) return "视频";
-        if ("audio".equals(type)) return "音频";
-        return "文件";
-    }
-
-    private String readableSize(long size) {
-        if (size < 1024) return size + " B";
-        if (size < 1024 * 1024) return String.format(java.util.Locale.CHINA, "%.1f KB", size / 1024d);
-        return String.format(java.util.Locale.CHINA, "%.1f MB", size / (1024d * 1024d));
     }
 
     private int dp(int value) {

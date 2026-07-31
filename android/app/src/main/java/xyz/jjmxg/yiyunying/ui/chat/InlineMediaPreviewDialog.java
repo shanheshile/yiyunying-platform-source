@@ -34,6 +34,7 @@ import java.util.Locale;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
+import xyz.jjmxg.yiyunying.data.cache.AutoCachePolicyStore;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.common.RecordDetailDialog;
 
@@ -52,6 +53,7 @@ public final class InlineMediaPreviewDialog {
         private final Dialog dialog;
         private final FrameLayout stage;
         private final TextView title;
+        private final MaterialButton original;
         private final TextView time;
         private final SeekBar seek;
         private final MaterialButton speed;
@@ -63,6 +65,11 @@ public final class InlineMediaPreviewDialog {
         private AspectRatioVideoView video;
         private MediaPlayer videoPlayer;
         private ProgressBar buffering;
+        private ImageView poster;
+        private ZoomImageView currentImage;
+        private MaterialButton playback;
+        private boolean originalLoaded;
+        private boolean prepared;
         private boolean temporaryFast;
         private boolean immersive;
         private final float initialBrightness;
@@ -89,6 +96,10 @@ public final class InlineMediaPreviewDialog {
             title.setGravity(Gravity.CENTER);
             toolbar.addView(close, new LinearLayout.LayoutParams(dp(52), dp(48)));
             toolbar.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            original = textButton("查看原图");
+            original.setVisibility(View.GONE);
+            original.setOnClickListener(view -> loadOriginalImage());
+            toolbar.addView(original, new LinearLayout.LayoutParams(dp(88), dp(48)));
             MaterialButton info = iconButton(R.drawable.ic_file, "查看媒体信息");
             info.setOnClickListener(view -> showMediaInfo());
             toolbar.addView(info, new LinearLayout.LayoutParams(dp(52), dp(48)));
@@ -167,9 +178,16 @@ public final class InlineMediaPreviewDialog {
             releaseVideo();
             stage.removeAllViews();
             JsonObject item = items.get(index);
-            String type = Jsons.string(item, "media_type");
-            title.setText((index + 1) + " / " + items.size() + "  " + mediaTypeLabel(type));
-            if ("video".equals(type)) renderVideo(item); else renderImage(item);
+            currentImage = null;
+            originalLoaded = false;
+            original.setText("查看原图");
+            original.setVisibility(View.GONE);
+            title.setText((index + 1) + " / " + items.size() + "  " + mediaTypeLabel(item));
+            if (isVideo(item) || (isMotionPhoto(item) && !motionVideoUrl(item).isEmpty())) {
+                renderVideo(item);
+            } else {
+                renderImage(item);
+            }
             FrameLayout.LayoutParams previousParams = new FrameLayout.LayoutParams(dp(48), dp(58), Gravity.START | Gravity.CENTER_VERTICAL);
             previousParams.leftMargin = dp(8);
             stage.addView(previous, previousParams);
@@ -186,10 +204,23 @@ public final class InlineMediaPreviewDialog {
             speed.setVisibility(View.GONE);
             fullscreen.setVisibility(View.GONE);
             ZoomImageView image = new ZoomImageView(context, this::move);
+            currentImage = image;
             image.setBackgroundColor(Color.BLACK);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             stage.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            ImageLoader.get().load(absolute(item), image, R.drawable.ic_file);
+            String source = originalImageUrl(item);
+            String preview = previewUrl(item);
+            boolean animated = isAnimatedImage(item);
+            if (animated) {
+                originalLoaded = true;
+                original.setText("原始动图");
+                original.setVisibility(View.VISIBLE);
+                ImageLoader.get().load(absolute(source), image, R.drawable.ic_file);
+                return;
+            }
+            boolean hasSeparateOriginal = !source.isEmpty() && !source.equals(preview);
+            original.setVisibility(hasSeparateOriginal ? View.VISIBLE : View.GONE);
+            ImageLoader.get().load(absolute(preview.isEmpty() ? source : preview), image, R.drawable.ic_file);
         }
 
         private void renderVideo(JsonObject item) {
@@ -199,8 +230,10 @@ public final class InlineMediaPreviewDialog {
             fullscreen.setVisibility(View.VISIBLE);
             playbackSpeed = 1f;
             speed.setText("1.0×");
+            prepared = false;
+
             video = new AspectRatioVideoView(context);
-            video.setBackgroundColor(Color.BLACK);
+            video.setBackgroundColor(Color.TRANSPARENT);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
             params.leftMargin = dp(18);
@@ -209,42 +242,78 @@ public final class InlineMediaPreviewDialog {
             params.bottomMargin = dp(12);
             stage.addView(video, params);
 
+            poster = new ImageView(context);
+            poster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            poster.setBackgroundColor(Color.BLACK);
+            FrameLayout.LayoutParams posterParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+            posterParams.leftMargin = dp(18);
+            posterParams.rightMargin = dp(18);
+            posterParams.topMargin = dp(12);
+            posterParams.bottomMargin = dp(12);
+            String preview = previewUrl(item);
+            if (!preview.isEmpty()) {
+                ImageLoader.get().load(absolute(preview), poster, R.drawable.ic_video);
+            } else {
+                poster.setImageResource(R.drawable.ic_video);
+                poster.setPadding(dp(72), dp(72), dp(72), dp(72));
+            }
+            stage.addView(poster, posterParams);
+
+            playback = iconButton(R.drawable.ic_play, "播放视频");
+            playback.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.argb(184, 0, 0, 0)));
+            playback.setOnClickListener(view -> togglePlayback());
+            stage.addView(playback, new FrameLayout.LayoutParams(dp(62), dp(62), Gravity.CENTER));
+
             buffering = new ProgressBar(context);
             buffering.setIndeterminate(true);
-            FrameLayout.LayoutParams bufferingParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER);
+            FrameLayout.LayoutParams bufferingParams = new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER);
+            bufferingParams.topMargin = dp(84);
             stage.addView(buffering, bufferingParams);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 video.setAudioFocusRequest(AudioManager.AUDIOFOCUS_GAIN);
             }
-            video.setVideoPath(absolute(item));
+            String videoUrl = isMotionPhoto(item) ? motionVideoUrl(item) : mediaUrl(item);
+            video.setVideoPath(absolute(videoUrl));
             video.setOnPreparedListener(player -> {
                 videoPlayer = player;
+                prepared = true;
                 player.setLooping(false);
                 try {
                     player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);
                 } catch (RuntimeException ignored) { }
                 video.setVideoDimensions(player.getVideoWidth(), player.getVideoHeight());
                 seek.setMax(Math.max(1, player.getDuration()));
+                updateTime(0);
                 player.setOnBufferingUpdateListener((mediaPlayer, percent) ->
                     seek.setSecondaryProgress(Math.max(0, Math.min(seek.getMax(), seek.getMax() * percent / 100))));
                 player.setOnInfoListener((mediaPlayer, what, extra) -> {
-                    if (buffering == null) return false;
-                    if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) buffering.setVisibility(View.VISIBLE);
+                    if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START && buffering != null) {
+                        buffering.setVisibility(View.VISIBLE);
+                    }
                     if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END
                         || what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
-                        buffering.setVisibility(View.GONE);
+                        if (buffering != null) buffering.setVisibility(View.GONE);
+                        if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) showVideoFrame();
                     }
                     return false;
                 });
                 if (buffering != null) buffering.setVisibility(View.GONE);
-                video.start();
-                handler.removeCallbacks(tick);
-                handler.post(tick);
+                if (new AutoCachePolicyStore(context).videoAutoplayAllowed()) {
+                    video.start();
+                    showVideoFrame();
+                    handler.removeCallbacks(tick);
+                    handler.post(tick);
+                } else {
+                    syncPlaybackChrome();
+                }
             });
             video.setOnErrorListener((player, what, extra) -> {
+                prepared = false;
                 if (buffering != null) buffering.setVisibility(View.GONE);
                 handler.removeCallbacks(tick);
+                if (playback != null) playback.setVisibility(View.VISIBLE);
                 Toast.makeText(context, "视频暂时无法播放，请检查网络后重试", Toast.LENGTH_SHORT).show();
                 return true;
             });
@@ -252,25 +321,26 @@ public final class InlineMediaPreviewDialog {
                 handler.removeCallbacks(tick);
                 seek.setProgress(seek.getMax());
                 updateTime(seek.getMax());
+                syncPlaybackChrome();
             });
+
             GestureDetector gestures = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
                 @Override public boolean onDown(MotionEvent event) { return true; }
                 @Override public boolean onSingleTapConfirmed(MotionEvent event) {
-                    if (video.isPlaying()) {
-                        video.pause();
-                    } else {
-                        video.start();
-                        handler.removeCallbacks(tick);
-                        handler.post(tick);
-                    }
+                    togglePlayback();
+                    return true;
+                }
+                @Override public boolean onDoubleTap(MotionEvent event) {
+                    togglePlayback();
                     return true;
                 }
                 @Override public void onLongPress(MotionEvent event) {
+                    if (!prepared || video == null || !video.isPlaying()) return;
                     temporaryFast = true;
                     applyVideoSpeed(2f);
                 }
                 @Override public boolean onScroll(MotionEvent first, MotionEvent current, float distanceX, float distanceY) {
-                    if (first == null || current == null || video == null) return false;
+                    if (first == null || current == null || video == null || !prepared) return false;
                     if (Math.abs(distanceX) > Math.abs(distanceY)) {
                         int target = Math.max(0, Math.min(video.getDuration(), video.getCurrentPosition() + Math.round(distanceX * 28f)));
                         video.seekTo(target);
@@ -295,6 +365,36 @@ public final class InlineMediaPreviewDialog {
             });
         }
 
+        private void togglePlayback() {
+            if (!prepared || video == null) return;
+            try {
+                if (video.isPlaying()) {
+                    video.pause();
+                } else {
+                    if (video.getCurrentPosition() >= Math.max(0, video.getDuration() - 250)) video.seekTo(0);
+                    video.start();
+                    showVideoFrame();
+                    handler.removeCallbacks(tick);
+                    handler.post(tick);
+                }
+                syncPlaybackChrome();
+            } catch (RuntimeException ignored) { }
+        }
+
+        private void showVideoFrame() {
+            if (poster != null) poster.setVisibility(View.GONE);
+            if (playback != null) playback.setVisibility(View.GONE);
+        }
+
+        private void syncPlaybackChrome() {
+            if (playback == null || video == null) return;
+            boolean playing = false;
+            try { playing = video.isPlaying(); } catch (RuntimeException ignored) { }
+            playback.setIconResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+            playback.setContentDescription(playing ? "暂停视频" : "播放视频");
+            playback.setVisibility(playing ? View.GONE : View.VISIBLE);
+            if (!playing && video.getCurrentPosition() <= 0 && poster != null) poster.setVisibility(View.VISIBLE);
+        }
         private final Runnable tick = new Runnable() {
             @Override public void run() {
                 if (video == null) return;
@@ -412,18 +512,26 @@ public final class InlineMediaPreviewDialog {
             long height = Jsons.longValue(item, "height");
             JsonObject detail = new JsonObject();
             detail.addProperty("original_name", name);
-            detail.addProperty("file_category_name", mediaTypeLabel(Jsons.string(item, "media_type")));
+            detail.addProperty("file_category_name", mediaTypeLabel(item));
             if (bytes > 0) detail.addProperty("size_bytes", bytes);
             if (width > 0 && height > 0) detail.addProperty("dimensions", width + " × " + height);
             long duration = Jsons.longValue(item, "duration_ms");
             if (duration > 0) detail.addProperty("duration_ms", duration);
+            if (isAnimatedImage(item)) detail.addProperty("description", "正在播放原始 GIF 动图");
+            if (isMotionPhoto(item)) {
+                detail.addProperty("description", motionVideoUrl(item).isEmpty()
+                    ? "已显示动态照片原图；当前文件未包含可播放的配对视频"
+                    : "动态照片包含可播放的配对视频");
+            }
             RecordDetailDialog.show(context, "媒体信息", detail);
         }
 
-        private String mediaTypeLabel(String type) {
+        private String mediaTypeLabel(JsonObject item) {
+            String type = mediaType(item);
             if ("sticker".equals(type)) return "表情包";
-            if ("video".equals(type)) return "视频";
-            if ("gif".equals(type) || "motion_photo".equals(type)) return "动图";
+            if (isMotionPhoto(item)) return "动态照片";
+            if (isVideo(item)) return "视频";
+            if (isAnimatedImage(item)) return "GIF 动图";
             return "图片";
         }
 
@@ -434,8 +542,99 @@ public final class InlineMediaPreviewDialog {
             return bytes + " B";
         }
 
-        private String absolute(JsonObject item) {
-            return ImageLoader.get().absoluteUrl(context, Jsons.string(item, "url"));
+        private void loadOriginalImage() {
+            if (currentImage == null) return;
+            JsonObject item = items.get(index);
+            String source = originalImageUrl(item);
+            if (source.isEmpty()) {
+                Toast.makeText(context, "当前内容没有可用的原图", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ImageLoader.get().load(absolute(source), currentImage, R.drawable.ic_file);
+            originalLoaded = true;
+            original.setText(isAnimatedImage(item) ? "原始动图" : "已是原图");
+        }
+
+        private String mediaType(JsonObject item) {
+            String value = firstText(item, "media_type", "file_category", "type");
+            if (!value.isEmpty()) return value.toLowerCase(Locale.ROOT);
+            String mime = firstText(item, "mime_type", "mime");
+            if (mime.startsWith("video/")) return "video";
+            if ("image/gif".equalsIgnoreCase(mime)) return "gif";
+            if (mime.startsWith("image/")) return "image";
+            return "";
+        }
+
+        private boolean isVideo(JsonObject item) {
+            String type = mediaType(item);
+            String mime = firstText(item, "mime_type", "mime").toLowerCase(Locale.ROOT);
+            String name = firstText(item, "file_name", "original_name", "name").toLowerCase(Locale.ROOT);
+            return "video".equals(type) || mime.startsWith("video/")
+                || name.matches(".*\\.(mp4|mov|m4v|webm|mkv|avi)$");
+        }
+
+        private boolean isAnimatedImage(JsonObject item) {
+            String type = mediaType(item);
+            String mime = firstText(item, "mime_type", "mime").toLowerCase(Locale.ROOT);
+            String name = firstText(item, "file_name", "original_name", "name").toLowerCase(Locale.ROOT);
+            return "gif".equals(type) || "image/gif".equals(mime)
+                || booleanValue(item, "is_gif") || booleanValue(item, "is_animated")
+                || name.endsWith(".gif");
+        }
+
+        private boolean isMotionPhoto(JsonObject item) {
+            return "motion_photo".equals(mediaType(item))
+                || booleanValue(item, "is_motion_photo") || booleanValue(item, "motion_photo");
+        }
+
+        private boolean booleanValue(JsonObject item, String key) {
+            if (item != null && item.has(key) && !item.get(key).isJsonNull()) {
+                try { return item.get(key).getAsBoolean(); } catch (RuntimeException ignored) { }
+            }
+            JsonObject metadata = item == null ? new JsonObject() : Jsons.object(item, "metadata");
+            if (metadata.has(key) && !metadata.get(key).isJsonNull()) {
+                try { return metadata.get(key).getAsBoolean(); } catch (RuntimeException ignored) { }
+            }
+            return false;
+        }
+
+        private String previewUrl(JsonObject item) {
+            return firstText(item, "thumbnail_url", "preview_url", "optimized_file_url", "image_url", "url");
+        }
+
+        private String originalImageUrl(JsonObject item) {
+            return firstText(item, "original_file_url", "original_url", "file_url", "media_url",
+                "download_url", "image_url", "url", "source_url");
+        }
+
+        private String mediaUrl(JsonObject item) {
+            return firstText(item, "url", "file_url", "media_url", "download_url",
+                "original_file_url", "source_url", "preview_url");
+        }
+
+        private String motionVideoUrl(JsonObject item) {
+            return firstText(item, "motion_video_url", "live_photo_video_url", "paired_video_url",
+                "motion_url", "video_url");
+        }
+
+        private String firstText(JsonObject item, String... keys) {
+            if (item == null) return "";
+            for (String key : keys) {
+                String value = Jsons.string(item, key);
+                if (!value.isEmpty()) return value;
+            }
+            JsonObject metadata = Jsons.object(item, "metadata");
+            for (String key : keys) {
+                String value = Jsons.string(metadata, key);
+                if (!value.isEmpty()) return value;
+            }
+            return "";
+        }
+
+        private String absolute(String value) {
+            if (value == null || value.isEmpty()) return "";
+            if (value.startsWith("content://") || value.startsWith("file://")) return value;
+            return ImageLoader.get().absoluteUrl(context, value);
         }
 
         private MaterialButton textButton(String text) {
@@ -474,6 +673,9 @@ public final class InlineMediaPreviewDialog {
                 videoPlayer = null;
             }
             buffering = null;
+            poster = null;
+            playback = null;
+            prepared = false;
         }
     }
 

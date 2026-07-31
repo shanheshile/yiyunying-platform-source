@@ -42,6 +42,7 @@ import java.util.Set;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
+import xyz.jjmxg.yiyunying.data.cache.AutoCachePolicyStore;
 import xyz.jjmxg.yiyunying.databinding.ActivityImageGalleryBinding;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.common.ZoomableMediaFrame;
@@ -264,7 +265,10 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 holder.video.setOnPreparedListener(player -> {
                     holder.player = player;
                     applyPlaybackSpeed(player);
-                    if (holder.getBindingAdapterPosition() == binding.pager.getCurrentItem()) holder.video.start();
+                    if (holder.getBindingAdapterPosition() == binding.pager.getCurrentItem()) {
+                        if (new AutoCachePolicyStore(ImageGalleryActivity.this).videoAutoplayAllowed()) holder.video.start();
+                        else holder.video.seekTo(1);
+                    }
                 });
                 holder.video.setOnErrorListener((player, what, extra) -> {
                     Snackbar.make(binding.getRoot(), "视频暂时无法播放，请检查格式或网络", Snackbar.LENGTH_LONG).show();
@@ -328,7 +332,8 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 if (adapterPosition == position) current = holder;
                 else if (holder.video.isPlaying()) holder.video.pause();
             }
-            if (current != null && isVideo(images.get(position)) && !current.video.isPlaying()) current.video.start();
+            if (current != null && isVideo(images.get(position)) && !current.video.isPlaying()
+                && new AutoCachePolicyStore(ImageGalleryActivity.this).videoAutoplayAllowed()) current.video.start();
         }
 
         void applySpeed(int position) {

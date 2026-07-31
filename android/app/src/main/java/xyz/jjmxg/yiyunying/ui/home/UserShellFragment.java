@@ -124,12 +124,6 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
         super.onPause();
     }
 
-    @Override public void onPause() {
-        unreadHandler.removeCallbacks(refreshUnread);
-        if (unreadRequest != null) unreadRequest.cancel();
-        unreadRequest = null;
-        super.onPause();
-    }
 
     public void setUnreadCount(int count) {
         if (binding == null) return;

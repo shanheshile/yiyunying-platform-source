@@ -13,11 +13,18 @@ import java.util.List;
 import java.util.Map;
 
 import xyz.jjmxg.yiyunying.core.AppAccess;
+import xyz.jjmxg.yiyunying.data.cache.LocalCacheManager;
 
 final class DownloadHistoryStore {
     private DownloadHistoryStore() { }
 
-    static synchronized void record(Context context, long id, String name, String url, String category) {
+    static synchronized void record(
+        Context context,
+        long id,
+        String name,
+        String url,
+        String category
+    ) {
         List<JsonObject> items = list(context);
         JsonObject item = new JsonObject();
         item.addProperty("download_id", id);
@@ -28,6 +35,7 @@ final class DownloadHistoryStore {
         items.add(0, item);
         while (items.size() > 500) items.remove(items.size() - 1);
         save(context, items);
+        LocalCacheManager.get(context).registerDownload(id, name, url, category);
     }
 
     static synchronized List<JsonObject> list(Context context) {
@@ -35,15 +43,20 @@ final class DownloadHistoryStore {
         String raw = preferences(context).getString(key(context), "[]");
         try {
             JsonArray array = JsonParser.parseString(raw).getAsJsonArray();
-            for (JsonElement element : array) if (element.isJsonObject()) items.add(element.getAsJsonObject());
+            for (JsonElement element : array) {
+                if (element.isJsonObject()) items.add(element.getAsJsonObject());
+            }
         } catch (RuntimeException ignored) { }
         return items;
     }
 
     static synchronized void remove(Context context, long downloadId) {
         List<JsonObject> items = list(context);
-        items.removeIf(item -> item.has("download_id") && item.get("download_id").getAsLong() == downloadId);
+        items.removeIf(item ->
+            item.has("download_id") && item.get("download_id").getAsLong() == downloadId
+        );
         save(context, items);
+        LocalCacheManager.get(context).removeExternalDownload(downloadId);
     }
 
     static synchronized List<Long> allDownloadIds(Context context) {
@@ -52,7 +65,8 @@ final class DownloadHistoryStore {
             try {
                 JsonArray array = JsonParser.parseString(String.valueOf(entry.getValue())).getAsJsonArray();
                 for (JsonElement element : array) {
-                    if (element.isJsonObject() && element.getAsJsonObject().has("download_id")) {
+                    if (element.isJsonObject()
+                        && element.getAsJsonObject().has("download_id")) {
                         ids.add(element.getAsJsonObject().get("download_id").getAsLong());
                     }
                 }
@@ -76,6 +90,7 @@ final class DownloadHistoryStore {
     }
 
     private static String key(Context context) {
-        return AppAccess.from(context).session().role().wireName() + ":" + AppAccess.from(context).session().actorId();
+        return AppAccess.from(context).session().role().wireName()
+            + ":" + AppAccess.from(context).session().actorId();
     }
 }

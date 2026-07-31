@@ -1500,7 +1500,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.pinBadge.setVisibility(profileTimeline && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
                 boolean lastPinned = profileTimeline && flag(item, "is_pinned");
                 if (lastPinned) {
-                    int next = position + 1;
+                    int currentPosition = getBindingAdapterPosition();
+                    int next = currentPosition == RecyclerView.NO_POSITION ? items.size() : currentPosition + 1;
                     boolean nextIsPinned = next < items.size() && flag(items.get(next), "is_pinned");
                     lastPinned = !nextIsPinned;
                 }

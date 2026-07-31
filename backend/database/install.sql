@@ -4564,6 +4564,17 @@ VALUES
   ,(@admin_id, @app_id, 'cloud_backup_retention_days', '3650', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'chat_local_cache_days', '90', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'media_cache_max_bytes', '536870912', 'int', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_download_cache_enabled', '1', 'bool', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_allowed_categories', '["chat_record","profile","image","video","voice","audio","document","file","sticker"]', 'json', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_default_max_bytes', '536870912', 'int', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_max_bytes_limit', '2147483648', 'int', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_retention_days', '90', 'int', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_network', 'wifi_mobile', 'string', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_force_wifi_only', '0', 'bool', NOW(), NOW())
+  ,(@admin_id, @app_id, 'auto_cache_policy_version', '2026.08.01', 'string', NOW(), NOW())
+  ,(@admin_id, @app_id, 'video_autoplay_enabled', '1', 'bool', NOW(), NOW())
+  ,(@admin_id, @app_id, 'video_autoplay_network', 'wifi_mobile', 'string', NOW(), NOW())
+  ,(@admin_id, @app_id, 'video_autoplay_default_network', 'wifi', 'string', NOW(), NOW())
 ON DUPLICATE KEY UPDATE `setting_value` = VALUES(`setting_value`), `value_type` = VALUES(`value_type`), `updated_at` = NOW();
 
 INSERT INTO `app_feature_flags`

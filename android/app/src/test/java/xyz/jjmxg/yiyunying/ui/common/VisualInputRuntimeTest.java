@@ -105,16 +105,17 @@ public final class VisualInputRuntimeTest {
         MediaViewRenderer.render(context, container, attachments);
 
         assertEquals(View.VISIBLE, container.getVisibility());
-        assertEquals(3, descendants(container, ImageView.class).size());
+        assertEquals(3, countContentDescription(container, "\u56fe\u7247\uff0c\u70b9\u51fb\u9884\u89c8"));
         MaterialButton toggle = findButton(container, "展开全部 4 个媒体");
         assertNotNull(toggle);
         toggle.performClick();
         shadowOf(Looper.getMainLooper()).idle();
-        assertEquals(4, descendants(container, ImageView.class).size());
+        assertEquals(4, countContentDescription(container, "\u56fe\u7247\uff0c\u70b9\u51fb\u9884\u89c8"));
         assertNotNull(findButton(container, "收起媒体"));
         assertEquals(1, descendants(container, InlineAudioPlayerView.class).size());
         assertTrue(texts(container).contains("00:00 / 00:03"));
-        assertTrue(texts(container).stream().anyMatch(value -> value.startsWith("文件 · 资料.pdf")));
+        assertTrue(texts(container).contains("\u8d44\u6599.pdf"));
+        assertTrue(texts(container).stream().anyMatch(value -> value.startsWith("PDF \u6587\u6863")));
 
         MediaViewRenderer.render(context, container, new JsonArray());
         assertEquals(View.GONE, container.getVisibility());
@@ -145,6 +146,16 @@ public final class VisualInputRuntimeTest {
             values.add(text.getText() == null ? "" : text.getText().toString());
         }
         return values;
+    }
+
+    private int countContentDescription(View root, String value) {
+        int count = value.equals(root.getContentDescription()) ? 1 : 0;
+        if (!(root instanceof ViewGroup)) return count;
+        ViewGroup group = (ViewGroup) root;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            count += countContentDescription(group.getChildAt(index), value);
+        }
+        return count;
     }
 
     private <T extends View> List<T> descendants(View root, Class<T> type) {
