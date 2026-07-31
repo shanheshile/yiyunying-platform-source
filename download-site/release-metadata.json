@@ -2,8 +2,8 @@
     "schemaVersion":  2,
     "versionName":  "2.7.3",
     "versionCode":  48,
-    "releaseDate":  "2026-07-30",
-    "generatedAt":  "2026-07-30T04:45:26.6790141+08:00",
+    "releaseDate":  "2026-08-01",
+    "generatedAt":  "2026-08-01T01:53:36.6969037+08:00",
     "downloadRootBase":  "/downloads",
     "releaseNotes":  [
                          "修复共享底部弹层重复应用外观时的崩溃",
@@ -22,9 +22,9 @@
                          "packageName":  "xyz.jjmxg.yiyunying.user.debug",
                          "versionName":  "2.7.3-user-debug",
                          "versionCode":  48,
-                         "sizeBytes":  96347594,
-                         "size":  "91.88 MB",
-                         "sha256":  "0A80A5C85E5E324EAFD341B042514A6CB222D784C68FE464EEA5A2C0AC377A83",
+                         "sizeBytes":  97675178,
+                         "size":  "93.15 MB",
+                         "sha256":  "B0F883D8A5E6A6D942F5D2AF967CC4BB6F3567E9893EE4F31BBC53CB985947D1",
                          "accent":  "blue"
                      },
                      {
@@ -37,9 +37,9 @@
                          "packageName":  "xyz.jjmxg.yiyunying.admin.debug",
                          "versionName":  "2.7.3-admin-debug",
                          "versionCode":  48,
-                         "sizeBytes":  31962378,
-                         "size":  "30.48 MB",
-                         "sha256":  "E48BEF126269893A2BA106FFC1A3807B0D0D122CCE03F5834104868EF3CDF9CC",
+                         "sizeBytes":  33289530,
+                         "size":  "31.75 MB",
+                         "sha256":  "337003F729E18778770C516ACA95C4BB6A12AB1B39E9AD6961186AAE4756A95E",
                          "accent":  "green"
                      },
                      {
@@ -52,9 +52,9 @@
                          "packageName":  "xyz.jjmxg.yiyunying.authorized.debug",
                          "versionName":  "2.7.3-authorized-platform-debug",
                          "versionCode":  48,
-                         "sizeBytes":  31962382,
-                         "size":  "30.48 MB",
-                         "sha256":  "AD0F3B6C3ADC98CFF2850802FC59EE877DDB1031681D5C18E815E677A100E4E2",
+                         "sizeBytes":  33289530,
+                         "size":  "31.75 MB",
+                         "sha256":  "A4BE89E529CB2124D617502D28923FAEE99DD70C5FA28DF75FD134965B09A703",
                          "accent":  "amber"
                      },
                      {
@@ -67,9 +67,9 @@
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner.debug",
                          "versionName":  "2.7.3-platform-owner-debug",
                          "versionCode":  48,
-                         "sizeBytes":  31962382,
-                         "size":  "30.48 MB",
-                         "sha256":  "DC6FFAA05262401DE038F6177A29CEE79E313FE63026FDF70B0FB7490B8AFBB0",
+                         "sizeBytes":  33289526,
+                         "size":  "31.75 MB",
+                         "sha256":  "64105AA6A4C4D401B03DCEC2EA54242556A00438F19040DB9ADFAE9DEC2022D9",
                          "accent":  "charcoal"
                      }
                  ]

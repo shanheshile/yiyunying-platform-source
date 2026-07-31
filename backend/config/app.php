@@ -3,7 +3,16 @@ declare(strict_types=1);
 
 $env = static function (string $name, $default = null) {
     $value = getenv($name);
-    return $value === false ? $default : $value;
+    if ($value !== false) {
+        return $value;
+    }
+    if (array_key_exists($name, $_ENV)) {
+        return $_ENV[$name];
+    }
+    if (array_key_exists($name, $_SERVER)) {
+        return $_SERVER[$name];
+    }
+    return $default;
 };
 
 $envBool = static function (string $name, bool $default) use ($env): bool {

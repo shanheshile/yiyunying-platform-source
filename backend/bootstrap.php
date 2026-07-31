@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 define('YIYUNYING_ROOT', __DIR__);
 
+$loadEnvironment = require YIYUNYING_ROOT . '/config/load-env.php';
+$loadEnvironment(YIYUNYING_ROOT . '/.env');
+unset($loadEnvironment);
+
 // Keep UTF-8 routing usable on small PHP installations that omit mbstring.
 if (!function_exists('mb_strtolower')) {
     function mb_strtolower(string $value, ?string $encoding = null): string

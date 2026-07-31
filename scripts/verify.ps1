@@ -162,6 +162,13 @@ Get-ChildItem -LiteralPath (Join-Path $root 'backend') -Recurse -Filter '*.php' 
     if ($LASTEXITCODE -ne 0) { throw "PHP lint failed: $($_.FullName)" }
 }
 
+Write-Host 'Testing production environment loading...'
+$environmentLoaderTest = Join-Path $root 'backend/tools/test-env-loader.php'
+& php $environmentLoaderTest
+if ($LASTEXITCODE -ne 0) { throw "Environment loader test failed with exit code $LASTEXITCODE" }
+& php -d disable_functions=putenv $environmentLoaderTest
+if ($LASTEXITCODE -ne 0) { throw "Environment loader fallback test failed with exit code $LASTEXITCODE" }
+
 $androidDirectory = Join-Path $root 'android'
 $localProperties = Join-Path $androidDirectory 'local.properties'
 if (-not (Test-Path -LiteralPath $localProperties) -and
