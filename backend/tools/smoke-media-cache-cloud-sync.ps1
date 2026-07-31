@@ -14,6 +14,13 @@ function Invoke-Api {
     try { $response = Invoke-RestMethod @params }
     catch {
         $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail) -and $null -ne $_.Exception.Response) {
+            try {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $detail = $reader.ReadToEnd()
+                $reader.Dispose()
+            } catch {}
+        }
         if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
         Write-Host "$Method $Path failed: $detail" -ForegroundColor Red
         throw
@@ -47,6 +54,13 @@ try {
     $appId = [int]$created.app.id
     $appKey = [string]$created.app.app_key
     Invoke-Api PUT "/api/admin/apps/$appId/settings" $adminHeaders @{ settings = @{
+        registration_enabled = $true
+        registration_nickname_enabled = $true
+        registration_nickname_required = $true
+        registration_email_enabled = $false
+        registration_email_required = $false
+        registration_phone_enabled = $false
+        registration_phone_required = $false
         upload_image_max_bytes = 104857600
         upload_video_max_bytes = 524288000
         upload_audio_max_bytes = 104857600
@@ -74,8 +88,9 @@ try {
         video_autoplay_default_network = 'wifi'
     } } | Out-Null
 
-    $a = Invoke-Api POST '/api/user/register' @{} @{ app_key = $appKey; account = "sync_a_$suffix"; password = '123456'; password_confirmation = '123456'; nickname = 'A' }
-    $b = Invoke-Api POST '/api/user/register' @{} @{ app_key = $appKey; account = "sync_b_$suffix"; password = '123456'; password_confirmation = '123456'; nickname = 'B' }
+    $smokePassword = 'SmokePass!123'
+    $a = Invoke-Api POST '/api/user/register' @{} @{ app_key = $appKey; account = "sync_a_$suffix"; password = $smokePassword; password_confirmation = $smokePassword; nickname = 'A' }
+    $b = Invoke-Api POST '/api/user/register' @{} @{ app_key = $appKey; account = "sync_b_$suffix"; password = $smokePassword; password_confirmation = $smokePassword; nickname = 'B' }
     $headersA = @{ Authorization = "Bearer $($a.access_token)"; 'X-App-Key' = $appKey }
     $headersB = @{ Authorization = "Bearer $($b.access_token)"; 'X-App-Key' = $appKey }
     $request = Invoke-Api POST '/api/user/friends/requests' $headersA @{ to_user_id = [int]$b.user.id; message = 'test' }
