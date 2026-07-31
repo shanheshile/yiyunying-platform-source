@@ -26,6 +26,7 @@ import com.google.android.material.snackbar.Snackbar;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,6 +78,8 @@ public final class UserSettingsActivity extends SystemInsetActivity {
     private String dynamicVisibilityMode = "public";
     private int dynamicVisibleDays;
     private int restoredScrollY;
+    private final LinkedHashMap<Long, JsonObject> dynamicAllowUsers = new LinkedHashMap<>();
+    private final LinkedHashMap<Long, JsonObject> dynamicDenyUsers = new LinkedHashMap<>();
     private final ActivityResultLauncher<Intent> chatBackgroundPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
@@ -93,6 +96,13 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             showMessage("全局聊天背景已更新，并已应用到全部会话", Snackbar.LENGTH_SHORT);
         }
     );
+    private final ActivityResultLauncher<Intent> dynamicAllowUsersPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result ->
+            handleDynamicUserSelection(result, dynamicAllowUsers));
+    private final ActivityResultLauncher<Intent> dynamicDenyUsersPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result ->
+            handleDynamicUserSelection(result, dynamicDenyUsers));
+
     private final ActivityResultLauncher<String[]> runtimePermissionLauncher = registerForActivityResult(
         new ActivityResultContracts.RequestMultiplePermissions(), result -> {
             updatePermissionSummary();
@@ -146,6 +156,10 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         binding.dynamicVisibilityModeButton.setOnClickListener(view -> chooseDynamicVisibilityMode());
         binding.dynamicVisibleDaysButton.setOnClickListener(view -> chooseDynamicVisibleDays());
         binding.dynamicEnabled.setOnCheckedChangeListener((button, checked) -> renderDynamicPrivacy());
+        configureDynamicUserPicker(binding.dynamicAllowUsersInput, dynamicAllowUsersPicker,
+            dynamicAllowUsers, "选择可以查看动态的好友");
+        configureDynamicUserPicker(binding.dynamicDenyUsersInput, dynamicDenyUsersPicker,
+            dynamicDenyUsers, "选择不能查看动态的好友");
         binding.saveCaptureToGallery.setChecked(CapturePreferences.saveToGallery(this));
         binding.saveCaptureToGallery.setOnCheckedChangeListener((button, checked) -> {
             CapturePreferences.setSaveToGallery(this, checked);
@@ -512,8 +526,8 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             binding.dynamicEnabled.setChecked(bool(settings, "dynamic_enabled", true));
             dynamicVisibilityMode = safeDynamicMode(Jsons.string(settings, "dynamic_visibility_mode"));
             dynamicVisibleDays = safeDynamicDays(Jsons.intValue(settings, "dynamic_visible_days", 0));
-            binding.dynamicAllowUsersInput.setText(join(Jsons.array(settings, "dynamic_allow_user_ids")));
-            binding.dynamicDenyUsersInput.setText(join(Jsons.array(settings, "dynamic_deny_user_ids")));
+            loadDynamicUserIds(dynamicAllowUsers, Jsons.array(settings, "dynamic_allow_user_ids"));
+            loadDynamicUserIds(dynamicDenyUsers, Jsons.array(settings, "dynamic_deny_user_ids"));
             binding.dynamicVisibleToFriends.setChecked(bool(settings, "dynamic_visible_to_friends", true));
             binding.dynamicVisibleToFollowers.setChecked(bool(settings, "dynamic_visible_to_followers", true));
             binding.dynamicVisibleToStrangers.setChecked(bool(settings, "dynamic_visible_to_strangers", true));
@@ -559,8 +573,8 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         body.addProperty("dynamic_enabled", binding.dynamicEnabled.isChecked());
         body.addProperty("dynamic_visibility_mode", dynamicVisibilityMode);
         body.addProperty("dynamic_visible_days", dynamicVisibleDays);
-        body.add("dynamic_allow_user_ids", tokens(binding.dynamicAllowUsersInput.getText()));
-        body.add("dynamic_deny_user_ids", tokens(binding.dynamicDenyUsersInput.getText()));
+        body.add("dynamic_allow_user_ids", dynamicUserIds(dynamicAllowUsers));
+        body.add("dynamic_deny_user_ids", dynamicUserIds(dynamicDenyUsers));
         body.addProperty("dynamic_visible_to_friends", binding.dynamicVisibleToFriends.isChecked());
         body.addProperty("dynamic_visible_to_followers", binding.dynamicVisibleToFollowers.isChecked());
         body.addProperty("dynamic_visible_to_strangers", binding.dynamicVisibleToStrangers.isChecked());
@@ -631,6 +645,99 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             .show();
     }
 
+    private void configureDynamicUserPicker(
+        com.google.android.material.textfield.TextInputEditText input,
+        ActivityResultLauncher<Intent> launcher,
+        LinkedHashMap<Long, JsonObject> selected,
+        String title
+    ) {
+        input.setFocusable(false);
+        input.setCursorVisible(false);
+        input.setLongClickable(false);
+        input.setOnClickListener(view -> launcher.launch(SocialDirectoryActivity.pickFriendsIntent(
+            this,
+            200,
+            title,
+            new long[]{AppAccess.from(this).session().actorId()},
+            "不能选择自己",
+            selectedUserIds(selected),
+            true
+        )));
+    }
+
+    private void handleDynamicUserSelection(
+        ActivityResult result,
+        LinkedHashMap<Long, JsonObject> target
+    ) {
+        if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+        String raw = result.getData().getStringExtra(SocialDirectoryActivity.EXTRA_SELECTED_ITEMS);
+        if (raw == null) return;
+        LinkedHashMap<Long, JsonObject> next = new LinkedHashMap<>();
+        try {
+            JsonElement parsed = JsonParser.parseString(raw);
+            if (parsed.isJsonArray()) {
+                for (JsonElement element : parsed.getAsJsonArray()) {
+                    if (!element.isJsonObject()) continue;
+                    JsonObject item = element.getAsJsonObject();
+                    long userId = Jsons.longValue(item, "user_id");
+                    if (userId > 0L && userId != AppAccess.from(this).session().actorId()) {
+                        next.put(userId, item.deepCopy());
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) { }
+        target.clear();
+        target.putAll(next);
+        renderDynamicPrivacy();
+    }
+
+    private void loadDynamicUserIds(LinkedHashMap<Long, JsonObject> target, JsonArray values) {
+        target.clear();
+        if (values == null) return;
+        for (JsonElement value : values) {
+            long userId;
+            try { userId = value.getAsLong(); }
+            catch (RuntimeException ignored) { continue; }
+            if (userId <= 0L || userId == AppAccess.from(this).session().actorId()) continue;
+            JsonObject placeholder = new JsonObject();
+            placeholder.addProperty("user_id", userId);
+            target.put(userId, placeholder);
+        }
+    }
+
+    private static long[] selectedUserIds(LinkedHashMap<Long, JsonObject> selected) {
+        long[] values = new long[selected.size()];
+        int index = 0;
+        for (Long userId : selected.keySet()) values[index++] = userId == null ? 0L : userId;
+        return values;
+    }
+
+    private static JsonArray dynamicUserIds(LinkedHashMap<Long, JsonObject> selected) {
+        JsonArray values = new JsonArray();
+        for (Long userId : selected.keySet()) if (userId != null && userId > 0L) values.add(userId);
+        return values;
+    }
+
+    private void renderDynamicUserSummary(
+        com.google.android.material.textfield.TextInputEditText input,
+        LinkedHashMap<Long, JsonObject> selected
+    ) {
+        if (selected.isEmpty()) {
+            input.setText(tr("未选择好友，点击选择"));
+            return;
+        }
+        ArrayList<String> names = new ArrayList<>();
+        for (JsonObject item : selected.values()) {
+            String name = Jsons.string(item, "remark");
+            if (name.isEmpty()) name = Jsons.string(item, "account_name");
+            if (name.isEmpty()) name = Jsons.string(item, "nickname");
+            if (!name.isEmpty()) names.add(name);
+            if (names.size() >= 2) break;
+        }
+        String prefix = names.isEmpty() ? "" : String.join("、", names) + " · ";
+        input.setText(prefix + tr("已选择") + " " + selected.size() + " " + tr("位好友，点击修改"));
+    }
+
     private void renderDynamicPrivacy() {
         if (binding == null) return;
         boolean enabled = binding.dynamicEnabled.isChecked();
@@ -642,6 +749,8 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             ? View.VISIBLE : View.GONE);
         binding.dynamicDenyUsersLayout.setVisibility(enabled && "exclude".equals(dynamicVisibilityMode)
             ? View.VISIBLE : View.GONE);
+        renderDynamicUserSummary(binding.dynamicAllowUsersInput, dynamicAllowUsers);
+        renderDynamicUserSummary(binding.dynamicDenyUsersInput, dynamicDenyUsers);
     }
 
     private String dynamicModeLabel(String mode) {

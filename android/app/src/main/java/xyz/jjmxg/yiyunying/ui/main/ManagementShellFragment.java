@@ -16,6 +16,7 @@ import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.databinding.FragmentManagementShellBinding;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
 import xyz.jjmxg.yiyunying.ui.common.BackNavigationHandler;
+import xyz.jjmxg.yiyunying.ui.common.BottomDockStyler;
 
 public final class ManagementShellFragment extends BaseFragment implements BackNavigationHandler {
     private static final int[] MENU_IDS = {
@@ -42,6 +43,7 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
     @Nullable @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle state) {
         binding = FragmentManagementShellBinding.inflate(inflater, container, false);
+        BottomDockStyler.apply(binding.bottomNavigation);
         host().setMainChromeVisible(true);
         binding.pager.setAdapter(new PagerAdapter(this));
         binding.pager.setOffscreenPageLimit(1);

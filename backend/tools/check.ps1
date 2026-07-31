@@ -54,6 +54,8 @@ $required = @(
     'database\migrations\upgrade_20260722_red_packet_dispatch_modes.sql',
     'database\migrations\upgrade_20260722_remote_login_protection.sql',
     'database\migrations\upgrade_20260722_bounty_moderation.sql',
+    'database\migrations\upgrade_20260725_submission_risk_metadata.sql',
+    'database\migrations\upgrade_20260731_chat_room_kind.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -165,6 +167,7 @@ foreach ($file in $powerShellFiles) {
 
 $php = Get-Command php -ErrorAction SilentlyContinue
 if ($null -ne $php) {
+    $env:YIYUN_BACKEND_ROOT = $root
     $phpFiles = Get-ChildItem -LiteralPath $root -Recurse -Filter '*.php' -File
     foreach ($file in $phpFiles) {
         $output = & $php.Source -l $file.FullName 2>&1
@@ -174,6 +177,7 @@ if ($null -ne $php) {
     }
     $handlerCheck = @'
 <?php
+chdir((string) getenv('YIYUN_BACKEND_ROOT'));
 require 'bootstrap.php';
 $router = require 'routes/api.php';
 $invalid = array_filter($router->routes(), static fn(array $route): bool => !is_callable($route['handler']));

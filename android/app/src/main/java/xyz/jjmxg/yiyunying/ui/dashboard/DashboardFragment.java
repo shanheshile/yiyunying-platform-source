@@ -155,7 +155,7 @@ public final class DashboardFragment extends BaseFragment {
             addQuickAction("用户账号", "users", R.drawable.ic_users);
             addQuickAction("文档管理", "documents", R.drawable.ic_document);
             addQuickAction("公告管理", "notices", R.drawable.ic_content);
-            addQuickAction("用户群聊", "chat_rooms", R.drawable.ic_chat);
+            addQuickAction("群聊与聊天室", "chat_rooms", R.drawable.ic_chat);
             addQuickAction("应用设置", "settings", R.drawable.ic_settings);
         }
     }

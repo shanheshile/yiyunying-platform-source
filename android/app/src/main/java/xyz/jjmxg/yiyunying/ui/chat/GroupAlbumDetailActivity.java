@@ -59,12 +59,15 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
     private final ArrayDeque<Uri> uploadQueue = new ArrayDeque<>();
     private LinearProgressIndicator progress;
     private TextView empty;
+    private MaterialToolbar toolbar;
     private AlbumMediaAdapter adapter;
+    private RequestHandle roomRequest;
     private RequestHandle request;
     private RequestHandle actionRequest;
     private RequestHandle uploadRequest;
     private long roomId;
     private long albumId;
+    private String roomKind = "group";
     private String query = "";
 
     private final ActivityResultLauncher<Intent> picker = registerForActivityResult(
@@ -86,12 +89,10 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(getColor(R.color.surface));
-        MaterialToolbar toolbar = new MaterialToolbar(this);
-        xyz.jjmxg.yiyunying.core.RuntimeLanguage.setDynamicToolbarTitle(
-            toolbar,
-            getIntent().getStringExtra(EXTRA_TITLE)
-        );
-        toolbar.setSubtitle("群相册");
+        toolbar = new MaterialToolbar(this);
+        String albumTitle = getIntent().getStringExtra(EXTRA_TITLE);
+        toolbar.setTitle(albumTitle == null || albumTitle.trim().isEmpty() ? "相册详情" : albumTitle);
+        toolbar.setSubtitle("相册");
         toolbar.setNavigationIcon(R.drawable.ic_back);
         toolbar.setNavigationOnClickListener(view -> finish());
         MenuItem search = toolbar.getMenu().add("搜索");
@@ -125,7 +126,20 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         body.addView(empty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
+        loadRoomKind();
         load();
+    }
+
+    private void loadRoomKind() {
+        if (roomRequest != null) roomRequest.cancel();
+        roomRequest = AppAccess.from(this).repository().get(base(), new LinkedHashMap<>(), result -> {
+            roomRequest = null;
+            if (isFinishing() || isDestroyed() || toolbar == null || !result.isSuccessful()) return;
+            JsonObject room = Jsons.object(result.dataObject(), "room");
+            roomKind = "chat_room".equals(Jsons.string(room, "room_kind")) ? "chat_room" : "group";
+            toolbar.setSubtitle(spacePrefix() + "相册");
+            if (adapter != null) adapter.notifyDataSetChanged();
+        });
     }
 
     private void load() {
@@ -133,10 +147,10 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         progress.setVisibility(View.VISIBLE);
         request = AppAccess.from(this).repository().get(base() + "/albums", new LinkedHashMap<>(), result -> {
             request = null;
-            if (isFinishing()) return;
+            if (isFinishing() || isDestroyed()) return;
             progress.setVisibility(View.INVISIBLE);
             if (!result.isSuccessful()) {
-                message(result.message().isEmpty() ? "群相册加载失败" : result.message());
+                message(result.message().isEmpty() ? spacePrefix() + "相册加载失败" : result.message());
                 return;
             }
             allItems.clear();
@@ -166,7 +180,7 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         holder.setPadding(padding, 0, padding, 0);
         holder.addView(input, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         new YiyunyingDialogBuilder(this)
-            .setTitle("搜索群相册")
+            .setTitle("搜索" + spacePrefix() + "相册")
             .setView(holder)
             .setPositiveButton("搜索", (dialog, which) -> {
                 query = input.getText() == null ? "" : input.getText().toString().trim();
@@ -206,7 +220,7 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         if (uploadRequest != null || actionRequest != null) return;
         Uri uri = uploadQueue.pollFirst();
         if (uri == null) { progress.setVisibility(View.INVISIBLE); load(); return; }
-        String name = "群相册媒体";
+        String name = spacePrefix() + "相册媒体";
         long size = -1;
         try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
@@ -229,12 +243,12 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         String fileMime = mime;
         long fileSize = size;
         Map<String, String> fields = new LinkedHashMap<>();
-        fields.put("scene", "群相册");
+        fields.put("scene", spacePrefix() + "相册");
         uploadRequest = AppAccess.from(this).repository().upload(
             "/api/user/uploads", name, mime,
             new ContentUriRequestBody(getContentResolver(), uri, mime, size), fields, result -> {
                 uploadRequest = null;
-                if (isFinishing()) return;
+                if (isFinishing() || isDestroyed()) return;
                 if (!result.isSuccessful()) {
                     message(result.message().isEmpty() ? "媒体上传失败" : result.message());
                     uploadNext();
@@ -250,6 +264,7 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
                 actionRequest = AppAccess.from(this).repository().post(
                     base() + "/albums/" + albumId + "/photos", payload, saved -> {
                         actionRequest = null;
+                        if (isFinishing() || isDestroyed()) return;
                         if (!saved.isSuccessful()) message(saved.message().isEmpty() ? "相册记录保存失败" : saved.message());
                         uploadNext();
                     });
@@ -265,12 +280,13 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
         long photoId = Jsons.longValue(item, "id");
         new YiyunyingDialogBuilder(this)
             .setTitle("删除相册媒体")
-            .setMessage("删除后群内会保留操作通知，确定继续吗？")
+            .setMessage("删除后" + entityLabel() + "内会保留操作通知，确定继续吗？")
             .setPositiveButton("删除", (dialog, which) -> {
                 progress.setVisibility(View.VISIBLE);
                 actionRequest = AppAccess.from(this).repository().delete(
                     base() + "/albums/" + albumId + "/photos/" + photoId, new JsonObject(), result -> {
                         actionRequest = null;
+                        if (isFinishing() || isDestroyed()) return;
                         if (!result.isSuccessful()) message(result.message().isEmpty() ? "删除失败" : result.message());
                         else load();
                     });
@@ -281,7 +297,14 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
 
     private String base() { return "/api/user/chat-rooms/" + roomId; }
 
+    private boolean isChatRoom() { return "chat_room".equals(roomKind); }
+
+    private String entityLabel() { return isChatRoom() ? "聊天室" : "群聊"; }
+
+    private String spacePrefix() { return isChatRoom() ? "聊天室" : "群"; }
+
     private void message(String text) {
+        if (isFinishing() || isDestroyed() || progress == null) return;
         Snackbar.make(progress, text == null || text.isEmpty() ? "操作未完成" : text, Snackbar.LENGTH_LONG).show();
     }
 
@@ -295,6 +318,7 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
+        if (roomRequest != null) roomRequest.cancel();
         if (request != null) request.cancel();
         if (actionRequest != null) actionRequest.cancel();
         if (uploadRequest != null) uploadRequest.cancel();
@@ -354,7 +378,9 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
             if (previewUrl.isEmpty()) previewUrl = Jsons.string(item, "image_url");
             ImageLoader.get().load(ImageLoader.get().absoluteUrl(GroupAlbumDetailActivity.this, previewUrl), holder.image, R.drawable.ic_file);
             String caption = Jsons.string(item, "caption");
-            holder.title.setText(caption.isEmpty() ? ("video".equals(Jsons.string(item, "media_type")) ? "群视频" : "群图片") : caption);
+            holder.title.setText(caption.isEmpty()
+                ? ("video".equals(Jsons.string(item, "media_type")) ? spacePrefix() + "视频" : spacePrefix() + "图片")
+                : caption);
             String uploader = Jsons.string(item, "uploader_nickname");
             if (uploader.isEmpty()) uploader = Jsons.string(item, "uploader_account");
             holder.meta.setText("上传者：" + (uploader.isEmpty() ? "未知用户" : uploader)

@@ -196,11 +196,26 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
             protectBusinessText(decor);
             RuntimeLanguage.applyTree(context, decor);
             AppearanceStyleStore.applyFontTree(context, decor);
+        } catch (IllegalStateException error) {
+            if (!isOverwrittenMaterialButtonBackground(error)) {
+                decor.setTag(R.id.tag_dialog_appearance_applied, null);
+                throw error;
+            }
+            // Xiaomi/vivo Android 16 builds can reject Material shape APIs after the button
+            // background is replaced. The software ripple is already usable, so only this
+            // known cosmetic failure may fall back to the native dialog appearance.
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         } catch (RuntimeException | LinkageError error) {
-            // Allow a later attach/show pass to retry instead of leaving a half-styled dialog.
             decor.setTag(R.id.tag_dialog_appearance_applied, null);
             throw error;
         }
+    }
+
+    private boolean isOverwrittenMaterialButtonBackground(IllegalStateException error) {
+        String message = error.getMessage();
+        return message != null
+            && message.contains("ShapeAppearanceModel")
+            && message.contains("overwritten background");
     }
 
     private void protectBusinessText(View decor) {

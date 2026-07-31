@@ -1868,6 +1868,7 @@ CREATE TABLE IF NOT EXISTS `chat_rooms` (
   `icon` VARCHAR(500) NOT NULL DEFAULT '',
   `description` VARCHAR(1000) NOT NULL DEFAULT '',
   `tags_json` LONGTEXT,
+  `room_kind` VARCHAR(20) NOT NULL DEFAULT 'group' COMMENT 'group/chat_room',
   `is_public` TINYINT NOT NULL DEFAULT 1,
   `status` TINYINT NOT NULL DEFAULT 1,
   `dissolved_at` DATETIME DEFAULT NULL,
@@ -1877,6 +1878,7 @@ CREATE TABLE IF NOT EXISTS `chat_rooms` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_chat_rooms_name` (`app_id`, `name`),
   UNIQUE KEY `uk_chat_rooms_id_app_admin` (`id`, `app_id`, `admin_id`),
+  KEY `idx_chat_rooms_kind` (`app_id`, `room_kind`, `status`, `created_at`),
   CONSTRAINT `fk_chat_rooms_app` FOREIGN KEY (`app_id`, `admin_id`) REFERENCES `apps` (`id`, `admin_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -4513,7 +4515,10 @@ VALUES
   (@admin_id, @app_id, 'chat_poll_interval_ms', '5000', 'int', NOW(), NOW()),
   (@admin_id, @app_id, 'user_group_create_enabled', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'user_group_max_owned', '10', 'int', NOW(), NOW()),
-  (@admin_id, @app_id, 'group_default_max_members', '500', 'int', NOW(), NOW())
+  (@admin_id, @app_id, 'group_default_max_members', '500', 'int', NOW(), NOW()),
+  (@admin_id, @app_id, 'user_chatroom_create_enabled', '1', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'user_chatroom_max_owned', '10', 'int', NOW(), NOW()),
+  (@admin_id, @app_id, 'chatroom_default_max_members', '500', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'group_restore_days', '7', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'bounty_min_reward_balance', '1', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'bounty_max_reward_balance', '1000000', 'int', NOW(), NOW())
@@ -4647,10 +4652,10 @@ VALUES
 ON DUPLICATE KEY UPDATE `status` = 1, `description` = VALUES(`description`), `updated_at` = NOW();
 
 INSERT INTO `chat_rooms`
-  (`admin_id`, `app_id`, `name`, `icon`, `description`, `is_public`, `status`, `created_at`, `updated_at`)
+  (`admin_id`, `app_id`, `name`, `icon`, `description`, `room_kind`, `is_public`, `status`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, @app_id, '公共聊天室', '', '易运盈演示聊天室', 1, 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE `status` = 1, `updated_at` = NOW();
+  (@admin_id, @app_id, '公共聊天室', '', '易运盈演示聊天室', 'chat_room', 1, 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE `room_kind` = 'chat_room', `status` = 1, `updated_at` = NOW();
 
 INSERT INTO `payment_channels`
   (`admin_id`, `app_id`, `channel_code`, `name`, `config_json`, `enabled`, `created_at`, `updated_at`)

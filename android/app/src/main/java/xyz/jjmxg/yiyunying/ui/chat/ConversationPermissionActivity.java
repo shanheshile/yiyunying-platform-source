@@ -46,6 +46,7 @@ import xyz.jjmxg.yiyunying.ui.upload.MediaPickerActivity;
 public final class ConversationPermissionActivity extends SystemInsetActivity {
     public static final String TYPE_PRIVATE = "private";
     public static final String TYPE_GROUP = "group";
+    public static final String TYPE_CHAT_ROOM = "chat_room";
 
     private static final String EXTRA_TYPE = "conversation_type";
     private static final String EXTRA_TARGET_ID = "target_id";
@@ -126,6 +127,10 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
         context.startActivity(intent(context, TYPE_GROUP, roomId, 0L, title, backgroundIdentity, false));
     }
 
+    public static void openChatRoom(Context context, long roomId, String title, String backgroundIdentity) {
+        context.startActivity(intent(context, TYPE_CHAT_ROOM, roomId, 0L, title, backgroundIdentity, false));
+    }
+
     private static Intent intent(Context context, String type, long targetId, long peerId, String title,
                                  String backgroundIdentity, boolean fromProfile) {
         return new Intent(context, ConversationPermissionActivity.class)
@@ -145,7 +150,9 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
         String title = clean(getIntent().getStringExtra(EXTRA_TITLE));
         if (title.isEmpty()) profileTitle.setText(R.string.profile);
         else profileTitle.setText(title);
-        profileSubtitle.setText(isPrivate() ? R.string.private_chat_subtitle : R.string.group_chat_subtitle);
+        profileSubtitle.setText(isPrivate()
+            ? R.string.private_chat_subtitle
+            : (isChatRoom() ? R.string.chat_room_subtitle : R.string.group_chat_subtitle));
         avatar.setImageResource(isPrivate() ? R.drawable.ic_person : R.drawable.ic_group);
         friendSection.setVisibility(isPrivate() && peerId() > 0L ? View.VISIBLE : View.GONE);
         configureActions();
@@ -370,7 +377,7 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
         JsonObject body = new JsonObject();
         body.addProperty(field, value);
         progress.setVisibility(View.VISIBLE);
-        String path = "/api/user/message-center/" + type() + "/" + effectiveTargetId + "/preference";
+        String path = "/api/user/message-center/" + preferenceType() + "/" + effectiveTargetId + "/preference";
         actionRequest = AppAccess.from(this).repository().put(path, body, result -> {
             actionRequest = null;
             if (isFinishing() || isDestroyed()) return;
@@ -493,7 +500,7 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
     }
 
     private boolean matchesConversation(JsonObject item) {
-        if (!type().equals(Jsons.string(item, "type"))) return false;
+        if (!preferenceType().equals(Jsons.string(item, "type"))) return false;
         if (effectiveTargetId > 0L && Jsons.longValue(item, "target_id") == effectiveTargetId) return true;
         return isPrivate() && peerId() > 0L && Jsons.longValue(item, "peer_user_id") == peerId();
     }
@@ -552,7 +559,9 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
 
     private static String clean(String value) { return value == null ? "" : value.trim(); }
     private String type() { return clean(getIntent().getStringExtra(EXTRA_TYPE)); }
+    private String preferenceType() { return isChatRoom() ? TYPE_GROUP : type(); }
     private boolean isPrivate() { return TYPE_PRIVATE.equals(type()); }
+    private boolean isChatRoom() { return TYPE_CHAT_ROOM.equals(type()); }
     private long peerId() { return getIntent().getLongExtra(EXTRA_PEER_ID, 0L); }
     private String backgroundIdentity() { return clean(getIntent().getStringExtra(EXTRA_BACKGROUND_IDENTITY)); }
 

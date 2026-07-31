@@ -48,6 +48,12 @@
 44. `migrations/upgrade_20260721_shop_commerce_closure.sql`
 45. `migrations/upgrade_20260721_business_catalog_rewards.sql`
 46. `migrations/upgrade_20260721_role_permission_center.sql`
+47. `migrations/upgrade_20260722_random_red_packet_money.sql`
+48. `migrations/upgrade_20260722_red_packet_dispatch_modes.sql`
+49. `migrations/upgrade_20260722_remote_login_protection.sql`
+50. `migrations/upgrade_20260722_bounty_moderation.sql`
+51. `migrations/upgrade_20260725_submission_risk_metadata.sql`
+52. `migrations/upgrade_20260731_chat_room_kind.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.

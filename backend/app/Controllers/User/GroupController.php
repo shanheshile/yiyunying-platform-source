@@ -135,31 +135,44 @@ final class GroupController
     {
         $user = self::user($request);
         AuthService::ensureNotBanned($user, ['all', 'message', 'chat']);
-        if (!AppService::setting((int) $user['app_id'], 'user_group_create_enabled', true)) {
-            throw new HttpException('管理员已关闭用户建群功能', 403, 403);
+        $roomKind = ChatRoomService::roomKind($request->input('room_kind', ChatRoomService::ROOM_GROUP));
+        $isChatroom = $roomKind === ChatRoomService::ROOM_CHATROOM;
+        $entity = $isChatroom ? '聊天室' : '群聊';
+        $enabledKey = $isChatroom ? 'user_chatroom_create_enabled' : 'user_group_create_enabled';
+        $limitKey = $isChatroom ? 'user_chatroom_max_owned' : 'user_group_max_owned';
+        $memberLimitKey = $isChatroom ? 'chatroom_default_max_members' : 'group_default_max_members';
+        if (!AppService::setting((int) $user['app_id'], $enabledKey, true)) {
+            throw new HttpException('管理员已关闭用户创建' . $entity . '功能', 403, 403);
         }
-        $ownedLimit = max(0, (int) AppService::setting((int) $user['app_id'], 'user_group_max_owned', 10));
+        $ownedLimit = max(0, (int) AppService::setting((int) $user['app_id'], $limitKey, 10));
+        $defaultMemberLimit = max(2, (int) AppService::setting((int) $user['app_id'], $memberLimitKey, 500));
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
-        $joinMode = ChatRoomService::joinMode($request->input('join_mode', ChatRoomService::JOIN_APPROVAL));
-        $roomId = Database::transaction(static function () use ($request, $user, $name, $joinMode, $ownedLimit): int {
+        $defaultJoinMode = $isChatroom ? ChatRoomService::JOIN_OPEN : ChatRoomService::JOIN_APPROVAL;
+        $joinMode = ChatRoomService::joinMode($request->input('join_mode', $defaultJoinMode));
+        $roomId = Database::transaction(static function () use (
+            $request, $user, $name, $joinMode, $ownedLimit, $defaultMemberLimit, $roomKind, $entity
+        ): int {
             Database::one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $user['id']]);
             $owned = (int) (Database::one(
                 'SELECT COUNT(*) AS total FROM chat_room_policies cp INNER JOIN chat_rooms r ON r.id = cp.room_id
-                 WHERE cp.app_id = ? AND cp.owner_user_id = ? AND r.status = 1',
-                [(int) $user['app_id'], (int) $user['id']]
+                 WHERE cp.app_id = ? AND cp.owner_user_id = ? AND r.room_kind = ? AND r.status = 1',
+                [(int) $user['app_id'], (int) $user['id'], $roomKind]
             )['total'] ?? 0);
             if ($ownedLimit === 0 || $owned >= $ownedLimit) {
-                throw new HttpException('你创建的群聊数量已达到上限', 0, 409, ['limit' => $ownedLimit, 'used' => $owned]);
+                throw new HttpException('你创建的' . $entity . '数量已达到上限', 0, 409, [
+                    'limit' => $ownedLimit, 'used' => $owned, 'room_kind' => $roomKind,
+                ]);
             }
             $id = Database::insert(
                 'INSERT INTO chat_rooms
-                 (admin_id, app_id, name, icon, description, tags_json, is_public, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                 (admin_id, app_id, name, icon, description, tags_json, room_kind, is_public, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], $name,
                     mb_substr((string) $request->input('icon', ''), 0, 500),
                     mb_substr((string) $request->input('description', ''), 0, 1000),
                     ContentTagService::encode($request->input('tags', [])),
+                    $roomKind,
                     $joinMode === ChatRoomService::JOIN_INVITE ? 0 : 1,
                 ]
             );
@@ -167,7 +180,7 @@ final class GroupController
             ChatRoomService::savePolicy($room, [
                 'owner_user_id' => (int) $user['id'],
                 'join_mode' => $joinMode,
-                'max_members' => (int) $request->input('max_members', AppService::setting((int) $user['app_id'], 'group_default_max_members', 500)),
+                'max_members' => (int) $request->input('max_members', $defaultMemberLimit),
                 'allow_member_invite' => Validator::boolean($request->input('allow_member_invite', true), 'allow_member_invite'),
                 'mute_all' => false,
                 'announcement' => (string) $request->input('announcement', ''),
@@ -176,10 +189,13 @@ final class GroupController
             return $id;
         });
         $room = ChatRoomService::adminRoom((int) $user['admin_id'], (int) $user['app_id'], $roomId);
-        LogService::userOperation($request, $user, 'group', 'create', $roomId, ['name' => $name]);
-        return Response::success(['room' => ChatRoomService::detail($room, (int) $user['id'])], '群聊创建成功', 201);
+        LogService::userOperation($request, $user, $roomKind, 'create', $roomId, [
+            'name' => $name, 'room_kind' => $roomKind,
+        ]);
+        return Response::success([
+            'room' => ChatRoomService::detail($room, (int) $user['id']),
+        ], $entity . '创建成功', 201);
     }
-
     public static function show(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
@@ -226,21 +242,24 @@ final class GroupController
         $user = self::user($request);
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
         ChatRoomService::requireOwner($user, $room);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $entity = $roomKind === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
         $restoreDays = min(365, max(0, (int) AppService::setting((int) $user['app_id'], 'group_restore_days', 7)));
         $restoreUntil = $restoreDays > 0 ? date('Y-m-d H:i:s', time() + $restoreDays * 86400) : null;
-        self::roomNotice($room, $user, '群主解散了群聊');
+        self::roomNotice($room, $user, '创建者解散了' . $entity);
         Database::execute(
             'UPDATE chat_rooms SET status = 0, dissolved_at = NOW(), restore_until = ?, updated_at = NOW() WHERE id = ?',
             [$restoreUntil, (int) $room['id']]
         );
-        LogService::userOperation($request, $user, 'group', 'dissolve', (int) $room['id']);
+        LogService::userOperation($request, $user, $roomKind, 'dissolve', (int) $room['id']);
         return Response::success([
             'room_id' => (int) $room['id'],
+            'room_kind' => $roomKind,
             'restore_available' => $restoreUntil !== null,
             'restore_until' => $restoreUntil,
             'restore_days' => $restoreDays,
             'unit' => '天',
-        ], $restoreUntil === null ? '群聊已永久解散' : '群聊已解散，可在恢复期限内找回');
+        ], $restoreUntil === null ? $entity . '已永久解散' : $entity . '已解散，可在恢复期限内找回');
     }
 
     public static function dissolved(Request $request): \Yiyunying\Core\ApiResponse
@@ -257,14 +276,17 @@ final class GroupController
             $query
         )['total'] ?? 0);
         $items = Database::all(
-            "SELECT r.id, r.name, r.icon, r.description, r.dissolved_at, r.restore_until,
+            "SELECT r.id, r.name, r.icon, r.description, r.room_kind, r.dissolved_at, r.restore_until,
                     CASE WHEN r.restore_until IS NOT NULL AND r.restore_until > NOW() THEN 1 ELSE 0 END AS can_restore
              FROM chat_rooms r INNER JOIN chat_room_policies p ON p.room_id = r.id
              WHERE r.admin_id = ? AND r.app_id = ? AND p.owner_user_id = ? AND r.status = 0
              ORDER BY r.dissolved_at DESC, r.id DESC LIMIT {$limit} OFFSET {$offset}",
             $query
         );
-        foreach ($items as &$item) $item['can_restore'] = (bool) $item['can_restore'];
+        foreach ($items as &$item) {
+            $item['can_restore'] = (bool) $item['can_restore'];
+            $item['room_kind'] = ChatRoomService::roomKind($item['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        }
         unset($item);
         return Response::success(Pagination::data($items, $total, $page, $limit));
     }
@@ -279,20 +301,24 @@ final class GroupController
             [(int) $params['room_id'], (int) $user['admin_id'], (int) $user['app_id']]
         );
         if ($room === null || (int) $room['owner_user_id'] !== (int) $user['id']) {
-            throw new HttpException('已解散群聊不存在或你不是群主', 404, 404);
+            throw new HttpException('已解散的群聊或聊天室不存在，或你不是创建者', 404, 404);
         }
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $isChatroom = $roomKind === ChatRoomService::ROOM_CHATROOM;
+        $entity = $isChatroom ? '聊天室' : '群聊';
         if ($room['restore_until'] === null || strtotime((string) $room['restore_until']) <= time()) {
-            throw new HttpException('群聊恢复期限已过，无法恢复', 0, 410);
+            throw new HttpException($entity . '恢复期限已过，无法恢复', 0, 410);
         }
-        $ownedLimit = max(0, (int) AppService::setting((int) $user['app_id'], 'user_group_max_owned', 10));
+        $limitKey = $isChatroom ? 'user_chatroom_max_owned' : 'user_group_max_owned';
+        $ownedLimit = max(0, (int) AppService::setting((int) $user['app_id'], $limitKey, 10));
         $owned = (int) (Database::one(
             'SELECT COUNT(*) AS total FROM chat_room_policies p INNER JOIN chat_rooms r ON r.id = p.room_id
-             WHERE p.app_id = ? AND p.owner_user_id = ? AND r.status = 1',
-            [(int) $user['app_id'], (int) $user['id']]
+             WHERE p.app_id = ? AND p.owner_user_id = ? AND r.room_kind = ? AND r.status = 1',
+            [(int) $user['app_id'], (int) $user['id'], $roomKind]
         )['total'] ?? 0);
         if ($ownedLimit === 0 || $owned >= $ownedLimit) {
-            throw new HttpException('当前有效群聊数量已达到上限，暂时不能恢复', 0, 409, [
-                'limit' => $ownedLimit, 'used' => $owned,
+            throw new HttpException('当前有效' . $entity . '数量已达到上限，暂时不能恢复', 0, 409, [
+                'limit' => $ownedLimit, 'used' => $owned, 'room_kind' => $roomKind,
             ]);
         }
         Database::execute(
@@ -300,35 +326,36 @@ final class GroupController
             [(int) $room['id']]
         );
         $restored = ChatRoomService::adminRoom((int) $user['admin_id'], (int) $user['app_id'], (int) $room['id'], true);
-        self::roomNotice($restored, $user, '群主恢复了群聊');
-        LogService::userOperation($request, $user, 'group', 'restore', (int) $room['id']);
+        self::roomNotice($restored, $user, '创建者恢复了' . $entity);
+        LogService::userOperation($request, $user, $roomKind, 'restore', (int) $room['id']);
         return Response::success([
             'room' => ChatRoomService::detail($restored, (int) $user['id']),
-        ], '群聊恢复成功');
+        ], $entity . '恢复成功');
     }
-
     public static function qrCode(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
+        $entity = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP) === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
         if (!ChatRoomService::mayInvite($user, $room)) {
-            throw new HttpException('当前群聊不允许你生成邀请二维码', 0, 403);
+            throw new HttpException('当前' . $entity . '不允许你生成邀请二维码', 0, 403);
         }
         $payload = GroupQrService::encode($room, (int) $user['id']);
         $decoded = ['signed' => true, 'issuer_user_id' => (int) $user['id']];
         return Response::success([
             'qr_code' => $payload,
             'room' => self::qrRoomPreview($user, $room, $decoded),
-        ], '群二维码已生成');
+        ], $entity . '二维码已生成');
     }
 
     public static function scanQr(Request $request): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
         [$decoded, $room] = self::decodedQrRoom($request, $user);
+        $entity = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP) === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
         return Response::success([
             'room' => self::qrRoomPreview($user, $room, $decoded),
-        ], '已识别群二维码');
+        ], '已识别' . $entity . '二维码');
     }
 
     public static function joinQr(Request $request): \Yiyunying\Core\ApiResponse
@@ -336,12 +363,13 @@ final class GroupController
         $user = self::user($request);
         AuthService::ensureNotBanned($user, ['all', 'message', 'chat']);
         [$decoded, $room] = self::decodedQrRoom($request, $user);
+        $entity = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP) === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
         if (ChatRoomService::member((int) $room['id'], (int) $user['id']) !== null) {
             return Response::success([
                 'joined' => true,
                 'pending' => false,
                 'room' => ChatRoomService::detail($room, (int) $user['id']),
-            ], '你已在群聊中');
+            ], '你已在' . $entity . '中');
         }
 
         $policy = ChatRoomService::policy($room);
@@ -351,33 +379,35 @@ final class GroupController
         if ($policy['join_mode'] === ChatRoomService::JOIN_INVITE
             && self::pendingInvitation($room, $user) === null
             && !self::signedQrMayInvite($decoded, $room)) {
-            throw new HttpException('该群聊仅限受邀成员加入，此二维码不能直接入群', 0, 403);
+            throw new HttpException('该' . $entity . '仅限受邀成员加入，此二维码不能直接加入', 0, 403);
         }
 
         ChatRoomService::addMember($room, (int) $user['id']);
-        LogService::userOperation($request, $user, 'group', 'qr_join', (int) $room['id'], [
+        LogService::userOperation($request, $user, ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP), 'qr_join', (int) $room['id'], [
             'signed_qr' => (bool) ($decoded['signed'] ?? false),
         ]);
-        self::roomNotice($room, $user, '通过群二维码加入了群聊');
+        self::roomNotice($room, $user, '通过' . $entity . '二维码加入了' . $entity);
         return Response::success([
             'joined' => true,
             'pending' => false,
             'room' => ChatRoomService::detail($room, (int) $user['id']),
-        ], '已加入群聊');
+        ], '已加入' . $entity);
     }
     public static function join(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
         AuthService::ensureNotBanned($user, ['all', 'message', 'chat']);
         $room = ChatRoomService::userRoom($user, (int) $params['room_id']);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $entity = self::roomEntity($room);
         if (ChatRoomService::member((int) $room['id'], (int) $user['id']) !== null) {
-            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '你已在群聊中');
+            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '你已在' . $entity . '中');
         }
         $policy = ChatRoomService::policy($room);
         if ($policy['join_mode'] === ChatRoomService::JOIN_OPEN) {
             ChatRoomService::addMember($room, (int) $user['id']);
-            LogService::userOperation($request, $user, 'group', 'join', (int) $room['id']);
-            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '已加入群聊');
+            LogService::userOperation($request, $user, $roomKind, 'join', (int) $room['id']);
+            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '已加入' . $entity);
         }
         if ($policy['join_mode'] === ChatRoomService::JOIN_INVITE) {
             $invitation = Database::one(
@@ -385,9 +415,9 @@ final class GroupController
                  AND (expired_at IS NULL OR expired_at > NOW())",
                 [(int) $room['id'], (int) $user['id']]
             );
-            if ($invitation === null) throw new HttpException('该群聊只能通过邀请加入', 403, 403);
+            if ($invitation === null) throw new HttpException('该' . $entity . '只能通过邀请加入', 403, 403);
             ChatRoomService::addMember($room, (int) $user['id']);
-            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '已接受邀请并加入群聊');
+            return Response::success(['joined' => true, 'room' => ChatRoomService::detail($room, (int) $user['id'])], '已接受邀请并加入' . $entity);
         }
         $message = mb_substr((string) $request->input('message', ''), 0, 500);
         $validDays = (int) AppService::relationshipRequestPolicy((int) $user['app_id'])['effective_days'];
@@ -405,23 +435,25 @@ final class GroupController
                 $message, 'pending', $expiredAt, 'pending',
             ]
         );
-        LogService::userOperation($request, $user, 'group', 'join_request', (int) $room['id']);
+        LogService::userOperation($request, $user, $roomKind, 'join_request', (int) $room['id']);
         return Response::success([
             'joined' => false, 'pending' => true, 'expired_at' => $expiredAt, 'valid_days' => $validDays,
-        ], '入群申请已提交', 202);
+        ], '加入' . $entity . '的申请已提交', 202);
     }
 
     public static function leave(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $entity = self::roomEntity($room);
         $member = ChatRoomService::requireMember($user, $room);
         if ((string) $member['role'] === 'owner') {
-            throw new HttpException('群主必须先转让群聊或解散群聊', 0, 409);
+            throw new HttpException('创建者必须先转让或解散' . $entity, 0, 409);
         }
         ChatRoomService::removeMember($room, (int) $user['id']);
-        LogService::userOperation($request, $user, 'group', 'leave', (int) $room['id']);
-        return Response::success(['room_id' => (int) $room['id']], '已退出群聊');
+        LogService::userOperation($request, $user, $roomKind, 'leave', (int) $room['id']);
+        return Response::success(['room_id' => (int) $room['id']], '已退出' . $entity);
     }
 
     public static function members(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -516,7 +548,8 @@ final class GroupController
     {
         $user = self::user($request);
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
-        if (!ChatRoomService::mayInvite($user, $room)) throw new HttpException('当前群聊不允许普通成员邀请', 403, 403);
+        $entity = self::roomEntity($room);
+        if (!ChatRoomService::mayInvite($user, $room)) throw new HttpException('当前' . $entity . '不允许普通成员邀请', 403, 403);
         $targetId = IdentityService::resolveUserReference(
             (int) $user['app_id'],
             $request->input('user_uid', $request->input('user_id'))
@@ -544,12 +577,12 @@ final class GroupController
         LogService::userOperation($request, $user, 'group_invitation', 'create', (int) ($invitation['id'] ?? 0), ['room_id' => (int) $room['id'], 'invitee_user_id' => $targetId]);
         $invitee = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $targetId);
         if ($invitee !== null) NotificationService::send(
-            $invitee, 'group_invitation', '收到群聊邀请', '你被邀请加入群聊“' . (string) $room['name'] . '”',
+            $invitee, 'group_invitation', '收到' . $entity . '邀请', '你被邀请加入' . $entity . '“' . (string) $room['name'] . '”',
             ['invitation_id' => (int) ($invitation['id'] ?? 0), 'room_id' => (int) $room['id'], 'inviter_user_id' => (int) $user['id']]
         );
         return Response::success([
             'invitation' => $invitation, 'expired_at' => $expiredAt, 'valid_days' => $validDays,
-        ], '群邀请已发送', 201);
+        ], $entity . '邀请已发送', 201);
     }
 
     public static function invitations(Request $request): \Yiyunying\Core\ApiResponse
@@ -1423,7 +1456,7 @@ final class GroupController
             'qr_code',
             $request->input('code', $request->input('payload', ''))
         ));
-        if ($value === '') throw new HttpException('请提供群二维码内容', 0, 422);
+        if ($value === '') throw new HttpException('请提供群聊或聊天室二维码内容', 0, 422);
         $decoded = GroupQrService::decode($value, (int) $user['admin_id'], (int) $user['app_id']);
         $room = ChatRoomService::adminRoom(
             (int) $user['admin_id'],
@@ -1437,6 +1470,8 @@ final class GroupController
     private static function qrRoomPreview(array $user, array $room, array $decoded): array
     {
         $detail = ChatRoomService::detail($room, (int) $user['id']);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $entity = $roomKind === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
         $policy = ChatRoomService::policy($room);
         $joined = ChatRoomService::member((int) $room['id'], (int) $user['id']) !== null;
         $invited = self::pendingInvitation($room, $user) !== null;
@@ -1451,16 +1486,16 @@ final class GroupController
         $label = '仅限受邀成员';
         if ($joined) {
             $action = 'enter';
-            $label = '进入群聊';
+            $label = '进入' . $entity;
         } elseif ($policy['join_mode'] === ChatRoomService::JOIN_OPEN) {
             $action = 'join';
-            $label = '加入群聊';
+            $label = '加入' . $entity;
         } elseif ($policy['join_mode'] === ChatRoomService::JOIN_APPROVAL) {
             $action = $pending ? 'pending' : 'apply';
             $label = $pending ? '申请审核中' : '申请加入';
         } elseif ($invited || self::signedQrMayInvite($decoded, $room)) {
             $action = 'join';
-            $label = '加入群聊';
+            $label = '加入' . $entity;
         }
 
         $modeText = [
@@ -1471,6 +1506,8 @@ final class GroupController
 
         return [
             'id' => (int) $room['id'],
+            'room_kind' => $roomKind,
+            'room_kind_name' => $entity,
             'name' => (string) $room['name'],
             'description' => (string) ($room['description'] ?? ''),
             'avatar' => (string) ($room['icon'] ?? ''),
@@ -1523,6 +1560,8 @@ final class GroupController
         array $user,
         array $room
     ): \Yiyunying\Core\ApiResponse {
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        $entity = self::roomEntity($room);
         $message = mb_substr((string) $request->input('message', ''), 0, 500);
         $validDays = (int) AppService::relationshipRequestPolicy((int) $user['app_id'])['effective_days'];
         $expiredAt = date('Y-m-d H:i:s', time() + ($validDays * 86400));
@@ -1539,7 +1578,7 @@ final class GroupController
                 $message, 'pending', $expiredAt, 'pending',
             ]
         );
-        LogService::userOperation($request, $user, 'group', 'qr_join_request', (int) $room['id']);
+        LogService::userOperation($request, $user, $roomKind, 'qr_join_request', (int) $room['id']);
         return Response::success([
             'joined' => false,
             'pending' => true,
@@ -1549,8 +1588,15 @@ final class GroupController
                 'signed' => false,
                 'issuer_user_id' => 0,
             ]),
-        ], '入群申请已提交', 202);
+        ], '加入' . $entity . '的申请已提交', 202);
     }
+
+    private static function roomEntity(array $room): string
+    {
+        return ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP)
+            === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
+    }
+
     private static function user(Request $request): array
     {
         $user = AuthService::user($request);

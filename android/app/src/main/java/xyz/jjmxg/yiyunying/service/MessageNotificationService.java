@@ -39,6 +39,7 @@ import java.util.Set;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
+import xyz.jjmxg.yiyunying.core.NotificationIconResolver;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.domain.Role;
@@ -424,7 +425,7 @@ public final class MessageNotificationService extends Service {
                 System.currentTimeMillis(), sender);
         }
         Notification notification = new NotificationCompat.Builder(this, MESSAGE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_chat)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle(prefix + " · " + title)
             .setContentText(content)
             .setStyle(messageStyle)
@@ -484,7 +485,7 @@ public final class MessageNotificationService extends Service {
         style.setBigContentTitle(conversations + " 个会话有新消息")
             .setSummaryText("共 " + unreadTotal + " 条未读消息");
         Notification summary = new NotificationCompat.Builder(this, MESSAGE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_chat)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle(conversations + " 个会话有新消息")
             .setContentText("共 " + unreadTotal + " 条未读消息")
             .setStyle(style)
@@ -509,8 +510,7 @@ public final class MessageNotificationService extends Service {
         PendingIntent pending = PendingIntent.getActivity(this, notificationId, target,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification notification = new NotificationCompat.Builder(this, channel)
-            .setSmallIcon("activity".equals(center) ? R.drawable.ic_gift
-                : ("system".equals(center) ? R.drawable.ic_content : R.drawable.ic_chat))
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle(title.isEmpty() ? "易运盈通知" : title)
             .setContentText(content)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
@@ -564,7 +564,7 @@ public final class MessageNotificationService extends Service {
         PendingIntent pending = PendingIntent.getActivity(this, notificationId, target,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MENTION_CHANNEL)
-            .setSmallIcon(R.drawable.ic_chat)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle("@你 · " + (title.isEmpty() ? "有人提到了你" : title))
             .setContentText(content)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(content + "\n点击后定位到被提及的位置"))
@@ -643,7 +643,7 @@ public final class MessageNotificationService extends Service {
         PendingIntent hangupPending = PendingIntent.getService(this, notificationId + 20000, hangupIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification notification = new NotificationCompat.Builder(this, CALL_CHANNEL)
-            .setSmallIcon(video ? R.drawable.ic_videocam : R.drawable.ic_phone)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle(peerName + (video ? " 邀请你视频通话" : " 邀请你语音通话"))
             .setContentText(video ? "视频通话来电" : "语音通话来电")
             .setContentIntent(pending)
@@ -693,7 +693,7 @@ public final class MessageNotificationService extends Service {
         PendingIntent pending = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, SERVICE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_chat)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle("易运盈消息通知")
             .setContentText("正在接收好友、群聊和客服消息")
             .setContentIntent(pending)

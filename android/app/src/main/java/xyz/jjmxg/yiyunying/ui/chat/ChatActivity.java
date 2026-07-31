@@ -232,6 +232,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private long submittedComposerEditVersion;
     private RequestHandle policyRequest;
     private RequestHandle groupToolRequest;
+    private RequestHandle roomMetadataRequest;
     private RequestHandle readRequest;
     private RequestHandle uploadRequest;
     private final List<RequestHandle> batchUploadRequests = new ArrayList<>();
@@ -378,6 +379,9 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private String searchContentFilter = "all";
     private JsonObject pendingQuote;
     private String normalTitle = "";
+    private String roomKind = "group";
+    private boolean roomMetadataResolved;
+    private long roomMetadataGeneration;
     private static final int MENU_SEARCH = 7101;
     private static final int MENU_GROUP = 7102;
     private static final int MENU_CHAT_SETTINGS = 7103;
@@ -509,7 +513,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         search.setIcon(R.drawable.ic_search);
         search.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         if (MODE_ROOM.equals(mode()) && AppAccess.from(this).session().role() == Role.USER) {
-            MenuItem tools = binding.toolbar.getMenu().add(0, MENU_GROUP, 1, "群聊设置");
+            MenuItem tools = binding.toolbar.getMenu().add(0, MENU_GROUP, 1, "会话设置");
             tools.setIcon(xyz.jjmxg.yiyunying.R.drawable.ic_more);
             tools.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         } else if (MODE_CONVERSATION.equals(mode()) && AppAccess.from(this).session().role() == Role.USER) {
@@ -523,12 +527,14 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 return true;
             }
             if (item.getItemId() == MENU_GROUP) {
-                ConversationPermissionActivity.openGroup(
-                    this,
-                    getIntent().getLongExtra(EXTRA_TARGET_ID, 0L),
-                    normalTitle,
-                    conversationBackgroundIdentity()
-                );
+                long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
+                if (isChatRoom()) {
+                    ConversationPermissionActivity.openChatRoom(
+                        this, roomId, normalTitle, conversationBackgroundIdentity());
+                } else {
+                    ConversationPermissionActivity.openGroup(
+                        this, roomId, normalTitle, conversationBackgroundIdentity());
+                }
                 return true;
             }
             if (item.getItemId() == MENU_CHAT_SETTINGS) {
@@ -548,6 +554,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             }
             return false;
         });
+        loadRoomMetadata();
         adapter = new ChatAdapter(AppAccess.from(this).session().actorId(), AppAccess.from(this).session().role(), new ChatAdapter.Listener() {
             @Override public void onLongPress(JsonObject message) { showMessageActions(message); }
             @Override public void onSelectionChanged(JsonObject message, boolean selected) { setMessageSelected(message, selected); }
@@ -732,13 +739,72 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private String conversationBackgroundIdentity() {
         if (MODE_ROOM.equals(mode())) {
             long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
-            return roomId > 0L ? "group_room:" + roomId : "";
+            return roomId > 0L ? (isChatRoom() ? "chat_room:" : "group_room:") + roomId : "";
         }
         if (!MODE_CONVERSATION.equals(mode())) return "";
         long peerId = resolvedConversationPeerId();
         if (peerId > 0L) return "private_peer:" + peerId;
         long conversationId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
         return conversationId > 0L ? "private_conversation:" + conversationId : "";
+    }
+
+    private void loadRoomMetadata() {
+        if (!MODE_ROOM.equals(mode())) return;
+        long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
+        if (roomId <= 0L) return;
+        if (roomMetadataRequest != null) roomMetadataRequest.cancel();
+        long generation = ++roomMetadataGeneration;
+        roomMetadataRequest = AppAccess.from(this).repository().get(
+            "/api/user/chat-rooms/" + roomId,
+            new LinkedHashMap<>(),
+            result -> {
+                if (generation != roomMetadataGeneration) return;
+                roomMetadataRequest = null;
+                if (binding == null || isFinishing() || isDestroyed() || !result.isSuccessful()) return;
+                JsonObject room = Jsons.object(result.dataObject(), "room");
+                roomKind = "chat_room".equals(Jsons.string(room, "room_kind")) ? "chat_room" : "group";
+                roomMetadataResolved = true;
+                String title = Jsons.string(room, "name");
+                if (title != null && !title.trim().isEmpty()) {
+                    normalTitle = title.trim();
+                    xyz.jjmxg.yiyunying.core.RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, normalTitle);
+                }
+                refreshRoomPresentation();
+                applyChatBackground();
+            }
+        );
+    }
+
+    private boolean isChatRoom() {
+        return "chat_room".equals(roomKind);
+    }
+
+    private String roomEntityLabel() {
+        if (!MODE_ROOM.equals(mode()) || !roomMetadataResolved) return "会话";
+        return isChatRoom() ? "聊天室" : "群聊";
+    }
+
+    private String memberEntityLabel() {
+        if (!MODE_ROOM.equals(mode()) || !roomMetadataResolved) return "成员";
+        return isChatRoom() ? "聊天室成员" : "群成员";
+    }
+
+    private void refreshRoomPresentation() {
+        if (binding == null) return;
+        if (!MODE_ROOM.equals(mode())) {
+            binding.functionPaneTitle.setText("私聊功能");
+            binding.voiceCallLabel.setText("语音通话");
+            binding.videoCallLabel.setText("视频通话");
+            return;
+        }
+        String entity = roomEntityLabel();
+        binding.functionPaneTitle.setText(entity + "功能");
+        binding.voiceCallLabel.setText(roomMetadataResolved
+            ? (isChatRoom() ? "聊天室语音" : "群内语音") : "语音通话");
+        binding.videoCallLabel.setText(roomMetadataResolved
+            ? (isChatRoom() ? "聊天室视频" : "群内视频") : "视频通话");
+        MenuItem menu = binding.toolbar.getMenu().findItem(MENU_GROUP);
+        if (menu != null) menu.setTitle(entity + "设置");
     }
 
     private void openConversationProfile() {
@@ -1252,10 +1318,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         bindAction(binding.voiceCallAction, view -> startNetworkCall(false));
         bindAction(binding.videoCallAction, view -> startNetworkCall(true));
         bindAction(binding.locationAction, view -> locationPicker.launch(LocationPickerActivity.pickerIntent(this)));
-        boolean group = MODE_ROOM.equals(mode());
-        binding.functionPaneTitle.setText(group ? "群聊功能" : "私聊功能");
-        binding.voiceCallLabel.setText(group ? "群内语音" : "语音通话");
-        binding.videoCallLabel.setText(group ? "群内视频" : "视频通话");
+        refreshRoomPresentation();
         binding.functionPager.setPageCount(2);
         binding.functionPager.addOnLayoutChangeListener((view, left, top, right, bottom,
             oldLeft, oldTop, oldRight, oldBottom) -> configureFunctionPageWidths(false));
@@ -1300,7 +1363,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             return;
         }
         if (!MODE_CONVERSATION.equals(mode())) {
-            Snackbar.make(binding.getRoot(), "请在好友私聊或群聊中发起网络通话", Snackbar.LENGTH_LONG).show();
+            Snackbar.make(binding.getRoot(), "请在好友私聊、群聊或聊天室中发起网络通话", Snackbar.LENGTH_LONG).show();
             return;
         }
         long peerId = resolvedConversationPeerId();
@@ -1321,7 +1384,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (callMemberRequest != null) return;
         long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0);
         if (roomId <= 0) {
-            Snackbar.make(binding.getRoot(), "无法识别当前群聊", Snackbar.LENGTH_LONG).show();
+            Snackbar.make(binding.getRoot(), "无法识别当前" + roomEntityLabel(), Snackbar.LENGTH_LONG).show();
             return;
         }
         LinkedHashMap<String, String> query = new LinkedHashMap<>();
@@ -1335,7 +1398,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 binding.progress.setVisibility(View.GONE);
                 if (!result.isSuccessful()) {
                     Snackbar.make(binding.getRoot(), result.message().isEmpty()
-                        ? "群成员加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
+                        ? memberEntityLabel() + "加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
                     return;
                 }
                 JsonArray source = Jsons.array(result.dataObject(), "items");
@@ -1352,7 +1415,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                     labels.add(name + "  ·  UID " + Jsons.string(member, "uid"));
                 }
                 if (members.isEmpty()) {
-                    Snackbar.make(binding.getRoot(), "当前群聊没有其他可通话成员", Snackbar.LENGTH_LONG).show();
+                    Snackbar.make(binding.getRoot(), "当前" + roomEntityLabel() + "没有其他可通话成员", Snackbar.LENGTH_LONG).show();
                     return;
                 }
                 new YiyunyingDialogBuilder(this)
@@ -3164,7 +3227,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             case MODE_CONVERSATION:
                 return RuntimeLanguage.translate(this, "私聊").toString();
             case MODE_ROOM:
-                return RuntimeLanguage.translate(this, "群聊").toString();
+                return roomEntityLabel();
             case MODE_SERVICE_ADMIN:
             case MODE_SERVICE_USER:
                 return RuntimeLanguage.translate(this, "客服").toString();
@@ -5597,6 +5660,13 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private void resetForConversationIntent() {
         invalidateMessageRequest();
+        if (roomMetadataRequest != null) {
+            roomMetadataRequest.cancel();
+            roomMetadataRequest = null;
+        }
+        roomMetadataGeneration++;
+        roomKind = "group";
+        roomMetadataResolved = false;
         messages.clear();
         adapter.submit(new ArrayList<>());
         lastId = 0L;
@@ -5616,6 +5686,8 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         binding.emptyText.setVisibility(View.GONE);
         binding.progress.setVisibility(View.VISIBLE);
         applyChatBackground();
+        refreshRoomPresentation();
+        loadRoomMetadata();
         renderNewMessageIndicator();
     }
 
@@ -6716,12 +6788,13 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private void showGroupTools() {
         long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
         if (roomId <= 0L) {
-            Snackbar.make(binding.getRoot(), "无法识别当前群聊", Snackbar.LENGTH_LONG).show();
+            Snackbar.make(binding.getRoot(), "无法识别当前" + roomEntityLabel(), Snackbar.LENGTH_LONG).show();
             return;
         }
-        String[] items = {"群成员与权限", "群文件", "群相册", "群投票", "群接龙"};
+        String prefix = isChatRoom() ? "聊天室" : "群";
+        String[] items = {memberEntityLabel() + "与权限", prefix + "文件", prefix + "相册", prefix + "投票", prefix + "接龙"};
         new YiyunyingDialogBuilder(this)
-            .setTitle("群工具")
+            .setTitle(roomEntityLabel() + "工具")
             .setItems(items, (dialog, which) -> {
                 switch (which) {
                     case 1: GroupSpaceActivity.open(this, roomId, normalTitle, "files"); break;
@@ -6802,6 +6875,8 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (sendRequest != null) sendRequest.cancel();
         if (policyRequest != null) policyRequest.cancel();
         if (groupToolRequest != null) groupToolRequest.cancel();
+        if (roomMetadataRequest != null) roomMetadataRequest.cancel();
+        roomMetadataGeneration++;
         if (readRequest != null) readRequest.cancel();
         if (uploadRequest != null) uploadRequest.cancel();
         for (RequestHandle request : batchUploadRequests) request.cancel();

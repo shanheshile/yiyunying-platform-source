@@ -536,20 +536,21 @@ public final class ModuleRegistry {
             .secondary("status", "last_message_at", "created_at")
             .action(itemAction("回复", "POST", "/api/admin/apps/{app_id}/service-sessions/{session_id}/reply", multilineRequired("content", "回复内容")))
             .action(confirmItem("关闭会话", "POST", "/api/admin/apps/{app_id}/service-sessions/{session_id}/close", false)).build());
-        result.add(ModuleSpec.builder("chat_rooms", "用户群聊管理", role).group("沟通").requiresApp()
+        result.add(ModuleSpec.builder("chat_rooms", "群聊与聊天室管理", role).group("沟通").requiresApp()
             .path("/api/admin/apps/{app_id}/chat-rooms").paged().searchable("keyword")
-            .primary("name", "id").secondary("join_mode", "member_count", "message_count", "status")
-            .create(action("创建群聊", "POST", "/api/admin/apps/{app_id}/chat-rooms",
-                req("name", "群名称"), field("icon", "图标地址"), multiline("description", "群介绍"),
+            .primary("name", "id").secondary("room_kind", "join_mode", "member_count", "message_count", "status")
+            .create(action("创建群聊或聊天室", "POST", "/api/admin/apps/{app_id}/chat-rooms",
+                field("room_kind", "类型 group/chat_room").withDefault("group"),
+                req("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
                 field("join_mode", "加入模式 open/approval/invite").withDefault("open"), integer("max_members", "人数上限").withDefault("500"),
-                bool("allow_member_invite", "允许成员邀请").withDefault("true"), bool("mute_all", "全员禁言"), multiline("announcement", "群公告")))
-            .action(itemAction("编辑群资料", "PUT", "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
-                field("name", "群名称"), field("icon", "图标地址"), multiline("description", "群介绍"),
+                bool("allow_member_invite", "允许成员邀请").withDefault("true"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告")))
+            .action(itemAction("编辑会话资料", "PUT", "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
+                field("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
                 field("join_mode", "加入模式 open/approval/invite"), integer("max_members", "人数上限"),
-                bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "群公告"), bool("status", "启用")))
+                bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告"), bool("status", "启用")))
             .action(itemAction("添加成员", "POST", "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members",
                 integerRequired("user_id", "用户 ID"), field("role", "角色 owner/admin/member").withDefault("member")))
-            .action(confirmItem("解散群聊", "DELETE", "/api/admin/apps/{app_id}/chat-rooms/{room_id}", true)).build());
+            .action(confirmItem("解散会话", "DELETE", "/api/admin/apps/{app_id}/chat-rooms/{room_id}", true)).build());
 
         result.add(ModuleSpec.builder("card_batches", "卡密批次", role).group("资产").requiresApp()
             .path("/api/admin/apps/{app_id}/card-batches").paged().primary("name", "batch_no", "id")
@@ -758,18 +759,19 @@ public final class ModuleRegistry {
             .secondary("direction", "message", "status", "created_at")
             .action(confirmItem("同意", "POST", "/api/user/friends/requests/{request_id}/accept", false))
             .action(confirmItem("拒绝", "POST", "/api/user/friends/requests/{request_id}/reject", false)).build());
-        result.add(ModuleSpec.builder("chat_rooms", "聊天室", role).group("消息")
+        result.add(ModuleSpec.builder("chat_rooms", "群聊与聊天室", role).group("消息")
             .path("/api/user/chat-rooms").paged().searchable("keyword").primary("name", "id")
-            .secondary("current_role", "join_mode", "member_count", "unread_count")
-            .create(action("创建群聊", "POST", "/api/user/chat-rooms",
-                req("name", "群名称"), field("icon", "图标地址"), multiline("description", "群介绍"),
+            .secondary("room_kind", "current_role", "join_mode", "member_count", "unread_count")
+            .create(action("创建群聊或聊天室", "POST", "/api/user/chat-rooms",
+                field("room_kind", "类型 group/chat_room").withDefault("group"),
+                req("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
                 field("join_mode", "加入模式 open/approval/invite").withDefault("approval"), integer("max_members", "人数上限").withDefault("500"),
-                bool("allow_member_invite", "允许成员邀请").withDefault("true"), multiline("announcement", "群公告")))
+                bool("allow_member_invite", "允许成员邀请").withDefault("true"), multiline("announcement", "会话公告")))
             .action(itemAction("申请或加入", "POST", "/api/user/chat-rooms/{room_id}/join", field("message", "申请说明")))
-            .action(itemAction("编辑群资料", "PUT", "/api/user/chat-rooms/{room_id}",
-                field("name", "群名称"), field("icon", "图标地址"), multiline("description", "群介绍"),
+            .action(itemAction("编辑会话资料", "PUT", "/api/user/chat-rooms/{room_id}",
+                field("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
                 field("join_mode", "加入模式 open/approval/invite"), integer("max_members", "人数上限"),
-                bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "群公告")))
+                bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告")))
             .action(itemAction("邀请成员", "POST", "/api/user/chat-rooms/{room_id}/invitations",
                 integerRequired("user_id", "用户 ID"), field("message", "邀请说明"), date("expired_at", "到期时间")))
             .action(itemAction("转让群主", "POST", "/api/user/chat-rooms/{room_id}/transfer", integerRequired("new_owner_user_id", "新群主用户 ID")))
@@ -781,13 +783,13 @@ public final class ModuleRegistry {
             .action(itemAction("创建群投票", "POST", "/api/user/chat-rooms/{room_id}/votes", req("title", "标题"), json("options", "选项数组"), bool("multiple_choice", "多选"), integer("min_select", "最少选择"), integer("max_select", "最多选择")))
             .action(itemAction("查看群接龙", "GET", "/api/user/chat-rooms/{room_id}/solitaires"))
             .action(itemAction("创建群接龙", "POST", "/api/user/chat-rooms/{room_id}/solitaires", req("title", "接龙标题"), multiline("description", "说明"), json("fields", "接龙字段")))
-            .action(confirmItem("退出群聊", "POST", "/api/user/chat-rooms/{room_id}/leave", false))
-            .action(confirmItem("解散群聊", "DELETE", "/api/user/chat-rooms/{room_id}", true)).build());
-        result.add(ModuleSpec.builder("dissolved_chat_rooms", "已解散的群聊", role).group("消息")
+            .action(confirmItem("退出会话", "POST", "/api/user/chat-rooms/{room_id}/leave", false))
+            .action(confirmItem("解散会话", "DELETE", "/api/user/chat-rooms/{room_id}", true)).build());
+        result.add(ModuleSpec.builder("dissolved_chat_rooms", "已解散的群聊与聊天室", role).group("消息")
             .path("/api/user/chat-rooms/dissolved").paged().primary("name", "id")
-            .secondary("member_count", "dissolved_at", "restore_until")
-            .action(confirmItem("恢复群聊", "POST", "/api/user/chat-rooms/{room_id}/restore", false)).build());
-        result.add(ModuleSpec.builder("chat_room_invitations", "群聊邀请", role).group("消息")
+            .secondary("room_kind", "member_count", "dissolved_at", "restore_until")
+            .action(confirmItem("恢复会话", "POST", "/api/user/chat-rooms/{room_id}/restore", false)).build());
+        result.add(ModuleSpec.builder("chat_room_invitations", "群聊与聊天室邀请", role).group("消息")
             .path("/api/user/chat-room-invitations").dataKey("items")
             .primary("room_name", "id").secondary("inviter_nickname", "inviter_account", "message", "status", "expired_at")
             .action(confirmItem("接受邀请", "POST", "/api/user/chat-room-invitations/{invitation_id}/accept", false))

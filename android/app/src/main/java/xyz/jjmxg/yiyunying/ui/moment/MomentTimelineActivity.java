@@ -338,7 +338,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void renderMoments(List<JsonObject> values, long generation) {
         if (!isUiActive() || adapter == null || generation != listGeneration) return;
-        ArrayList<JsonObject> snapshot = copyMoments(values);
+        ArrayList<JsonObject> snapshot = prepareMomentsForDisplay(values);
         Runnable render = () -> {
             if (!isUiActive() || adapter == null || generation != listGeneration) return;
             adapter.submit(snapshot);
@@ -1268,6 +1268,36 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         return copied;
     }
 
+    private ArrayList<JsonObject> prepareMomentsForDisplay(List<JsonObject> values) {
+        ArrayList<JsonObject> prepared = copyMoments(values);
+        for (JsonObject value : prepared) value.remove("section_label");
+        if (targetMomentId > 0) return prepared;
+        if (targetUserId <= 0) {
+            prepared.sort(MomentTimelineActivity::compareMomentsByTime);
+            return prepared;
+        }
+        prepared.sort(MomentTimelineActivity::compareMoments);
+        boolean pinnedSectionAdded = false;
+        boolean regularSectionAdded = false;
+        for (JsonObject value : prepared) {
+            if (flag(value, "is_pinned")) {
+                if (!pinnedSectionAdded) {
+                    value.addProperty("section_label", "置顶动态");
+                    pinnedSectionAdded = true;
+                }
+            } else if (!regularSectionAdded) {
+                value.addProperty("section_label", "普通动态");
+                regularSectionAdded = true;
+            }
+        }
+        return prepared;
+    }
+
+    private static int compareMomentsByTime(JsonObject left, JsonObject right) {
+        int created = Jsons.string(right, "created_at").compareTo(Jsons.string(left, "created_at"));
+        if (created != 0) return created;
+        return Long.compare(Jsons.longValue(right, "id"), Jsons.longValue(left, "id"));
+    }
     private static int compareMoments(JsonObject left, JsonObject right) {
         boolean leftPinned = flag(left, "is_pinned");
         boolean rightPinned = flag(right, "is_pinned");
@@ -1367,13 +1397,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 break;
             }
             if (!found) return;
-            next.sort(MomentTimelineActivity::compareMoments);
+            ArrayList<JsonObject> prepared = prepareMomentsForDisplay(next);
             if (binding != null && binding.recycler.isComputingLayout()) {
                 binding.recycler.post(() -> {
-                    if (isUiActive()) submit(next);
+                    if (isUiActive()) submit(prepared);
                 });
             } else {
-                submit(next);
+                submit(prepared);
             }
         }
 
@@ -1402,6 +1432,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.mediaGrid.setRecycledViewPool(mediaViewPool);
             }
             void bind(JsonObject item) {
+                String sectionLabel = Jsons.string(item, "section_label");
+                RuntimeLanguage.setDynamicText(row.sectionHeader, sectionLabel);
+                row.sectionHeader.setVisibility(sectionLabel.isEmpty() ? View.GONE : View.VISIBLE);
                 row.dayText.setText(String.valueOf(Jsons.intValue(item, "day", 0)));
                 row.monthText.setText(Jsons.intValue(item, "month", 0) + "月\n" + Jsons.intValue(item, "year", 0));
                 row.authorName.setText(Jsons.string(item, "display_name"));
@@ -1431,7 +1464,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                         itemLatitude,
                         itemLongitude)
                     : null);
-                row.pinBadge.setVisibility(flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
+                boolean profileTimeline = targetMomentId <= 0 && targetUserId > 0;
+                row.pinBadge.setVisibility(profileTimeline && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
                 StringBuilder meta = new StringBuilder();
                 meta.append(Jsons.string(item, "time_label"));
                 if (flag(item, "is_edited")) meta.append(" · 已编辑");
@@ -1456,9 +1490,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.momentCard.setOnClickListener(opensDetail ? detail : null);
                 row.detailHint.setVisibility(opensDetail ? View.VISIBLE : View.GONE);
                 row.detailHint.setOnClickListener(opensDetail ? detail : null);
-                boolean profileTimeline = targetUserId > 0;
-                row.avatar.setVisibility(profileTimeline ? View.GONE : View.VISIBLE);
-                row.authorArea.setVisibility(profileTimeline ? View.GONE : View.VISIBLE);
+                boolean hideRepeatedAuthor = targetUserId > 0;
+                row.avatar.setVisibility(hideRepeatedAuthor ? View.GONE : View.VISIBLE);
+                row.authorArea.setVisibility(hideRepeatedAuthor ? View.GONE : View.VISIBLE);
                 row.avatar.setOnClickListener(profile);
                 row.authorArea.setOnClickListener(profile);
                 boolean manageable = flag(item, "can_pin") || flag(item, "can_edit") || flag(item, "can_delete");

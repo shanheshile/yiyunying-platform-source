@@ -106,7 +106,7 @@ foreach ([
 }
 
 $android = file_get_contents(dirname(__DIR__, 2)
-    . '/yiyunying-android/app/src/main/java/xyz/jjmxg/yiyunying/ui/permission/RolePermissionActivity.java') ?: '';
+    . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/permission/RolePermissionActivity.java') ?: '';
 foreach ([
     '/api/platform/permissions',
     '/api/admin/permissions',
@@ -147,7 +147,7 @@ foreach ([
 ] as $needle) {
     $check(str_contains($serviceSource, $needle), '管理员权限来源契约缺少：' . $needle);
 }
-$androidRoot = dirname(__DIR__, 2) . '/yiyunying-android/app/src/main';
+$androidRoot = dirname(__DIR__, 2) . '/android/app/src/main';
 $layoutPath = $androidRoot . '/res/layout/activity_role_permission.xml';
 $layout = file_get_contents($layoutPath) ?: '';
 foreach ([

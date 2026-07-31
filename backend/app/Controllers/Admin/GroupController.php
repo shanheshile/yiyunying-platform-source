@@ -37,6 +37,11 @@ final class GroupController
             $where[] = 'status = ?';
             $query[] = (int) $request->input('status');
         }
+        $requestedKind = trim((string) $request->input('room_kind', ''));
+        if ($requestedKind !== '') {
+            $where[] = 'room_kind = ?';
+            $query[] = ChatRoomService::roomKind($requestedKind);
+        }
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM chat_rooms WHERE {$whereSql}", $query)['total'] ?? 0);
         $rooms = Database::all(
@@ -50,25 +55,34 @@ final class GroupController
     public static function create(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         [$admin, $appId] = self::context($request, $params);
+        $roomKind = ChatRoomService::roomKind($request->input('room_kind', ChatRoomService::ROOM_GROUP));
+        $isChatroom = $roomKind === ChatRoomService::ROOM_CHATROOM;
+        $entity = $isChatroom ? '聊天室' : '群聊';
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
-        $joinMode = ChatRoomService::joinMode($request->input('join_mode', ChatRoomService::JOIN_OPEN));
-        $roomId = Database::transaction(static function () use ($request, $admin, $appId, $name, $joinMode): int {
+        $defaultJoinMode = $isChatroom ? ChatRoomService::JOIN_OPEN : ChatRoomService::JOIN_APPROVAL;
+        $joinMode = ChatRoomService::joinMode($request->input('join_mode', $defaultJoinMode));
+        $memberLimitKey = $isChatroom ? 'chatroom_default_max_members' : 'group_default_max_members';
+        $defaultMemberLimit = max(2, (int) AppService::setting($appId, $memberLimitKey, 500));
+        $roomId = Database::transaction(static function () use (
+            $request, $admin, $appId, $name, $joinMode, $roomKind, $defaultMemberLimit
+        ): int {
             $id = Database::insert(
                 'INSERT INTO chat_rooms
-                 (admin_id, app_id, name, icon, description, tags_json, is_public, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                 (admin_id, app_id, name, icon, description, tags_json, room_kind, is_public, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $admin['id'], $appId, $name,
                     mb_substr((string) $request->input('icon', ''), 0, 500),
                     mb_substr((string) $request->input('description', ''), 0, 1000),
                     ContentTagService::encode($request->input('tags', [])),
+                    $roomKind,
                     $joinMode === ChatRoomService::JOIN_INVITE ? 0 : 1,
                 ]
             );
             $room = ChatRoomService::adminRoom((int) $admin['id'], $appId, $id);
             ChatRoomService::savePolicy($room, [
                 'join_mode' => $joinMode,
-                'max_members' => (int) $request->input('max_members', AppService::setting($appId, 'group_default_max_members', 500)),
+                'max_members' => (int) $request->input('max_members', $defaultMemberLimit),
                 'allow_member_invite' => Validator::boolean($request->input('allow_member_invite', true), 'allow_member_invite'),
                 'mute_all' => Validator::boolean($request->input('mute_all', false), 'mute_all'),
                 'announcement' => (string) $request->input('announcement', ''),
@@ -76,10 +90,9 @@ final class GroupController
             return $id;
         });
         $room = ChatRoomService::adminRoom((int) $admin['id'], $appId, $roomId);
-        LogService::adminOperation($request, (int) $admin['id'], $appId, 'group', 'create', $roomId, null, $room);
-        return Response::success(['room' => ChatRoomService::detail($room)], '群聊创建成功', 201);
+        LogService::adminOperation($request, (int) $admin['id'], $appId, $roomKind, 'create', $roomId, null, $room);
+        return Response::success(['room' => ChatRoomService::detail($room)], $entity . '创建成功', 201);
     }
-
     public static function show(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         [$admin, $appId] = self::context($request, $params);

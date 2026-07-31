@@ -10,7 +10,7 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:title="群空间"
+        android:title="资料空间"
         app:navigationIcon="@drawable/ic_back" />
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
@@ -46,7 +46,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
                 android:minWidth="0dp"
-                android:text="群二维码"
+                android:text="二维码"
                 android:textSize="12sp"
                 app:icon="@drawable/ic_qr"
                 app:iconSize="18dp" />
@@ -63,10 +63,10 @@
             app:selectionRequired="true"
             app:singleSelection="true">
             <com.google.android.material.chip.Chip android:id="@+id/tabMembers" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:text="成员" />
-            <com.google.android.material.chip.Chip android:id="@+id/tabFiles" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群文件" />
-            <com.google.android.material.chip.Chip android:id="@+id/tabAlbums" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群相册" />
-            <com.google.android.material.chip.Chip android:id="@+id/tabVotes" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群投票" />
-            <com.google.android.material.chip.Chip android:id="@+id/tabSolitaires" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="群接龙" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabFiles" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="文件" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabAlbums" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="相册" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabVotes" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="投票" />
+            <com.google.android.material.chip.Chip android:id="@+id/tabSolitaires" style="@style/Widget.Material3.Chip.Filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="接龙" />
         </com.google.android.material.chip.ChipGroup>
     </HorizontalScrollView>
 
@@ -81,7 +81,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
             android:layout_margin="18dp"
-            android:text="上传群文件"
+            android:text="添加内容"
             app:icon="@drawable/ic_add" />
     </FrameLayout>
 </LinearLayout>

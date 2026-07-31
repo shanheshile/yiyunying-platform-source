@@ -34,7 +34,7 @@ public final class ManagedRecordDetailActivity extends xyz.jjmxg.yiyunying.ui.co
             RecordDetailDialog.renderInto(this, binding.contentContainer, record);
         } catch (RuntimeException exception) {
             JsonObject error = new JsonObject();
-            error.addProperty("content", "资料解析失败，请重新打开后再试");
+            error.addProperty("content", RuntimeLanguage.translate(this, "资料解析失败，请重新打开后再试").toString());
             RecordDetailDialog.renderInto(this, binding.contentContainer, error);
         }
     }

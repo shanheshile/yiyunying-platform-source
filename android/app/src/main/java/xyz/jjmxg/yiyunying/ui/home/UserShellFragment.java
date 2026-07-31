@@ -28,6 +28,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.FragmentUserShellBinding;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
 import xyz.jjmxg.yiyunying.ui.common.BackNavigationHandler;
+import xyz.jjmxg.yiyunying.ui.common.BottomDockStyler;
 
 public final class UserShellFragment extends BaseFragment implements BackNavigationHandler {
     private static final int[] MENU_IDS = {
@@ -71,6 +72,7 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle state) {
         binding = FragmentUserShellBinding.inflate(inflater, container, false);
+        BottomDockStyler.apply(binding.bottomNavigation);
         chatUnreadCount = -1;
         notificationUnreadCount = -1;
         binding.pager.setAdapter(new UserPagerAdapter(this));

@@ -4,12 +4,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-
-import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.snackbar.Snackbar;
@@ -59,11 +59,28 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
         setContentView(binding.getRoot());
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         String title = getIntent().getStringExtra(EXTRA_NAME);
-        if (title == null || title.isEmpty()) binding.toolbar.setTitle("用户监管资料");
+        if (title == null || title.isEmpty()) binding.toolbar.setTitle(tr("用户监管资料"));
         else RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, title);
+        Menu menu = binding.toolbar.getMenu();
+        MenuItem refreshItem = menu.add(tr("刷新"));
+        refreshItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        MenuItem permissionItem = menu.add(tr("权限"));
+        permissionItem.setIcon(R.drawable.ic_settings);
+        permissionItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        binding.toolbar.setOnMenuItemClickListener(item -> {
+            if (item == refreshItem) {
+                load();
+                return true;
+            }
+            if (item == permissionItem) {
+                openPermissions();
+                return true;
+            }
+            return false;
+        });
         currentName = title == null ? "" : title;
-        binding.permissionButton.setOnClickListener(view ->
-            RolePermissionActivity.openUser(this, appId, userId, currentName, currentAccount));
+        binding.permissionButton.setText(tr("权限与限制"));
+        binding.permissionButton.setOnClickListener(view -> openPermissions());
         load();
     }
 
@@ -79,7 +96,7 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
             if (binding == null) return;
             binding.progress.setVisibility(View.INVISIBLE);
             if (!result.isSuccessful()) {
-                Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "用户监管资料加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
+                Snackbar.make(binding.getRoot(), result.message().isEmpty() ? tr("用户监管资料加载失败") : result.message(), Snackbar.LENGTH_LONG).show();
                 return;
             }
             render(result.dataObject());
@@ -110,7 +127,7 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
 
     private void addSectionTitle(String title) {
         TextView heading = new TextView(this);
-        heading.setText(title);
+        heading.setText(tr(title));
         heading.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge);
         LinearLayout.LayoutParams params = params(20);
         binding.sectionsContainer.addView(heading, params);
@@ -119,7 +136,7 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
     private void addGroup(String groupName, JsonElement value) {
         TextView label = new TextView(this);
         int count = value.isJsonArray() ? value.getAsJsonArray().size() : (value.isJsonNull() ? 0 : 1);
-        label.setText(groupName + (value.isJsonArray() ? "（" + count + "）" : ""));
+        label.setText(tr(groupName) + (value.isJsonArray() ? "（" + count + "）" : ""));
         label.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium);
         binding.sectionsContainer.addView(label, params(12));
         if (value.isJsonArray()) {
@@ -149,7 +166,7 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
         card.addView(text);
         card.setOnClickListener(view -> openRecord(groupName, item));
         card.setOnLongClickListener(view -> {
-            RecordDetailDialog.show(this, groupName + "信息", item);
+            RecordDetailDialog.show(this, tr(groupName) + tr("信息"), item);
             return true;
         });
         binding.sectionsContainer.addView(card, params(7));
@@ -159,29 +176,34 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
         if (isRelatedUserGroup(groupName)) {
             String name = Jsons.string(item, "nickname");
             if (name.isEmpty()) name = Jsons.string(item, "account");
-            return name + "\n账号 " + Jsons.string(item, "account") + " · 点按继续查看该用户的完整关系与内容";
+            return name + "\n" + tr("账号") + " " + Jsons.string(item, "account")
+                + " · " + tr("点按继续查看该用户的完整关系与内容");
         }
         if ("私聊会话".equals(groupName)) {
             String name = Jsons.string(item, "peer_name");
             if (name.isEmpty()) name = Jsons.string(item, "peer_account");
-            return binding.name.getText() + " 与 " + name + "\n"
-                + fallback(Jsons.string(item, "last_message"), "暂无最近消息") + " · 点按进入这段私聊";
+            return binding.name.getText() + " " + tr("与") + " " + name + "\n"
+                + fallback(Jsons.string(item, "last_message"), tr("暂无最近消息"))
+                + " · " + tr("点按进入这段私聊");
         }
         if ("群聊".equals(groupName)) {
-            return fallback(Jsons.string(item, "name"), "群聊 #" + Jsons.longValue(item, "id"))
-                + "\n消息 " + Jsons.longValue(item, "message_count") + " 条 · 点按以 " + binding.name.getText() + " 的视角进入群聊";
+            return fallback(Jsons.string(item, "name"), tr("群聊") + " #" + Jsons.longValue(item, "id"))
+                + "\n" + tr("消息") + " " + Jsons.longValue(item, "message_count") + " " + tr("条")
+                + " · " + tr("点按以") + " " + binding.name.getText() + " " + tr("的视角进入群聊");
         }
         if ("聊天室".equals(groupName)) {
-            return fallback(Jsons.string(item, "name"), "聊天室 #" + Jsons.longValue(item, "id"))
-                + "\n消息 " + Jsons.longValue(item, "message_count") + " 条 · 点按以管理员视角进入聊天室";
+            return fallback(Jsons.string(item, "name"), tr("聊天室") + " #" + Jsons.longValue(item, "id"))
+                + "\n" + tr("消息") + " " + Jsons.longValue(item, "message_count") + " " + tr("条")
+                + " · " + tr("点按以管理员视角进入聊天室");
         }
         if ("客服会话".equals(groupName)) {
-            return fallback(Jsons.string(item, "subject"), "客服会话 #" + Jsons.longValue(item, "id"))
-                + "\n状态 " + DisplayText.status(item.get("status")) + " · 点按查看客服消息";
+            return fallback(Jsons.string(item, "subject"), tr("客服会话") + " #" + Jsons.longValue(item, "id"))
+                + "\n" + tr("状态") + " " + tr(DisplayText.status(item.get("status")))
+                + " · " + tr("点按查看客服消息");
         }
         String title = first(item, "title", "name", "account", "content", "scene", "module", "order_no");
-        if (title.isEmpty()) title = groupName + " #" + Jsons.longValue(item, "id");
-        return title + "\n点按查看完整中文详情，长按快速查看";
+        if (title.isEmpty()) title = tr(groupName) + " #" + Jsons.longValue(item, "id");
+        return title + "\n" + tr("点按查看完整中文详情，长按快速查看");
     }
 
     private void openRecord(String groupName, JsonObject item) {
@@ -202,13 +224,13 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
         else if ("客服会话".equals(groupName)) type = "service";
         if (type != null) {
             ManagedCommunicationActivity.open(this, appId, userId, type, Jsons.longValue(item, "id"),
-                groupName + " · " + first(item, "peer_name", "peer_account", "name", "subject") + "（管理员视角）");
+                tr(groupName) + " · " + first(item, "peer_name", "peer_account", "name", "subject") + "（" + tr("管理员视角") + "）");
             return;
         }
-        ManagedRecordDetailActivity.open(this, groupName, item);
+        ManagedRecordDetailActivity.open(this, tr(groupName), item);
     }
 
-    private void addEmpty() { addValue("状态", "暂无记录"); }
+    private void addEmpty() { addValue("状态", tr("暂无记录")); }
 
     private void addValue(String label, String value) {
         TextView text = new TextView(this);
@@ -238,6 +260,15 @@ public final class ManagedUserDetailActivity extends xyz.jjmxg.yiyunying.ui.comm
         return "好友".equals(groupName) || "关注的人".equals(groupName) || "粉丝".equals(groupName);
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private String tr(String value) {
+        CharSequence translated = RuntimeLanguage.translate(this, value);
+        return translated == null ? "" : translated.toString();
+    }
+
+    private void openPermissions() {
+        RolePermissionActivity.openUser(this, appId, userId, currentName, currentAccount);
+    }
 
     @Override protected void onDestroy() {
         if (request != null) request.cancel();

@@ -102,8 +102,6 @@ public final class GlassActionDialog {
             button.setIconGravity(MaterialButton.ICON_GRAVITY_TOP);
             button.setIconPadding(dp(context, dense ? 3 : 5));
             button.setIconTint(ColorStateList.valueOf(ThemeColors.primary(context)));
-            button.setStrokeColor(ColorStateList.valueOf(context.getColor(R.color.outline_variant)));
-            button.setBackgroundTintList(ColorStateList.valueOf(context.getColor(R.color.glass_surface)));
             button.setOnClickListener(view -> {
                 dialog.dismiss();
                 if (action.callback != null) action.callback.run();

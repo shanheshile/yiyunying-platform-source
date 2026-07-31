@@ -77,7 +77,7 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         if (userId != AppAccess.from(this).session().actorId()) {
             MenuItem permission = binding.toolbar.getMenu().add(
                 0, MENU_PERMISSION, 0, R.string.conversation_permission_title);
-            permission.setIcon(R.drawable.ic_more);
+            permission.setIcon(R.drawable.ic_settings);
             permission.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
             binding.toolbar.setOnMenuItemClickListener(item -> {
                 if (item.getItemId() != MENU_PERMISSION) return false;
@@ -147,15 +147,15 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         String signature = Jsons.string(profile, "signature");
         if (signature.isEmpty()) binding.signature.setText(RuntimeLanguage.translate(this, "这个用户暂未展示个性签名"));
         else RuntimeLanguage.setDynamicText(binding.signature, signature);
-        binding.visibilityNotice.setText(Jsons.string(profile, "visibility_notice"));
-        binding.followingCount.setText(Jsons.longValue(profile, "following_count") + "\n关注");
-        binding.followerCount.setText(Jsons.longValue(profile, "follower_count") + "\n粉丝");
-        binding.likeCount.setText(Jsons.longValue(profile, "like_count") + "\n获赞");
-        binding.followButton.setText(bool(profile, "followed") ? "取消关注" : "关注");
+        RuntimeLanguage.setDynamicText(binding.visibilityNotice, Jsons.string(profile, "visibility_notice"));
+        binding.followingCount.setText(Jsons.longValue(profile, "following_count") + "\n" + tr("关注"));
+        binding.followerCount.setText(Jsons.longValue(profile, "follower_count") + "\n" + tr("粉丝"));
+        binding.likeCount.setText(Jsons.longValue(profile, "like_count") + "\n" + tr("获赞"));
+        binding.followButton.setText(tr(bool(profile, "followed") ? "取消关注" : "关注"));
         boolean self = userId == AppAccess.from(this).session().actorId();
         binding.actions.setVisibility(View.VISIBLE);
         if (self) {
-            binding.followButton.setText("编辑资料");
+            binding.followButton.setText(tr("编辑资料"));
             binding.followButton.setOnClickListener(view -> startActivity(MainActivity.moduleIntent(this, "profile")));
             binding.friendButton.setVisibility(View.GONE);
             binding.likeButton.setVisibility(View.GONE);
@@ -165,22 +165,23 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
             binding.likeButton.setVisibility(View.VISIBLE);
             binding.messageButton.setVisibility(View.VISIBLE);
             binding.messageButton.setEnabled(bool(profile, "can_send_message"));
-            binding.messageButton.setText(bool(profile, "can_send_message") ? "发消息"
-                : Jsons.string(profile, "message_permission_notice"));
+            if (bool(profile, "can_send_message")) binding.messageButton.setText(tr("发消息"));
+            else RuntimeLanguage.setDynamicText(binding.messageButton,
+                Jsons.string(profile, "message_permission_notice"));
             if (bool(profile, "is_friend")) {
-                binding.friendButton.setText("已是好友");
+                binding.friendButton.setText(tr("已是好友"));
                 binding.friendButton.setEnabled(false);
             } else if (bool(profile, "outgoing_friend_request_pending")) {
-                binding.friendButton.setText("已发送申请");
+                binding.friendButton.setText(tr("已发送申请"));
                 binding.friendButton.setEnabled(false);
             } else if (bool(profile, "incoming_friend_request_pending")) {
-                binding.friendButton.setText("处理好友申请");
+                binding.friendButton.setText(tr("处理好友申请"));
                 binding.friendButton.setEnabled(true);
             } else if (!bool(profile, "friend_request_enabled")) {
-                binding.friendButton.setText("对方已关闭申请");
+                binding.friendButton.setText(tr("对方已关闭申请"));
                 binding.friendButton.setEnabled(false);
             } else {
-                binding.friendButton.setText("加好友");
+                binding.friendButton.setText(tr("加好友"));
                 binding.friendButton.setEnabled(bool(profile, "can_send_friend_request"));
             }
         }
@@ -236,10 +237,10 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(14), dp(12), dp(14), dp(12));
         TextView heading = new TextView(this);
-        heading.setText(title);
+        heading.setText(tr(title));
         heading.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium);
         TextView description = new TextView(this);
-        description.setText(summary);
+        description.setText(tr(summary));
         description.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium);
         description.setTextColor(getColor(R.color.on_surface_variant));
         content.addView(heading);
@@ -251,7 +252,7 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
 
     private void addContentSection(String title, JsonArray items, boolean note) {
         addSectionTitle(title + "（" + items.size() + "）");
-        if (items.isEmpty()) { addDetail(title, "暂无公开内容"); return; }
+        if (items.isEmpty()) { addDetail(title, tr("暂无公开内容").toString()); return; }
         for (JsonElement element : items) {
             if (!element.isJsonObject()) continue;
             JsonObject item = element.getAsJsonObject();
@@ -261,7 +262,8 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
             card.setLayoutParams(params); card.setRadius(dp(6)); card.setCardElevation(0);
             card.setCardBackgroundColor(getColor(R.color.surface_container));
             TextView text = new TextView(this); text.setPadding(dp(14), dp(10), dp(14), dp(10));
-            text.setText(Jsons.string(item, "title") + "\n" + Jsons.string(item, note ? "updated_at" : "created_at"));
+            RuntimeLanguage.setDynamicText(text, Jsons.string(item, "title") + "\n"
+                + Jsons.string(item, note ? "updated_at" : "created_at"));
             text.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge);
             card.addView(text);
             card.setOnClickListener(view -> {
@@ -285,7 +287,7 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
 
     private void addSectionTitle(String title) {
         TextView view = new TextView(this);
-        view.setText(title);
+        view.setText(tr(title));
         view.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.bottomMargin = dp(8);
@@ -305,7 +307,7 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         text.setGravity(Gravity.CENTER_VERTICAL);
         text.setMinHeight(dp(54));
         text.setPadding(dp(14), dp(8), dp(14), dp(8));
-        text.setText(label + "\n" + value);
+        RuntimeLanguage.setDynamicText(text, tr(label) + "\n" + value);
         text.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium);
         card.addView(text);
         binding.detailsContainer.addView(card);
@@ -384,6 +386,10 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
     private boolean bool(JsonObject object, String key) {
         try { return object.has(key) && object.get(key).getAsBoolean(); }
         catch (RuntimeException ignored) { return false; }
+    }
+
+    private CharSequence tr(String value) {
+        return RuntimeLanguage.translate(this, value);
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }

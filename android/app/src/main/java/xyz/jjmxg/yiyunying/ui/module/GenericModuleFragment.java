@@ -395,7 +395,8 @@ public final class GenericModuleFragment extends BaseFragment {
         }
         if ("chat_rooms".equals(spec.id())) {
             if (app().session().role() == Role.ADMIN) {
-                RecordDetailDialog.show(context, "用户群聊资料", snapshot);
+                String entity = "chat_room".equals(Jsons.string(snapshot, "room_kind")) ? "聊天室" : "群聊";
+                RecordDetailDialog.show(context, "用户" + entity + "资料", snapshot);
             } else if (booleanValue(snapshot, "joined")) {
                 ChatActivity.openRoom(context, Jsons.longValue(snapshot, "id"), Jsons.string(snapshot, "name"));
             } else {

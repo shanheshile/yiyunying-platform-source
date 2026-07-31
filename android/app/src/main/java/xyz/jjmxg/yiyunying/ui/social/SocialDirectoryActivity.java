@@ -52,13 +52,19 @@ import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 
 public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity {
     private static final String EXTRA_MODE = "mode";
+    private static final String EXTRA_CREATE_KIND = "create_kind";
     private static final String MODE_FRIENDS = "friends";
     private static final String MODE_ROOMS = "rooms";
+    private static final int CREATE_NONE = 0;
+    private static final int CREATE_GROUP = 1;
+    private static final int CREATE_CHATROOM = 2;
     public static final String EXTRA_PICK_MODE = "pick_mode";
     public static final String EXTRA_PICK_MAX = "pick_max";
     public static final String EXTRA_PICK_TITLE = "pick_title";
     public static final String EXTRA_EXCLUDED_USER_IDS = "excluded_user_ids";
     public static final String EXTRA_EXCLUDED_REASON = "excluded_reason";
+    public static final String EXTRA_PRESELECTED_USER_IDS = "preselected_user_ids";
+    public static final String EXTRA_ALLOW_EMPTY = "allow_empty";
     public static final String EXTRA_SELECTED_ITEMS = "selected_items";
     private static final String STATE_SELECTED_ITEMS = "selected_items_state";
     private ActivitySocialDirectoryBinding binding;
@@ -66,11 +72,13 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     private final List<JsonObject> groups = new ArrayList<>();
     private final LinkedHashMap<Long, JsonObject> selectedItems = new LinkedHashMap<>();
     private final Set<Long> excludedUserIds = new HashSet<>();
+    private final Set<Long> pendingPreselectedIds = new HashSet<>();
     private DirectoryAdapter adapter;
     private RequestHandle request;
     private RequestHandle actionRequest;
     private long selectedGroup = -1;
     private boolean pickerMode;
+    private boolean pickerAllowEmpty;
     private int pickerMax = 1;
     private String excludedReason = "该好友不可选择";
 
@@ -80,6 +88,18 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
 
     public static void openRooms(Context context) {
         context.startActivity(new Intent(context, SocialDirectoryActivity.class).putExtra(EXTRA_MODE, MODE_ROOMS));
+    }
+
+    public static void openCreateGroup(Context context) {
+        context.startActivity(new Intent(context, SocialDirectoryActivity.class)
+            .putExtra(EXTRA_MODE, MODE_ROOMS)
+            .putExtra(EXTRA_CREATE_KIND, CREATE_GROUP));
+    }
+
+    public static void openCreateChatroom(Context context) {
+        context.startActivity(new Intent(context, SocialDirectoryActivity.class)
+            .putExtra(EXTRA_MODE, MODE_ROOMS)
+            .putExtra(EXTRA_CREATE_KIND, CREATE_CHATROOM));
     }
 
     public static Intent pickFriendsIntent(Context context, int max, String title, long[] excludedUserIds) {
@@ -93,12 +113,26 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
         long[] excludedUserIds,
         String excludedReason
     ) {
+        return pickFriendsIntent(context, max, title, excludedUserIds, excludedReason, new long[0], false);
+    }
+
+    public static Intent pickFriendsIntent(
+        Context context,
+        int max,
+        String title,
+        long[] excludedUserIds,
+        String excludedReason,
+        long[] preselectedUserIds,
+        boolean allowEmpty
+    ) {
         return new Intent(context, SocialDirectoryActivity.class)
             .putExtra(EXTRA_MODE, MODE_FRIENDS)
             .putExtra(EXTRA_PICK_MODE, true)
             .putExtra(EXTRA_PICK_MAX, Math.max(1, max))
             .putExtra(EXTRA_PICK_TITLE, title == null ? "选择好友" : title)
             .putExtra(EXTRA_EXCLUDED_USER_IDS, excludedUserIds == null ? new long[0] : excludedUserIds)
+            .putExtra(EXTRA_PRESELECTED_USER_IDS, preselectedUserIds == null ? new long[0] : preselectedUserIds)
+            .putExtra(EXTRA_ALLOW_EMPTY, allowEmpty)
             .putExtra(EXTRA_EXCLUDED_REASON,
                 excludedReason == null || excludedReason.trim().isEmpty() ? "该好友不可选择" : excludedReason.trim());
     }
@@ -116,6 +150,7 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         pickerMode = getIntent().getBooleanExtra(EXTRA_PICK_MODE, false);
+        pickerAllowEmpty = getIntent().getBooleanExtra(EXTRA_ALLOW_EMPTY, false);
         pickerMax = Math.max(1, getIntent().getIntExtra(EXTRA_PICK_MAX, 1));
         String requestedExcludedReason = getIntent().getStringExtra(EXTRA_EXCLUDED_REASON);
         if (requestedExcludedReason != null && !requestedExcludedReason.trim().isEmpty()) {
@@ -124,13 +159,19 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
         for (long userId : getIntent().getLongArrayExtra(EXTRA_EXCLUDED_USER_IDS) == null
             ? new long[0] : getIntent().getLongArrayExtra(EXTRA_EXCLUDED_USER_IDS)) excludedUserIds.add(userId);
         restoreSelection(state);
+        if (state == null) {
+            long[] preselected = getIntent().getLongArrayExtra(EXTRA_PRESELECTED_USER_IDS);
+            for (long userId : preselected == null ? new long[0] : preselected) {
+                if (userId > 0L && !excludedUserIds.contains(userId)) pendingPreselectedIds.add(userId);
+            }
+        }
         binding = ActivitySocialDirectoryBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         binding.toolbar.setNavigationOnClickListener(view -> finish());
-        binding.toolbar.setTitle(pickerMode ? getIntent().getStringExtra(EXTRA_PICK_TITLE) : (isFriends() ? "好友管理" : "群聊管理"));
-        binding.actionButton.setText(pickerMode ? "完成" : (isFriends() ? "添加好友" : "创建群聊"));
+        binding.toolbar.setTitle(pickerMode ? getIntent().getStringExtra(EXTRA_PICK_TITLE) : (isFriends() ? "好友管理" : "群聊与聊天室"));
+        binding.actionButton.setText(pickerMode ? "完成" : (isFriends() ? "添加好友" : "新建会话"));
         binding.actionButton.setIconResource(pickerMode ? R.drawable.ic_send : R.drawable.ic_add);
-        binding.searchLayout.setHint(isFriends() ? "搜索 UID、昵称或备注" : "搜索群号、群名、备注或标签");
+        binding.searchLayout.setHint(isFriends() ? "搜索 UID、昵称或备注" : "搜索群号、名称、备注或标签");
         binding.manageGroupsButton.setVisibility(pickerMode ? View.GONE : View.VISIBLE);
         binding.selectedBar.setVisibility(pickerMode ? View.VISIBLE : View.GONE);
         adapter = new DirectoryAdapter();
@@ -148,10 +189,15 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
         binding.actionButton.setOnClickListener(view -> {
             if (pickerMode) finishPicker();
             else if (isFriends()) friendActions();
-            else createRoom();
+            else chooseRoomKind();
         });
         renderSelection();
         loadAll();
+        int createKind = state == null ? getIntent().getIntExtra(EXTRA_CREATE_KIND, CREATE_NONE) : CREATE_NONE;
+        if (!pickerMode && !isFriends() && createKind != CREATE_NONE) {
+            getIntent().removeExtra(EXTRA_CREATE_KIND);
+            binding.getRoot().post(() -> createRoom(createKind));
+        }
     }
 
     private void loadAll() {
@@ -183,19 +229,13 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
             binding.swipeRefresh.setRefreshing(false);
             if (!result.isSuccessful()) { toast(result.message().isEmpty() ? "内容加载失败" : result.message()); return; }
             List<JsonObject> next = result.objectItems();
-            if (pickerMode) {
-                for (JsonObject item : next) {
-                    long itemId = selectionId(item);
-                    if (selectedItems.containsKey(itemId)) selectedItems.put(itemId, item.deepCopy());
-                }
-                renderSelection();
-            }
+            if (pickerMode) hydratePickerSelection(next);
             adapter.submit(next);
             binding.toolbar.setSubtitle(isFriends()
                 ? "当前分组 " + items.size() + " 位好友"
-                : "当前分组 " + items.size() + " 个群聊");
+                : roomSummary(items));
             binding.emptyText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
-            binding.emptyText.setText(isFriends() ? "当前分组还没有好友" : "当前分组还没有群聊");
+            binding.emptyText.setText(isFriends() ? "当前分组还没有好友" : "当前分组还没有群聊或聊天室");
         });
     }
 
@@ -208,7 +248,11 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
         AppAccess.from(this).repository().getCached(itemPath(), query, cached -> {
             if (binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
             List<JsonObject> cachedItems = cached.objectItems();
+            if (pickerMode) hydratePickerSelection(cachedItems);
             adapter.submit(cachedItems);
+            binding.toolbar.setSubtitle(isFriends()
+                ? "当前分组 " + cachedItems.size() + " 位好友"
+                : roomSummary(cachedItems));
             binding.emptyText.setVisibility(cachedItems.isEmpty() ? View.VISIBLE : View.GONE);
             binding.progress.setVisibility(View.INVISIBLE);
         });
@@ -278,6 +322,7 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
 
     private void toggleSelection(JsonObject item, int adapterPosition) {
         long itemId = selectionId(item);
+        pendingPreselectedIds.remove(itemId);
         if (itemId <= 0) { toast("这个" + selectionEntity() + "缺少有效编号"); return; }
         if (excludedUserIds.contains(itemId)) { toast(excludedReason); return; }
         if (selectedItems.containsKey(itemId)) selectedItems.remove(itemId);
@@ -316,6 +361,7 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
             long itemId = selectionId(item);
             person.setContentDescription("取消选择 " + displayName(item));
             person.setOnClickListener(view -> {
+                pendingPreselectedIds.remove(itemId);
                 selectedItems.remove(itemId);
                 int position = items.indexOf(item);
                 if (position >= 0) adapter.notifyItemChanged(position);
@@ -328,11 +374,32 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     }
 
     private void finishPicker() {
-        if (selectedItems.isEmpty()) { toast("请至少选择一个" + selectionEntity()); return; }
+        if (selectedItems.isEmpty() && !pickerAllowEmpty) {
+            toast("请至少选择一个" + selectionEntity());
+            return;
+        }
         JsonArray values = new JsonArray();
         for (JsonObject item : selectedItems.values()) values.add(item.deepCopy());
         setResult(RESULT_OK, new Intent().putExtra(EXTRA_SELECTED_ITEMS, values.toString()));
         finish();
+    }
+
+    private void hydratePickerSelection(List<JsonObject> source) {
+        if (!pickerMode || source == null) return;
+        for (JsonObject item : source) {
+            long itemId = selectionId(item);
+            if (itemId <= 0L) continue;
+            if (selectedItems.containsKey(itemId)) {
+                selectedItems.put(itemId, item.deepCopy());
+                continue;
+            }
+            if (pendingPreselectedIds.remove(itemId)
+                && !excludedUserIds.contains(itemId)
+                && selectedItems.size() < pickerMax) {
+                selectedItems.put(itemId, item.deepCopy());
+            }
+        }
+        renderSelection();
     }
 
     private void restoreSelection(Bundle state) {
@@ -369,18 +436,33 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
             }).setNegativeButton("取消", null).show();
     }
 
-    private void createRoom() {
-        LinearLayout form = form(); EditText name = input("群名称"), description = input("群介绍"), tags = input("标签，用逗号分隔");
+    private void createRoom(int createKind) {
+        boolean chatroom = createKind == CREATE_CHATROOM;
+        String entity = chatroom ? "聊天室" : "群聊";
+        LinearLayout form = form();
+        EditText name = input(entity + "名称"), description = input(entity + "介绍"), tags = input("标签，用逗号分隔");
         form.addView(name); form.addView(description); form.addView(tags);
-        new YiyunyingDialogBuilder(this).setTitle("创建群聊").setView(form)
+        new YiyunyingDialogBuilder(this).setTitle("新建" + entity).setView(form)
             .setPositiveButton("创建", (dialog, which) -> {
-                if (name.getText().toString().trim().isEmpty()) { toast("请输入群名称"); return; }
-                JsonObject body = new JsonObject(); body.addProperty("name", name.getText().toString().trim()); body.addProperty("description", description.getText().toString().trim()); body.addProperty("join_mode", "approval");
+                if (name.getText().toString().trim().isEmpty()) { toast("请输入" + entity + "名称"); return; }
+                JsonObject body = new JsonObject();
+                body.addProperty("name", name.getText().toString().trim());
+                body.addProperty("description", description.getText().toString().trim());
+                body.addProperty("room_kind", chatroom ? "chat_room" : "group");
+                body.addProperty("join_mode", chatroom ? "open" : "approval");
                 JsonArray values = new JsonArray(); for (String tag : tags.getText().toString().split("[,，]")) if (!tag.trim().isEmpty()) values.add(tag.trim()); body.add("tags", values);
-                post(itemPath(), body, "群聊已创建");
+                post(itemPath(), body, entity + "已创建");
             }).setNegativeButton("取消", null).show();
     }
 
+    private void chooseRoomKind() {
+        new YiyunyingDialogBuilder(this)
+            .setBusinessTitle("新建会话")
+            .setItems(new String[]{"新建群聊", "新建聊天室"}, (dialog, which) ->
+                createRoom(which == 1 ? CREATE_CHATROOM : CREATE_GROUP))
+            .setNegativeButton("取消", null)
+            .show();
+    }
     private void openItem(JsonObject item) {
         if (isFriends()) {
             ChatActivity.openPeer(this, Jsons.longValue(item, "user_id"), displayName(item));
@@ -399,19 +481,20 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
                 else confirmDeleteFriend(item);
             }).setNegativeButton("取消", null).show();
         } else {
+            String entity = roomEntity(item);
             List<String> actions = new ArrayList<>();
-            actions.add(bool(item, "joined") ? "进入群聊" : "申请加入"); actions.add("查看群资料");
-            if (bool(item, "joined")) actions.add("修改群备注与分组");
+            actions.add(bool(item, "joined") ? "进入" + entity : "申请加入" + entity); actions.add("查看" + entity + "资料");
+            if (bool(item, "joined")) actions.add("修改" + entity + "备注与分组");
             new YiyunyingDialogBuilder(this).setBusinessTitle(displayName(item)).setItems(actions.toArray(new String[0]), (d, which) -> {
                 if (which == 0) openItem(item);
-                else if (which == 1) { if (bool(item, "joined")) GroupSpaceActivity.open(this, Jsons.longValue(item, "id"), displayName(item)); else RecordDetailDialog.show(this, "群聊资料", item); }
+                else if (which == 1) { if (bool(item, "joined")) GroupSpaceActivity.open(this, Jsons.longValue(item, "id"), displayName(item)); else RecordDetailDialog.show(this, entity + "资料", item); }
                 else editAssignment(item);
             }).setNegativeButton("取消", null).show();
         }
     }
 
     private void editAssignment(JsonObject item) {
-        LinearLayout form = form(); EditText remark = input(isFriends() ? "好友备注" : "群聊备注");
+        LinearLayout form = form(); EditText remark = input(isFriends() ? "好友备注" : roomEntity(item) + "备注");
         remark.setText(Jsons.string(item, isFriends() ? "remark" : "user_remark"));
         Spinner spinner = new Spinner(this); List<String> names = new ArrayList<>(); names.add("未分组");
         int selected = 0; long current = Jsons.longValue(item, isFriends() ? "group_id" : "user_group_id");
@@ -427,9 +510,10 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     }
 
     private void confirmJoin(JsonObject item) {
+        String entity = roomEntity(item);
         EditText message = input("申请说明");
-        new YiyunyingDialogBuilder(this).setTitle("申请加入 " + displayName(item)).setView(wrap(message))
-            .setPositiveButton("提交申请", (dialog, which) -> { JsonObject body = new JsonObject(); body.addProperty("message", message.getText().toString().trim()); post("/api/user/chat-rooms/" + Jsons.longValue(item, "id") + "/join", body, "加群申请已提交"); })
+        new YiyunyingDialogBuilder(this).setTitle("申请加入" + entity + " · " + displayName(item)).setView(wrap(message))
+            .setPositiveButton("提交申请", (dialog, which) -> { JsonObject body = new JsonObject(); body.addProperty("message", message.getText().toString().trim()); post("/api/user/chat-rooms/" + Jsons.longValue(item, "id") + "/join", body, "加入" + entity + "的申请已提交"); })
             .setNegativeButton("取消", null).show();
     }
 
@@ -465,6 +549,19 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     private int selectionPlaceholder() { return isFriends() ? R.drawable.ic_person : R.drawable.ic_users; }
     private String selectionUnit() { return isFriends() ? "人" : "个"; }
     private String selectionEntity() { return isFriends() ? "好友" : "群聊或聊天室"; }
+    private String roomEntity(JsonObject item) {
+        return "chat_room".equals(Jsons.string(item, "room_kind")) ? "聊天室" : "群聊";
+    }
+    private String roomSummary(List<JsonObject> values) {
+        int groupsCount = 0;
+        int chatroomsCount = 0;
+        for (JsonObject value : values) {
+            if ("聊天室".equals(roomEntity(value))) chatroomsCount++;
+            else groupsCount++;
+        }
+        return "当前分组 " + groupsCount + " 个群聊 · " + chatroomsCount + " 个聊天室";
+    }
+
     private void openPickerProfile(JsonObject item) {
         long itemId = selectionId(item);
         if (isFriends()) UserProfileActivity.open(this, itemId);
@@ -521,10 +618,12 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
                         + " · " + Jsons.string(item, "signature"));
                 ImageLoader.get().load(ImageLoader.get().absoluteUrl(SocialDirectoryActivity.this, Jsons.string(item, "avatar")), holder.binding.avatar, R.drawable.ic_person);
             } else {
-                holder.binding.subtitle.setText("群号 " + Jsons.longValue(item, "id") + " · " + Jsons.longValue(item, "member_count") + " 人");
+                String entity = roomEntity(item);
+                holder.binding.subtitle.setText(("聊天室".equals(entity) ? "聊天室号 " : "群号 ")
+                    + Jsons.longValue(item, "id") + " · " + Jsons.longValue(item, "member_count") + " 人");
                 RuntimeLanguage.setDynamicText(holder.binding.metadata,
                     (Jsons.string(item, "user_group_name").isEmpty() ? "未分组" : Jsons.string(item, "user_group_name"))
-                        + " · " + (bool(item, "joined") ? "已加入" : "可申请加入"));
+                        + " · " + entity + " · " + (bool(item, "joined") ? "已加入" : "可申请加入"));
                 ImageLoader.get().load(ImageLoader.get().absoluteUrl(SocialDirectoryActivity.this, Jsons.string(item, "icon")), holder.binding.avatar, R.drawable.ic_users);
             }
             if (pickerMode) {

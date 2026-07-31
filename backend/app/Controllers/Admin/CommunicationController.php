@@ -11,6 +11,7 @@ use Yiyunying\Core\Response;
 use Yiyunying\Core\Validator;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
+use Yiyunying\Services\ChatRoomService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageForwardService;
 use Yiyunying\Services\MessageMediaService;
@@ -233,12 +234,13 @@ final class CommunicationController
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
         $id = Database::insert(
             'INSERT INTO chat_rooms
-             (admin_id, app_id, name, icon, description, is_public, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
+             (admin_id, app_id, name, icon, description, room_kind, is_public, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
             [
                 (int) $admin['id'], $appId, $name,
                 mb_substr((string) $request->input('icon', ''), 0, 500),
                 mb_substr((string) $request->input('description', ''), 0, 1000),
+                ChatRoomService::ROOM_CHATROOM,
                 Validator::boolean($request->input('is_public', true), 'is_public') ? 1 : 0,
                 Validator::boolean($request->input('status', true), 'status') ? 1 : 0,
             ]

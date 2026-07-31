@@ -158,7 +158,7 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
         updateActions();
         ScanOptions options = new ScanOptions();
         options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
-        options.setPrompt("将易运盈好友码或群二维码放入取景框");
+        options.setPrompt("将易运盈好友码、群聊或聊天室二维码放入取景框");
         options.setBeepEnabled(false);
         options.setOrientationLocked(true);
         options.setCaptureActivity(PortraitQrCaptureActivity.class);
@@ -203,7 +203,7 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
             confirmFriendRequest(normalized);
             return;
         }
-        message("该二维码不是易运盈好友码或群二维码");
+        message("该二维码不是易运盈好友码、群聊或聊天室二维码");
     }
 
     private void previewGroup(String payload) {
@@ -218,7 +218,7 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
             binding.progress.setVisibility(View.INVISIBLE);
             updateActions();
             if (!result.isSuccessful()) {
-                message(result.message().isEmpty() ? "群二维码识别失败" : result.message());
+                message(result.message().isEmpty() ? "群聊或聊天室二维码识别失败" : result.message());
                 return;
             }
             JsonObject room = Jsons.object(result.dataObject(), "room");
@@ -226,16 +226,17 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
             String roomName = Jsons.string(room, "name");
             String action = Jsons.string(room, "join_action");
             String actionLabel = Jsons.string(room, "join_label");
+            String entity = roomEntity(room);
             JsonObject visible = visibleGroup(room);
             if ("enter".equals(action)) {
-                RecordDetailDialog.show(this, "群聊资料", visible, "进入群聊",
+                RecordDetailDialog.show(this, entity + "资料", visible, "进入" + entity,
                     () -> ChatActivity.openRoom(this, roomId, roomName));
             } else if ("join".equals(action) || "apply".equals(action)) {
-                RecordDetailDialog.show(this, "群聊资料", visible,
-                    actionLabel.isEmpty() ? "加入群聊" : actionLabel,
+                RecordDetailDialog.show(this, entity + "资料", visible,
+                    actionLabel.isEmpty() ? "加入" + entity : actionLabel,
                     () -> joinGroup(payload));
             } else {
-                RecordDetailDialog.show(this, "群聊资料", visible);
+                RecordDetailDialog.show(this, entity + "资料", visible);
             }
         });
     }
@@ -243,6 +244,7 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
     private JsonObject visibleGroup(JsonObject room) {
         JsonObject visible = new JsonObject();
         visible.addProperty("name", Jsons.string(room, "name"));
+        visible.addProperty("type", roomEntity(room));
         visible.addProperty("group_number", Jsons.string(room, "group_number"));
         long members = Jsons.longValue(room, "member_count");
         long maximum = Jsons.longValue(room, "max_members");
@@ -264,7 +266,7 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
         if (groupRequest != null || binding == null) return;
         JsonObject body = new JsonObject();
         body.addProperty("qr_code", payload);
-        body.addProperty("message", "通过群二维码申请加入");
+        body.addProperty("message", "通过二维码申请加入");
         binding.progress.setVisibility(View.VISIBLE);
         updateActions(false);
         groupRequest = AppAccess.from(this).repository().post("/api/user/chat-rooms/scan-qr/join", body, result -> {
@@ -273,18 +275,23 @@ public final class FriendQrActivity extends xyz.jjmxg.yiyunying.ui.common.System
             binding.progress.setVisibility(View.INVISIBLE);
             updateActions();
             if (!result.isSuccessful()) {
-                message(result.message().isEmpty() ? "加入群聊失败" : result.message());
+                message(result.message().isEmpty() ? "加入群聊或聊天室失败" : result.message());
                 return;
             }
             JsonObject data = result.dataObject();
             JsonObject room = Jsons.object(data, "room");
+            String entity = roomEntity(room);
             if (bool(data, "joined")) {
-                message(result.message().isEmpty() ? "已加入群聊" : result.message());
+                message(result.message().isEmpty() ? "已加入" + entity : result.message());
                 ChatActivity.openRoom(this, Jsons.longValue(room, "id"), Jsons.string(room, "name"));
                 return;
             }
-            message(result.message().isEmpty() ? "入群申请已提交" : result.message());
+            message(result.message().isEmpty() ? entity + "申请已提交" : result.message());
         });
+    }
+
+    private static String roomEntity(JsonObject room) {
+        return "chat_room".equals(Jsons.string(room, "room_kind")) ? "聊天室" : "群聊";
     }
 
     private static boolean bool(JsonObject object, String key) {

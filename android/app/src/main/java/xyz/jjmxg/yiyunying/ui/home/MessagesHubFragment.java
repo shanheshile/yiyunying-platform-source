@@ -392,7 +392,17 @@ public final class MessagesHubFragment extends BaseFragment implements UserTabPa
         filter();
     }
 
-    @Override public void onPrimaryAction() { AddFriendActivity.open(requireContext()); }
+    @Override public void onPrimaryAction() {
+        new YiyunyingDialogBuilder(requireContext())
+            .setTitle("新建会话")
+            .setItems(new String[]{"添加好友", "新建群聊", "新建聊天室"}, (dialog, which) -> {
+                if (which == 0) AddFriendActivity.open(requireContext());
+                else if (which == 1) SocialDirectoryActivity.openCreateGroup(requireContext());
+                else SocialDirectoryActivity.openCreateChatroom(requireContext());
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
 
     @Override public void onDestroyView() {
         handler.removeCallbacks(poll);

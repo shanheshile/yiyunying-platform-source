@@ -80,7 +80,7 @@ final class UserOverviewService
         $groups = Database::all(
             'SELECT r.id, r.name, r.icon, r.description, r.tags_json, member.role, member.joined_at, member.mute_until,
                     policy.owner_user_id,
-                    CASE WHEN policy.owner_user_id IS NULL THEN \'chat_room\' ELSE \'group\' END AS room_kind,
+                    r.room_kind,
                     (SELECT COUNT(*) FROM chat_room_messages m WHERE m.room_id = r.id AND m.status = 1) AS message_count
              FROM chat_room_members member INNER JOIN chat_rooms r ON r.id = member.room_id
              LEFT JOIN chat_room_policies policy ON policy.room_id = r.id

@@ -24,6 +24,7 @@ import com.google.gson.JsonObject;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
+import xyz.jjmxg.yiyunying.core.NotificationIconResolver;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.domain.call.CallDurationClock;
@@ -310,7 +311,7 @@ public final class VoiceCallForegroundService extends Service {
         PendingIntent content = PendingIntent.getActivity(this, 13002, open,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(video ? R.drawable.ic_videocam : R.drawable.ic_phone)
+            .setSmallIcon(NotificationIconResolver.smallIcon(this))
             .setContentTitle("正在与 " + peerName + (video ? " 视频通话" : " 语音通话"))
             .setContentText("已通话 " + time + (video ? " · 可返回桌面使用画中画" : " · 扬声器默认关闭"))
             .setContentIntent(content)

@@ -8,6 +8,8 @@ use Yiyunying\Core\HttpException;
 
 final class ChatRoomService
 {
+    public const ROOM_GROUP = 'group';
+    public const ROOM_CHATROOM = 'chat_room';
     public const JOIN_OPEN = 'open';
     public const JOIN_APPROVAL = 'approval';
     public const JOIN_INVITE = 'invite';
@@ -99,6 +101,7 @@ final class ChatRoomService
     public static function detail(array $room, ?int $currentUserId = null): array
     {
         $result = $room;
+        $result['room_kind'] = self::roomKind($room['room_kind'] ?? self::ROOM_GROUP);
         $policy = self::policy($room);
         foreach ($policy as $key => $value) {
             $result[$key] = $value;
@@ -280,6 +283,15 @@ final class ChatRoomService
             throw new HttpException('join_mode 仅支持 open、approval、invite', 0, 422);
         }
         return $mode;
+    }
+
+    public static function roomKind($value): string
+    {
+        $kind = trim((string) $value);
+        if (!in_array($kind, [self::ROOM_GROUP, self::ROOM_CHATROOM], true)) {
+            throw new HttpException('room_kind 仅支持 group 或 chat_room', 0, 422);
+        }
+        return $kind;
     }
 
     public static function memberRole($value): string

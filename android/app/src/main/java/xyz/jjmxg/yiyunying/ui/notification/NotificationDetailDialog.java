@@ -222,9 +222,7 @@ final class NotificationDetailDialog {
         if (containsAny(source, "lottery", "vote", "activity", "抽奖", "投票", "活动")) {
             return "活动通知";
         }
-        String groupName = value(item, "group_name");
-        String centerName = value(item, "center_name");
-        return fallback(groupName.isEmpty() ? centerName : groupName, "系统通知");
+        return "其他通知";
     }
 
     private static boolean containsAny(String value, String... needles) {

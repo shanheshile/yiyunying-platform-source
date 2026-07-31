@@ -58,7 +58,7 @@ import java.util.Map;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
-import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
+
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityGroupSpaceBinding;
@@ -81,15 +81,17 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private final List<JsonObject> items = new ArrayList<>();
     private SpaceAdapter adapter;
     private RequestHandle request;
+    private RequestHandle roomRequest;
     private RequestHandle actionRequest;
     private RequestHandle uploadRequest;
     private RequestHandle voteOptionUploadRequest;
     private long roomId;
+    private String roomKind = "group";
     private String section = "members";
     private String uploadMode = "file";
     private long targetAlbumId;
     private long currentFolderId;
-    private String currentFolderName = "群文件";
+    private String currentFolderName = "文件";
     private String groupNumber = "";
     private String groupCreatedAt = "";
     private String currentRole = "member";
@@ -174,7 +176,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { navigateBack(); }
         });
-        RuntimeLanguage.setDynamicText(binding.groupName, getIntent().getStringExtra(EXTRA_TITLE));
+        binding.groupName.setText(getIntent().getStringExtra(EXTRA_TITLE));
         binding.groupQrButton.setOnClickListener(view -> showGroupQr());
         adapter = new SpaceAdapter();
         binding.recycler.setLayoutManager(new LinearLayoutManager(this));
@@ -193,7 +195,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             section = id == R.id.tabFiles ? "files" : (id == R.id.tabAlbums ? "albums"
                 : (id == R.id.tabVotes ? "votes" : (id == R.id.tabSolitaires ? "solitaires" : "members")));
             currentFolderId = 0;
-            currentFolderName = "群文件";
+            currentFolderName = fileRootName();
             folderParents.clear();
             folderParentNames.clear();
             updateActionLabel();
@@ -213,29 +215,47 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     }
 
     private void loadRoom() {
-        AppAccess.from(this).repository().get(base(), new LinkedHashMap<>(), result -> {
-            if (binding == null || !result.isSuccessful()) return;
+        if (roomRequest != null) roomRequest.cancel();
+        roomRequest = AppAccess.from(this).repository().get(base(), new LinkedHashMap<>(), result -> {
+            roomRequest = null;
+            if (binding == null || isFinishing() || isDestroyed() || !result.isSuccessful()) return;
             JsonObject room = Jsons.object(result.dataObject(), "room");
-            RuntimeLanguage.setDynamicText(binding.groupName, Jsons.string(room, "name"));
+            roomKind = "chat_room".equals(Jsons.string(room, "room_kind")) ? "chat_room" : "group";
+            binding.toolbar.setTitle(entityLabel() + "资料");
+            binding.groupQrButton.setText(entityLabel() + "二维码");
+            binding.tabMembers.setText(memberLabel());
+            binding.tabFiles.setText(fileRootName());
+            binding.tabAlbums.setText(spacePrefix() + "相册");
+            binding.tabVotes.setText(spacePrefix() + "投票");
+            binding.tabSolitaires.setText(spacePrefix() + "接龙");
+            String roomName = Jsons.string(room, "name");
+            if (!roomName.isEmpty()) binding.groupName.setText(roomName);
             currentRole = Jsons.string(room, "current_role");
             if (currentRole.isEmpty()) currentRole = "member";
             groupNumber = String.valueOf(20000000000L + Jsons.longValue(room, "id"));
             groupCreatedAt = Jsons.string(room, "created_at");
             String created = groupCreatedAt.isEmpty() ? "未记录" : groupCreatedAt;
-            binding.groupMeta.setText("群号 " + groupNumber
-                + " · 群成员 " + Jsons.longValue(room, "member_count") + " 人"
+            binding.groupMeta.setText(entityNumberLabel() + " " + groupNumber
+                + " · " + memberLabel() + " " + Jsons.longValue(room, "member_count") + " 人"
                 + " · 创建时间 " + created);
             String announcement = Jsons.string(room, "announcement");
-            binding.announcement.setText(announcement.isEmpty() ? "暂无群公告" : "群公告：" + announcement);
+            binding.announcement.setText(announcement.isEmpty()
+                ? "暂无" + entityLabel() + "公告"
+                : entityLabel() + "公告：" + announcement);
+            if (currentFolderId == 0) currentFolderName = fileRootName();
+            updateActionLabel();
+            updateFolderNavigation();
+            if (adapter != null) adapter.notifyDataSetChanged();
         });
     }
 
     private void updateActionLabel() {
+        if (binding == null) return;
         if ("members".equals(section)) { binding.actionButton.setText("邀请成员"); binding.actionButton.setVisibility(View.VISIBLE); }
         else if ("files".equals(section)) { binding.actionButton.setText("上传 / 新建文件夹"); binding.actionButton.setVisibility(View.VISIBLE); }
         else if ("albums".equals(section)) { binding.actionButton.setText("上传 / 新建相册"); binding.actionButton.setVisibility(View.VISIBLE); }
-        else if ("votes".equals(section)) { binding.actionButton.setText("发起群投票"); binding.actionButton.setVisibility(View.VISIBLE); }
-        else { binding.actionButton.setText("发起群接龙"); binding.actionButton.setVisibility(View.VISIBLE); }
+        else if ("votes".equals(section)) { binding.actionButton.setText("发起投票"); binding.actionButton.setVisibility(View.VISIBLE); }
+        else { binding.actionButton.setText("发起接龙"); binding.actionButton.setVisibility(View.VISIBLE); }
     }
 
     private void load() {
@@ -247,10 +267,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             request = null;
             if (binding == null) return;
             binding.progress.setVisibility(View.INVISIBLE); binding.swipeRefresh.setRefreshing(false);
-            if (!result.isSuccessful()) { Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "群空间加载失败" : result.message(), Snackbar.LENGTH_LONG).show(); return; }
+            if (!result.isSuccessful()) { Snackbar.make(binding.getRoot(), result.message().isEmpty() ? entityLabel() + "空间加载失败" : result.message(), Snackbar.LENGTH_LONG).show(); return; }
             adapter.submit(section, result.objectItems());
             binding.emptyText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
-            binding.emptyText.setText("members".equals(section) ? "群内暂无成员"
+            binding.emptyText.setText("members".equals(section) ? memberLabel() + "为空"
                 : ("files".equals(section) ? "当前文件夹为空，可上传文件或新建文件夹" : "这里还没有内容，可点击右下角创建"));
         });
     }
@@ -265,7 +285,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void fileActions() {
         new YiyunyingDialogBuilder(this)
-            .setTitle(currentFolderId == 0 ? "群文件" : currentFolderName)
+            .setTitle(currentFolderId == 0 ? fileRootName() : currentFolderName)
             .setItems(new String[]{"上传文件", "新建文件夹"}, (dialog, which) -> {
                 if (which == 0) {
                     uploadMode = "file";
@@ -273,7 +293,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 } else {
                     EditText name = input("文件夹名称");
                     AlertDialog create = new YiyunyingDialogBuilder(this)
-                        .setTitle("新建群文件夹")
+                        .setTitle("新建" + fileRootName() + "夹")
                         .setView(name)
                         .setPositiveButton("创建", null)
                         .setNegativeButton("取消", null)
@@ -303,7 +323,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             if (userId > 0) excluded[count++] = userId;
         }
         if (count != excluded.length) excluded = java.util.Arrays.copyOf(excluded, count);
-        friendPicker.launch(SocialDirectoryActivity.pickFriendsIntent(this, 50, "邀请群成员", excluded));
+        friendPicker.launch(SocialDirectoryActivity.pickFriendsIntent(this, 50, "邀请" + memberLabel(), excluded));
     }
 
     private void confirmInvitations(List<JsonObject> selected) {
@@ -317,7 +337,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         shareHistory.setText("允许新成员查看此前聊天记录");
         shareHistory.setChecked(true);
         TextView historyHint = new TextView(this);
-        historyHint.setText("关闭后，新成员只能看到加入群聊之后产生的消息。");
+        historyHint.setText("关闭后，新成员只能看到加入" + entityLabel() + "之后产生的消息。");
         historyHint.setTextSize(13f);
         historyHint.setTextColor(getColor(R.color.on_surface_variant));
         historyHint.setPadding(dp(8), 0, dp(8), dp(4));
@@ -397,7 +417,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         allowChange.setChecked(true);
         allowChange.setMinHeight(dp(48));
         MaterialSwitch anonymous = new MaterialSwitch(this);
-        anonymous.setText("匿名投票（群成员不显示投票人）");
+        anonymous.setText("匿名投票（" + memberLabel() + "不显示投票人）");
         anonymous.setMinHeight(dp(48));
         final long[] durationHours = {24L * 7L};
         MaterialButton duration = new MaterialButton(this);
@@ -437,7 +457,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         form.addView(duration);
         form.addView(optionLabel); form.addView(optionRows); form.addView(addOption);
         ScrollView scroll = new ScrollView(this); scroll.addView(form);
-        AlertDialog dialog = new YiyunyingDialogBuilder(this).setTitle("发起群投票").setView(scroll)
+        AlertDialog dialog = new YiyunyingDialogBuilder(this).setTitle("发起投票").setView(scroll)
             .setPositiveButton("发布", null)
             .setNegativeButton("取消", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
@@ -494,7 +514,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         form.addView(duration);
         form.addView(hint);
         AlertDialog dialog = new YiyunyingDialogBuilder(this)
-            .setTitle("发起群接龙")
+            .setTitle("发起接龙")
             .setView(form)
             .setPositiveButton("发布接龙", null)
             .setNegativeButton("取消", null)
@@ -642,10 +662,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void albumActions() {
         new YiyunyingDialogBuilder(this)
-            .setTitle("群相册")
+            .setTitle(spacePrefix() + "相册")
             .setItems(new String[]{"直接上传图片或视频", "新建相册"}, (dialog, which) -> {
                 if (which == 0) selectAlbumForUpload();
-                else textForm("新建群相册", "相册名称", "相册说明", (first, second) -> createAlbum(first, second, false));
+                else textForm("新建" + spacePrefix() + "相册", "相册名称", "相册说明", (first, second) -> createAlbum(first, second, false));
             })
             .setNegativeButton("取消", null)
             .show();
@@ -653,7 +673,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void selectAlbumForUpload() {
         if (items.isEmpty()) {
-            createAlbum("群共享相册", "未指定相册时直接上传的群媒体", true);
+            createAlbum(spacePrefix() + "共享相册", "未指定相册时直接上传的" + entityLabel() + "媒体", true);
             return;
         }
         String[] names = new String[items.size()];
@@ -681,8 +701,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             actionRequest = null;
             if (binding == null) return;
             binding.progress.setVisibility(View.INVISIBLE);
-            if (!result.isSuccessful()) { toast(result.message().isEmpty() ? "群相册创建失败" : result.message()); return; }
-            toast(result.message().isEmpty() ? "群相册已创建" : result.message());
+            if (!result.isSuccessful()) { toast(result.message().isEmpty() ? spacePrefix() + "相册创建失败" : result.message()); return; }
+            toast(result.message().isEmpty() ? spacePrefix() + "相册已创建" : result.message());
             long albumId = Jsons.longValue(result.dataObject(), "album_id");
             load(); loadRoom();
             if (openUpload && albumId > 0) {
@@ -742,7 +762,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             return;
         }
         ContentUriRequestBody body = new ContentUriRequestBody(getContentResolver(), uri, mime, size);
-        Map<String, String> fields = new LinkedHashMap<>(); fields.put("scene", "photo".equals(uploadMode) ? "群相册" : "群文件");
+        Map<String, String> fields = new LinkedHashMap<>(); fields.put("scene", "photo".equals(uploadMode) ? spacePrefix() + "相册" : fileRootName());
         binding.progress.setVisibility(View.VISIBLE);
         String fileName = name, fileMime = mime; long fileSize = size;
         uploadRequest = AppAccess.from(this).repository().upload("/api/user/uploads", name, mime, body, fields, result -> {
@@ -794,16 +814,16 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         String target;
         if ("files".equals(section)) {
             path = base() + "/files/" + Jsons.longValue(item, "id");
-            target = "群文件";
+            target = fileRootName();
         } else if ("albums".equals(section)) {
             path = base() + "/albums/" + Jsons.longValue(item, "id");
-            target = "群相册";
+            target = spacePrefix() + "相册";
         } else if ("votes".equals(section)) {
             path = base() + "/votes/" + Jsons.longValue(item, "id");
-            target = "群投票";
+            target = spacePrefix() + "投票";
         } else if ("solitaires".equals(section)) {
             path = base() + "/solitaires/" + Jsons.longValue(item, "id");
-            target = "群接龙";
+            target = spacePrefix() + "接龙";
         } else {
             openItem(item);
             return;
@@ -811,7 +831,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         String finalPath = path;
         new YiyunyingDialogBuilder(this)
             .setTitle("删除" + target)
-            .setMessage("删除后群内会生成操作通知，确定继续吗？")
+            .setMessage("删除后" + entityLabel() + "内会生成操作通知，确定继续吗？")
             .setPositiveButton("删除", (dialog, which) -> {
                 binding.progress.setVisibility(View.VISIBLE);
                 actionRequest = AppAccess.from(this).repository().delete(finalPath, new JsonObject(), result -> {
@@ -850,6 +870,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         long targetId = Jsons.longValue(member, "user_id");
         long selfId = AppAccess.from(this).session().actorId();
         String targetRole = Jsons.string(member, "role");
+        String setAdminAction = "设为" + adminRoleName();
+        String unsetAdminAction = "取消" + adminRoleName();
+        String transferAction = "转让" + ownerRoleName();
+        String removeAction = "移出" + entityLabel();
         List<String> actions = new ArrayList<>();
         actions.add("查看个人主页");
         boolean owner = "owner".equals(currentRole);
@@ -857,23 +881,23 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         boolean manageable = manager && targetId != selfId && !"owner".equals(targetRole)
             && (owner || !"admin".equals(targetRole));
         if (owner && targetId != selfId && !"owner".equals(targetRole)) {
-            actions.add("admin".equals(targetRole) ? "取消群管理员" : "设为群管理员");
-            actions.add("转让群主");
+            actions.add("admin".equals(targetRole) ? unsetAdminAction : setAdminAction);
+            actions.add(transferAction);
         }
         if (manageable) {
             actions.add("禁言管理");
-            actions.add("移出群聊");
+            actions.add(removeAction);
         }
         new YiyunyingDialogBuilder(this)
             .setTitle(first(member, "nickname", "account") + " · " + roleName(targetRole))
             .setItems(actions.toArray(new String[0]), (dialog, which) -> {
                 String action = actions.get(which);
                 if ("查看个人主页".equals(action)) UserProfileActivity.open(this, targetId);
-                else if ("设为群管理员".equals(action)) updateMemberRole(targetId, "admin");
-                else if ("取消群管理员".equals(action)) updateMemberRole(targetId, "member");
-                else if ("转让群主".equals(action)) confirmTransfer(member);
+                else if (setAdminAction.equals(action)) updateMemberRole(targetId, "admin");
+                else if (unsetAdminAction.equals(action)) updateMemberRole(targetId, "member");
+                else if (transferAction.equals(action)) confirmTransfer(member);
                 else if ("禁言管理".equals(action)) showMuteActions(member);
-                else if ("移出群聊".equals(action)) confirmRemoveMember(member);
+                else if (removeAction.equals(action)) confirmRemoveMember(member);
             })
             .setNegativeButton("取消", null)
             .show();
@@ -905,8 +929,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void confirmRemoveMember(JsonObject member) {
         new YiyunyingDialogBuilder(this)
-            .setTitle("移出群聊")
-            .setMessage("确定将“" + first(member, "nickname", "account") + "”移出群聊吗？")
+            .setTitle("移出" + entityLabel())
+            .setMessage("确定将“" + first(member, "nickname", "account") + "”移出" + entityLabel() + "吗？")
             .setPositiveButton("移出", (dialog, which) -> executeMemberAction(
                 "delete", base() + "/members/" + Jsons.longValue(member, "user_id"), new JsonObject()))
             .setNegativeButton("取消", null)
@@ -915,8 +939,9 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void confirmTransfer(JsonObject member) {
         new YiyunyingDialogBuilder(this)
-            .setTitle("转让群主")
-            .setMessage("转让后你将成为普通群成员。确定将群主转让给“" + first(member, "nickname", "account") + "”吗？")
+            .setTitle("转让" + ownerRoleName())
+            .setMessage("转让后你将成为普通" + memberLabel() + "。确定将" + ownerRoleName() + "转让给“"
+                + first(member, "nickname", "account") + "”吗？")
             .setPositiveButton("确认转让", (dialog, which) -> {
                 JsonObject body = new JsonObject();
                 body.addProperty("new_owner_user_id", Jsons.longValue(member, "user_id"));
@@ -982,7 +1007,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private void navigateBack() {
         if ("files".equals(section) && currentFolderId > 0 && !folderParents.isEmpty()) {
             currentFolderId = folderParents.pop();
-            currentFolderName = folderParentNames.isEmpty() ? "群文件" : folderParentNames.pop();
+            currentFolderName = folderParentNames.isEmpty() ? fileRootName() : folderParentNames.pop();
             updateFolderNavigation();
             load();
             return;
@@ -991,12 +1016,13 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     }
 
     private void updateFolderNavigation() {
-        binding.toolbar.setSubtitle("files".equals(section) && currentFolderId > 0 ? "群文件 / " + currentFolderName : null);
+        binding.toolbar.setSubtitle("files".equals(section) && currentFolderId > 0 ? fileRootName() + " / " + currentFolderName : null);
     }
 
     private void showGroupQr() {
-        if (groupNumber.isEmpty()) { toast("群信息尚未加载完成"); return; }
+        if (binding == null || groupNumber.isEmpty()) { toast(entityLabel() + "信息尚未加载完成"); return; }
         String payload = "yiyunying://group/" + roomId + "?uid=" + groupNumber;
+        String displayName = String.valueOf(binding.groupName.getText());
         try {
             Bitmap bitmap = new BarcodeEncoder().encodeBitmap(payload, BarcodeFormat.QR_CODE, 800, 800);
             ImageView image = new ImageView(this);
@@ -1004,24 +1030,25 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             int padding = dp(20);
             image.setPadding(padding, padding, padding, padding);
             new YiyunyingDialogBuilder(this)
-                .setTitle(binding.groupName.getText())
-                .setMessage("群号：" + groupNumber + (groupCreatedAt.isEmpty() ? "" : "\n创建时间：" + groupCreatedAt))
+                .setTitle(displayName)
+                .setMessage(entityNumberLabel() + "：" + groupNumber + (groupCreatedAt.isEmpty() ? "" : "\n创建时间：" + groupCreatedAt))
                 .setView(image)
                 .setPositiveButton("分享", (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_SEND);
                     intent.setType("text/plain");
-                    intent.putExtra(Intent.EXTRA_TEXT, "邀请你加入群聊「" + binding.groupName.getText() + "」\n群号：" + groupNumber + "\n" + payload);
-                    startActivity(Intent.createChooser(intent, "分享群聊"));
+                    intent.putExtra(Intent.EXTRA_TEXT, "邀请你加入" + entityLabel() + "「" + displayName + "」\n"
+                        + entityNumberLabel() + "：" + groupNumber + "\n" + payload);
+                    startActivity(Intent.createChooser(intent, "分享" + entityLabel()));
                 })
-                .setNeutralButton("复制群号", (dialog, which) -> {
+                .setNeutralButton("复制" + entityNumberLabel(), (dialog, which) -> {
                     ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                    clipboard.setPrimaryClip(ClipData.newPlainText("易运盈群号", groupNumber));
-                    toast("群号已复制");
+                    clipboard.setPrimaryClip(ClipData.newPlainText("易运盈" + entityNumberLabel(), groupNumber));
+                    toast(entityNumberLabel() + "已复制");
                 })
                 .setNegativeButton("关闭", null)
                 .show();
         } catch (Exception exception) {
-            toast("群二维码生成失败，请稍后重试");
+            toast(entityLabel() + "二维码生成失败，请稍后重试");
         }
     }
 
@@ -1049,7 +1076,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             request = null;
             if (binding == null) return;
             binding.progress.setVisibility(View.INVISIBLE);
-            if (!result.isSuccessful()) { toast(result.message().isEmpty() ? "群投票详情加载失败" : result.message()); return; }
+            if (!result.isSuccessful()) { toast(result.message().isEmpty() ? spacePrefix() + "投票详情加载失败" : result.message()); return; }
             JsonObject vote = Jsons.object(result.dataObject(), "vote");
             JsonArray options = Jsons.array(vote, "options");
             boolean multipleChoice = bool(vote, "multiple_choice")
@@ -1275,10 +1302,22 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         calendar.add(Calendar.HOUR_OF_DAY, (int) Math.min(Integer.MAX_VALUE, hours));
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(calendar.getTime());
     }
+    private boolean isChatRoom() { return "chat_room".equals(roomKind); }
+    private String entityLabel() { return isChatRoom() ? "聊天室" : "群聊"; }
+    private String entityNumberLabel() { return isChatRoom() ? "聊天室号" : "群号"; }
+    private String memberLabel() { return isChatRoom() ? "聊天室成员" : "群成员"; }
+    private String ownerRoleName() { return isChatRoom() ? "聊天室创建者" : "群主"; }
+    private String adminRoleName() { return isChatRoom() ? "聊天室管理员" : "群管理员"; }
+    private String fileRootName() { return isChatRoom() ? "聊天室文件" : "群文件"; }
+    private String spacePrefix() { return isChatRoom() ? "聊天室" : "群"; }
+
     private String base() { return "/api/user/chat-rooms/" + roomId; }
-    private void toast(String message) { Snackbar.make(binding.getRoot(), message == null || message.isEmpty() ? "操作未完成" : message, Snackbar.LENGTH_LONG).show(); }
+    private void toast(String message) {
+        if (binding == null || isFinishing() || isDestroyed()) return;
+        Snackbar.make(binding.getRoot(), message == null || message.isEmpty() ? "操作未完成" : message, Snackbar.LENGTH_LONG).show();
+    }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-    private String roleName(String role) { return "owner".equals(role) ? "群主" : ("admin".equals(role) ? "群管理员" : "群成员"); }
+    private String roleName(String role) { return "owner".equals(role) ? ownerRoleName() : ("admin".equals(role) ? adminRoleName() : memberLabel()); }
     private interface TextResult { void onResult(String first, String second); }
 
     private static final class VoteOptionDraft {
@@ -1313,6 +1352,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     @Override protected void onDestroy() {
         if (request != null) request.cancel();
+        if (roomRequest != null) roomRequest.cancel();
         if (actionRequest != null) actionRequest.cancel();
         if (uploadRequest != null) uploadRequest.cancel();
         if (voteOptionUploadRequest != null) voteOptionUploadRequest.cancel();
@@ -1378,7 +1418,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             } else {
                 holder.binding.avatarImage.setVisibility(View.GONE);
                 holder.binding.avatar.setVisibility(View.VISIBLE);
-                holder.binding.avatar.setText(title.isEmpty() ? "群" : title.substring(0, 1));
+                holder.binding.avatar.setText(title.isEmpty() ? "人" : title.substring(0, 1));
             }
             holder.binding.subtitle.setText(subtitle(item));
             holder.binding.metadata.setText("members".equals(renderedSection) ? Jsons.string(item, "joined_at") : Jsons.string(item, "created_at")); holder.binding.moreButton.setVisibility(View.GONE); holder.binding.selectionCheck.setVisibility(View.GONE);
@@ -1400,7 +1440,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         }
         final class Holder extends RecyclerView.ViewHolder { final ItemRecordBinding binding; Holder(ItemRecordBinding b) { super(b.getRoot()); binding = b; } }
     }
-    private String sectionName() { return "members".equals(section) ? "群成员" : ("files".equals(section) ? "群文件" : ("albums".equals(section) ? "群相册" : ("votes".equals(section) ? "群投票" : "群接龙"))); }
+    private String sectionName() { return "members".equals(section) ? memberLabel() : ("files".equals(section) ? fileRootName() : ("albums".equals(section) ? spacePrefix() + "相册" : ("votes".equals(section) ? spacePrefix() + "投票" : spacePrefix() + "接龙"))); }
     private static String fileType(String mime) {
         if ("inode/directory".equals(mime)) return "文件夹";
         if (mime.startsWith("image/")) return "图片";
