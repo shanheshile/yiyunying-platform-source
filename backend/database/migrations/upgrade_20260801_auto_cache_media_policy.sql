@@ -4,7 +4,7 @@ SET NAMES utf8mb4;
 
 INSERT INTO `app_settings`
   (`admin_id`, `app_id`, `setting_key`, `setting_value`, `value_type`, `created_at`, `updated_at`)
-SELECT app.admin_id, app.id, defaults.setting_key, defaults.setting_value, defaults.value_type, NOW(), NOW()
+SELECT app.admin_id, app.id, setting_defaults.setting_key, setting_defaults.setting_value, setting_defaults.value_type, NOW(), NOW()
 FROM `apps` app CROSS JOIN (
   SELECT 'auto_download_cache_enabled' setting_key, '1' setting_value, 'bool' value_type
   UNION ALL SELECT 'auto_cache_allowed_categories', '["chat_record","profile","image","video","voice","audio","document","file","sticker"]', 'json'
@@ -17,7 +17,8 @@ FROM `apps` app CROSS JOIN (
   UNION ALL SELECT 'video_autoplay_enabled', '1', 'bool'
   UNION ALL SELECT 'video_autoplay_network', 'wifi_mobile', 'string'
   UNION ALL SELECT 'video_autoplay_default_network', 'wifi', 'string'
-) defaults
+) AS setting_defaults
+WHERE 1 = 1
 ON DUPLICATE KEY UPDATE `setting_key` = VALUES(`setting_key`);
 
 INSERT INTO `schema_migrations` (`version`, `description`, `applied_at`)
