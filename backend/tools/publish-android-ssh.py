@@ -11,6 +11,7 @@ import re
 import shlex
 import sys
 import time
+from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass
 
 import paramiko
@@ -226,6 +227,18 @@ def sql_string(value: str) -> str:
     return "'" + escaped + "'"
 
 
+def normalize_download_base_url(value: str) -> str:
+    """Accept either the site origin or the public downloads root."""
+    raw = value.strip().rstrip("/")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("base-url must be an absolute HTTP(S) URL")
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/downloads"):
+        path += "/downloads"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
 def mysql_command(args: argparse.Namespace, db_password: str, suffix: str) -> str:
     return (
         "MYSQL_BIN=$(command -v mysql || true); "
@@ -264,7 +277,7 @@ def main() -> int:
     if len(args.release) != len({release.edition for release in args.release}):
         raise RuntimeError("each edition may only be published once")
 
-    base_url = args.base_url.rstrip("/")
+    base_url = normalize_download_base_url(args.base_url)
     version_slug = re.sub(r"[^A-Za-z0-9._-]", "-", args.version_name).strip("-")
     if not version_slug:
         raise RuntimeError("version-name does not produce a safe release directory")
