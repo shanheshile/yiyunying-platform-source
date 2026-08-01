@@ -56,6 +56,7 @@ $required = @(
     'database\migrations\upgrade_20260722_bounty_moderation.sql',
     'database\migrations\upgrade_20260725_submission_risk_metadata.sql',
     'database\migrations\upgrade_20260731_chat_room_kind.sql',
+    'database\migrations\upgrade_20260801_forum_comment_threads.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -90,6 +91,8 @@ $required = @(
     'tools\test-red-packet-amount.php',
     'tools\test-red-packet-rules.php',
     'tools\check-commerce-refund-policy.php',
+    'tools\test-moment-pinned-visibility.php',
+    'tools\test-forum-comment-thread-contract.php',
     'tools\generate-requirement-verification.php',
     'tools\generate-reference.php',
     'tools\generate-api-html.php',
@@ -212,6 +215,16 @@ exit($invalid === [] ? 0 : 1);
         throw "Commerce refund policy checks failed.`n$refundPolicyOutput"
     }
     Write-Host "Commerce refund policy checks: passed"
+    $momentPinnedOutput = & $php.Source (Join-Path $root 'tools\test-moment-pinned-visibility.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Moment pinned visibility checks failed.`n$momentPinnedOutput"
+    }
+    Write-Host "Moment pinned visibility checks: passed"
+    $forumThreadOutput = & $php.Source (Join-Path $root 'tools\test-forum-comment-thread-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Forum comment thread contract checks failed.`n$forumThreadOutput"
+    }
+    Write-Host "Forum comment thread contract checks: passed"
     Write-Host "PHP lint: passed ($($phpFiles.Count) files)"
 } else {
     Write-Host 'PHP is not in PATH; php -l was skipped.'

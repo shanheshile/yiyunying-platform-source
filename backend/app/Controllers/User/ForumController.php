@@ -158,7 +158,7 @@ final class ForumController
         $post['sections'] = ForumExperienceService::sections($post, $user);
         $post['has_sections'] = $post['sections'] !== [];
         $post['comments'] = Database::all(
-            "SELECT c.id, c.parent_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
+            "SELECT c.id, c.parent_id, c.root_comment_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
                     c.is_pinned, c.pin_order, c.like_count, c.favorite_count, c.created_at, c.updated_at,
                     u.uid, p.nickname, p.avatar,
                     parent_comment.user_id AS reply_to_user_id,
@@ -179,6 +179,7 @@ final class ForumController
              ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT 500",
             [(int) $user['id'], (int) $user['id'], (int) $post['id'], 'approved', (int) $user['id']]
         );
+        $post['comments'] = self::hydrateCommentRoots($post['comments']);
         $post['comments'] = ContentTagService::hydrate($post['comments']);
         $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', (int) $user['app_id']);
         $post['comments'] = MessageForwardService::hydrate($post['comments'], 'forum_comment', (int) $user['app_id']);
@@ -272,23 +273,26 @@ final class ForumController
         $parentId = (int) $request->input('parent_id', 0);
         $audit = AppService::setting((int) $user['app_id'], 'forum_comment_audit', false) ? 'pending' : 'approved';
         $receiverId = (int) ($post['user_id'] ?? 0);
+        $rootCommentId = null;
         if ($parentId > 0) {
             $parent = Database::one(
-                'SELECT user_id FROM forum_comments
+                'SELECT id, parent_id, root_comment_id, user_id FROM forum_comments
                  WHERE id = ? AND post_id = ? AND status = 1 AND (audit_status = ? OR user_id = ?)',
                 [$parentId, (int) $post['id'], 'approved', (int) $user['id']]
             );
             if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
             $receiverId = (int) $parent['user_id'];
+            $rootCommentId = self::resolveStoredCommentRoot((int) $post['id'], $parent);
         }
-        $id = Database::transaction(static function () use ($user, $post, $payload, $parentId, $audit, $tagsJson): int {
+        $id = Database::transaction(static function () use ($user, $post, $payload, $parentId, $rootCommentId, $audit, $tagsJson): int {
             $id = Database::insert(
                 'INSERT INTO forum_comments
-                 (admin_id, app_id, post_id, parent_id, user_id, content, tags_json, audit_status, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                 (admin_id, app_id, post_id, parent_id, root_comment_id, user_id, content, tags_json, audit_status, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $post['id'],
-                    $parentId > 0 ? $parentId : null, (int) $user['id'], (string) $payload['content'], $tagsJson, $audit,
+                    $parentId > 0 ? $parentId : null, $rootCommentId, (int) $user['id'],
+                    (string) $payload['content'], $tagsJson, $audit,
                 ]
             );
             MessageMediaService::save('forum_comment', $id, $payload);
@@ -354,7 +358,13 @@ final class ForumController
             );
         }
         return Response::success(
-            ['comment_id' => $id, 'audit_status' => $audit, 'reward_result' => $rewardResult],
+            [
+                'comment_id' => $id,
+                'parent_id' => $parentId > 0 ? $parentId : null,
+                'root_comment_id' => $rootCommentId ?? $id,
+                'audit_status' => $audit,
+                'reward_result' => $rewardResult,
+            ],
             $audit === 'pending' ? '评论已提交，等待审核' : '评论成功',
             201
         );
@@ -422,7 +432,7 @@ final class ForumController
             $query
         )['total'] ?? 0);
         $items = Database::all(
-            "SELECT c.id, c.parent_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
+            "SELECT c.id, c.parent_id, c.root_comment_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
                     c.is_pinned, c.pin_order, c.like_count, c.favorite_count,
                     c.created_at, c.updated_at, u.uid, p.nickname, p.avatar,
                     parent_comment.user_id AS reply_to_user_id,
@@ -442,6 +452,7 @@ final class ForumController
              WHERE {$whereSql} ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT {$limit} OFFSET {$offset}",
             array_merge([(int) $user['id'], (int) $user['id']], $query)
         );
+        $items = self::hydrateCommentRoots($items);
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'forum_comment', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'forum_comment', (int) $user['app_id']);
@@ -916,6 +927,92 @@ final class ForumController
         $post['tags'] = ContentTagService::decode($post['tags_json'] ?? null);
         unset($post['tags_json']);
         return $post;
+    }
+
+    /**
+     * Preserve the direct reply target while resolving the top-level comment
+     * that owns the thread. Legacy rows are followed defensively so a reply can
+     * never move under a different comment when the flat list order changes.
+     */
+    private static function resolveStoredCommentRoot(int $postId, array $parent): int
+    {
+        $fallbackId = (int) ($parent['id'] ?? 0);
+        $current = $parent;
+        $visited = [];
+        for ($depth = 0; $depth < 64; $depth++) {
+            $currentId = (int) ($current['id'] ?? 0);
+            if ($currentId <= 0 || isset($visited[$currentId])) {
+                return $fallbackId;
+            }
+            $visited[$currentId] = true;
+            if ((int) ($current['parent_id'] ?? 0) <= 0) {
+                return $currentId;
+            }
+
+            $storedRootId = (int) ($current['root_comment_id'] ?? 0);
+            if ($storedRootId > 0) {
+                $storedRoot = Database::one(
+                    'SELECT id, parent_id FROM forum_comments WHERE id = ? AND post_id = ? AND status = 1',
+                    [$storedRootId, $postId]
+                );
+                if ($storedRoot !== null && (int) ($storedRoot['parent_id'] ?? 0) <= 0) {
+                    return (int) $storedRoot['id'];
+                }
+            }
+
+            $current = Database::one(
+                'SELECT id, parent_id, root_comment_id FROM forum_comments WHERE id = ? AND post_id = ? AND status = 1',
+                [(int) $current['parent_id'], $postId]
+            );
+            if ($current === null) {
+                return $fallbackId;
+            }
+        }
+        return $fallbackId;
+    }
+
+    /**
+     * Normalise root_comment_id for both migrated and legacy rows. Top-level
+     * comments expose their own ID as the root so every client has one stable
+     * grouping key.
+     */
+    private static function hydrateCommentRoots(array $comments): array
+    {
+        $byId = [];
+        foreach ($comments as $comment) {
+            $id = (int) ($comment['id'] ?? 0);
+            if ($id > 0) $byId[$id] = $comment;
+        }
+
+        $resolved = [];
+        $resolve = static function (int $id, array $trail = []) use (&$resolve, &$resolved, $byId): int {
+            if ($id <= 0) return 0;
+            if (isset($resolved[$id])) return $resolved[$id];
+            if (isset($trail[$id])) return $resolved[$id] = $id;
+            $row = $byId[$id] ?? null;
+            if ($row === null) return $resolved[$id] = $id;
+
+            $parentId = (int) ($row['parent_id'] ?? 0);
+            if ($parentId <= 0) return $resolved[$id] = $id;
+
+            $storedRootId = (int) ($row['root_comment_id'] ?? 0);
+            if ($storedRootId > 0) {
+                $storedRoot = $byId[$storedRootId] ?? null;
+                if ($storedRoot === null || (int) ($storedRoot['parent_id'] ?? 0) <= 0) {
+                    return $resolved[$id] = $storedRootId;
+                }
+            }
+
+            $trail[$id] = true;
+            return $resolved[$id] = $resolve($parentId, $trail);
+        };
+
+        foreach ($comments as &$comment) {
+            $id = (int) ($comment['id'] ?? 0);
+            $comment['root_comment_id'] = $resolve($id);
+        }
+        unset($comment);
+        return $comments;
     }
 
     private static function user(Request $request): array

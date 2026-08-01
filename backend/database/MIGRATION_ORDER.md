@@ -54,6 +54,8 @@
 50. `migrations/upgrade_20260722_bounty_moderation.sql`
 51. `migrations/upgrade_20260725_submission_risk_metadata.sql`
 52. `migrations/upgrade_20260731_chat_room_kind.sql`
+53. `migrations/upgrade_20260801_auto_cache_media_policy.sql`
+54. `migrations/upgrade_20260801_forum_comment_threads.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.

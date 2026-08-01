@@ -54,7 +54,7 @@ final class MomentController
         );
         $visible = [];
         foreach ($rows as $row) {
-            if (MomentVisibilityService::canView($row, $user)) $visible[] = $row;
+            if (MomentVisibilityService::canView($row, $user, $targetUserId > 0)) $visible[] = $row;
         }
         $total = count($visible);
         $items = array_slice($visible, ($page - 1) * $limit, $limit);
@@ -549,7 +549,7 @@ final class MomentController
              WHERE m.id = ? AND m.admin_id = ? AND m.app_id = ? AND m.status = 1{$deleted}",
             [$momentId, (int) $user['admin_id'], (int) $user['app_id']]
         );
-        if ($row === null || !MomentVisibilityService::canView($row, $user)) throw new HttpException('动态不存在或你无权查看', 404, 404);
+        if ($row === null || !MomentVisibilityService::canView($row, $user, true)) throw new HttpException('动态不存在或你无权查看', 404, 404);
         $row = MessageMediaService::hydrate([$row], 'moment', (int) $user['app_id'])[0];
         self::decorate($row, $user);
         return $row;

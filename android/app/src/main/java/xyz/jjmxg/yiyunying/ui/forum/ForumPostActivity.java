@@ -328,9 +328,22 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentsContainer.removeAllViews();
         binding.emptyComments.setVisibility(comments.isEmpty() ? View.VISIBLE : View.GONE);
         Map<Long, View> commentAnchors = new LinkedHashMap<>();
+        List<JsonObject> commentItems = new ArrayList<>();
+        List<ForumCommentThreadOrder.CommentRef> commentRefs = new ArrayList<>();
         for (JsonElement element : comments) {
             if (!element.isJsonObject()) continue;
-            JsonObject comment = element.getAsJsonObject();
+            JsonObject item = element.getAsJsonObject();
+            int sourceIndex = commentItems.size();
+            commentItems.add(item);
+            commentRefs.add(new ForumCommentThreadOrder.CommentRef(
+                sourceIndex,
+                Jsons.longValue(item, "id"),
+                Jsons.longValue(item, "parent_id"),
+                Jsons.longValue(item, "root_comment_id")
+            ));
+        }
+        for (int orderedIndex : ForumCommentThreadOrder.orderedIndexes(commentRefs)) {
+            JsonObject comment = commentItems.get(orderedIndex);
             long commentId = Jsons.longValue(comment, "id");
             long parentCommentId = Jsons.longValue(comment, "parent_id");
             MaterialCardView card = new MaterialCardView(this);

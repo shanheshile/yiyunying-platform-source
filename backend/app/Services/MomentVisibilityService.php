@@ -12,7 +12,7 @@ final class MomentVisibilityService
     public const GLOBAL_MODES = ['public', 'friends', 'followers', 'selected', 'exclude', 'private'];
     public const DAYS = [0, 3, 30, 180, 365];
 
-    public static function canView(array $moment, array $viewer): bool
+    public static function canView(array $moment, array $viewer, bool $allowPinnedOutsideTimeWindow = false): bool
     {
         $ownerId = (int) ($moment['user_id'] ?? 0);
         $viewerId = (int) ($viewer['id'] ?? 0);
@@ -29,7 +29,7 @@ final class MomentVisibilityService
         $visibleDays = $moment['visible_days'] === null
             ? $preferences['dynamic_visible_days']
             : self::normalizeDays($moment['visible_days']);
-        if ($visibleDays > 0) {
+        if (self::appliesVisibleDays($moment, $allowPinnedOutsideTimeWindow) && $visibleDays > 0) {
             $createdAt = strtotime((string) ($moment['created_at'] ?? ''));
             if ($createdAt === false || $createdAt < time() - ($visibleDays * 86400)) return false;
         }
@@ -57,6 +57,11 @@ final class MomentVisibilityService
         }
         if ($relationship['follower']) return $preferences['dynamic_visible_to_followers'];
         return $preferences['dynamic_visible_to_strangers'];
+    }
+
+    public static function appliesVisibleDays(array $moment, bool $allowPinnedOutsideTimeWindow): bool
+    {
+        return !$allowPinnedOutsideTimeWindow || (int) ($moment['is_pinned'] ?? 0) !== 1;
     }
 
     public static function preferences(int $ownerId): array

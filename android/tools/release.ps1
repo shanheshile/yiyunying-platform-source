@@ -369,8 +369,35 @@ try {
     }
     Assert-ReleaseNotes -Notes $notes
 
+    $projectAssets = @(
+        [ordered]@{
+            id = 'source'
+            fileName = "yiyunying-source-v$($version.versionName).zip"
+            label = '完整源码快照'
+            description = '当前发布提交的完整源码，不含构建缓存、密钥与本地凭据。'
+        },
+        [ordered]@{
+            id = 'history'
+            fileName = "yiyunying-git-history-v$($version.versionName).bundle"
+            label = '完整 Git 历史'
+            description = '可离线克隆和恢复全部分支、标签与提交历史的 Git Bundle。'
+        },
+        [ordered]@{
+            id = 'delivery'
+            fileName = "yiyunying-project-delivery-v$($version.versionName).zip"
+            label = '项目交接总包'
+            description = '源码、Git 历史、版本说明、架构与新任务交接文档的完整交付包。'
+        },
+        [ordered]@{
+            id = 'manifest'
+            fileName = 'project-assets-manifest.json'
+            label = '项目文件校验清单'
+            description = '列出项目下载文件的体积、SHA-256、版本和对应 Git 提交。'
+        }
+    )
+
     $manifest = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         versionName = $version.versionName
         versionCode = $version.versionCode
         releaseDate = (Get-Date -Format 'yyyy-MM-dd')
@@ -378,6 +405,7 @@ try {
         downloadRootBase = $DownloadRootBase
         releaseNotes = $notes
         releases = $releaseEntries
+        projectAssets = $projectAssets
     }
 
     Write-Utf8JsonAtomic -Path (Join-Path $stagingDirectory 'release-manifest.json') -Value $manifest

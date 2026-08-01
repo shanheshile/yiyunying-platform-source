@@ -111,10 +111,31 @@ test("keeps release metadata and download links consistent", async () => {
     assert.ok(release.sizeBytes > 1024 * 1024, "APK must be larger than 1 MiB");
   }
 
+  const projectAssets = Array.isArray(releaseMetadata.projectAssets)
+    ? releaseMetadata.projectAssets
+    : [];
+  if (releaseMetadata.schemaVersion >= 3) {
+    assert.equal(projectAssets.length, 4);
+    assert.deepEqual(
+      new Set(projectAssets.map(({ id }) => id)),
+      new Set(["source", "history", "delivery", "manifest"]),
+    );
+    assert.equal(new Set(projectAssets.map(({ fileName }) => fileName)).size, 4);
+  } else {
+    assert.equal(projectAssets.length, 0);
+  }
+  for (const asset of projectAssets) {
+    assert.match(page, /releaseMetadata as \{ projectAssets\?: ProjectAsset\[\] \}/);
+    assert.ok(asset.label.trim().length > 0);
+    assert.ok(asset.description.trim().length > 0);
+  }
+
   assert.match(layout, /title:\s*"易运盈官方下载中心"/);
   assert.match(packageMetadata.dependencies["lucide-react"], /.+/);
   assert.match(page, /\?sha256=/);
   assert.match(page, /download=\{selected\.fileName\}/);
+  assert.match(page, /id="project-files"/);
+  assert.match(page, /PROJECT_ASSETS\.map/);
   assert.match(exporter, /downloadButton\.download = current\.fileName/);
   assert.match(nginx, /no-store, no-cache, must-revalidate/);
   assert.match(nginx, /application\/vnd\.android\.package-archive/);

@@ -77,6 +77,14 @@ $userOverviewSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Ser
 $databaseInstallSource = Get-Content -LiteralPath (Join-Path $root 'backend/database/install.sql') -Raw -Encoding UTF8
 $roomKindMigrationPath = Join-Path $root 'backend/database/migrations/upgrade_20260731_chat_room_kind.sql'
 $roomKindMigrationSource = Get-Content -LiteralPath $roomKindMigrationPath -Raw -Encoding UTF8
+$momentVisibilitySource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Services/MomentVisibilityService.php') -Raw -Encoding UTF8
+$momentControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/User/MomentController.php') -Raw -Encoding UTF8
+$forumControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/User/ForumController.php') -Raw -Encoding UTF8
+$publicForumControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/PublicApi/ForumController.php') -Raw -Encoding UTF8
+$forumThreadOrderSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumCommentThreadOrder.java') -Raw -Encoding UTF8
+$forumThreadOrderTest = Get-Content -LiteralPath (Join-Path $root 'android/app/src/test/java/xyz/jjmxg/yiyunying/ui/forum/ForumCommentThreadOrderTest.java') -Raw -Encoding UTF8
+$forumThreadMigrationPath = Join-Path $root 'backend/database/migrations/upgrade_20260801_forum_comment_threads.sql'
+$forumThreadMigrationSource = Get-Content -LiteralPath $forumThreadMigrationPath -Raw -Encoding UTF8
 
 foreach ($shell in @($userShell, $managementShell)) {
     if ($shell -notmatch 'app:labelVisibilityMode="labeled"' -or
@@ -116,6 +124,22 @@ if ($momentTimelineSource -notmatch 'targetUserId <= 0' -or
     $momentTimelineSource -notmatch 'pinnedSectionAdded' -or
     $momentTimelineSource -notmatch 'regularSectionAdded') {
     throw 'Moment timeline must separate profile-only pinned content from the public feed.'
+}
+if ($momentVisibilitySource -notmatch 'appliesVisibleDays' -or
+    $momentControllerSource -notmatch 'canView\(\$row, \$user, \$targetUserId > 0\)' -or
+    $momentControllerSource -notmatch 'canView\(\$row, \$user, true\)') {
+    throw 'Pinned moments must bypass only the profile/detail time window while preserving privacy checks.'
+}
+if (-not (Test-Path -LiteralPath $forumThreadMigrationPath) -or
+    $forumThreadMigrationSource -notmatch 'idx_forum_comments_root' -or
+    $forumThreadMigrationSource -match '\bDELIMITER\b|CREATE\s+PROCEDURE' -or
+    $databaseInstallSource -notmatch '`root_comment_id` BIGINT UNSIGNED DEFAULT NULL' -or
+    $forumControllerSource -notmatch 'resolveStoredCommentRoot' -or
+    $forumControllerSource -notmatch 'hydrateCommentRoots' -or
+    $publicForumControllerSource -notmatch 'AS root_comment_id' -or
+    $forumThreadOrderSource -notmatch 'repliesByRoot' -or
+    $forumThreadOrderTest -notmatch 'replyStaysWithItsRootWhenAnotherTopLevelCommentArrives') {
+    throw 'Forum replies must keep a stable top-level root across inserts, legacy data, and every API surface.'
 }
 
 if ($socialDirectorySource -notmatch 'addProperty\("room_kind", chatroom \? "chat_room" : "group"\)' -or
@@ -168,6 +192,12 @@ $environmentLoaderTest = Join-Path $root 'backend/tools/test-env-loader.php'
 if ($LASTEXITCODE -ne 0) { throw "Environment loader test failed with exit code $LASTEXITCODE" }
 & php -d disable_functions=putenv $environmentLoaderTest
 if ($LASTEXITCODE -ne 0) { throw "Environment loader fallback test failed with exit code $LASTEXITCODE" }
+$momentPinnedTest = Join-Path $root 'backend/tools/test-moment-pinned-visibility.php'
+& php $momentPinnedTest
+if ($LASTEXITCODE -ne 0) { throw "Moment pinned visibility test failed with exit code $LASTEXITCODE" }
+$forumThreadContractTest = Join-Path $root 'backend/tools/test-forum-comment-thread-contract.php'
+& php $forumThreadContractTest
+if ($LASTEXITCODE -ne 0) { throw "Forum comment thread contract test failed with exit code $LASTEXITCODE" }
 
 $androidDirectory = Join-Path $root 'android'
 $localProperties = Join-Path $androidDirectory 'local.properties'

@@ -55,7 +55,9 @@ final class ForumController
         $post['sections'] = ForumExperienceService::sections($post, null);
         $post['has_sections'] = $post['sections'] !== [];
         $post['comments'] = Database::all(
-            "SELECT c.id, c.parent_id, c.user_id, c.content, c.tags_json, c.is_pinned, c.pin_order,
+            "SELECT c.id, c.parent_id,
+                    COALESCE(c.root_comment_id, CASE WHEN c.parent_id IS NULL THEN c.id ELSE c.parent_id END) AS root_comment_id,
+                    c.user_id, c.content, c.tags_json, c.is_pinned, c.pin_order,
                     c.like_count, c.favorite_count, c.created_at, c.updated_at, u.uid, p.nickname, p.avatar
              FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id

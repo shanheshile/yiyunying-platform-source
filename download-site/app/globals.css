@@ -530,6 +530,77 @@ h1 {
   font-size: 12px;
 }
 
+.project-band {
+  padding: clamp(54px, 7vw, 84px) 24px;
+  border-bottom: 1px solid var(--line);
+  background: #f6f8f8;
+}
+
+.project-heading {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  width: min(1180px, 100%);
+  margin: 32px auto 0;
+}
+
+.project-download {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 16px;
+  min-height: 108px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.project-download:hover {
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--line));
+  box-shadow: 0 14px 30px rgba(16, 44, 39, 0.08);
+  transform: translateY(-2px);
+}
+
+.project-download > svg:first-child {
+  width: 48px;
+  height: 48px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #e8f3ef;
+  color: var(--brand);
+}
+
+.project-download > svg:last-child {
+  color: var(--brand);
+}
+
+.project-download span {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-download strong {
+  font-size: 16px;
+}
+
+.project-download small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .trust-band {
   padding: 26px 24px;
   border-bottom: 1px solid var(--line);
@@ -933,6 +1004,26 @@ footer > a {
 
   .product-visual {
     min-height: 330px;
+  }
+
+  .project-band {
+    padding: 52px 14px;
+  }
+
+  .project-grid {
+    grid-template-columns: 1fr;
+    margin-top: 26px;
+  }
+
+  .project-download {
+    grid-template-columns: 44px minmax(0, 1fr) 22px;
+    min-height: 96px;
+    padding: 14px;
+  }
+
+  .project-download > svg:first-child {
+    width: 44px;
+    height: 44px;
   }
 
   .trust-band {

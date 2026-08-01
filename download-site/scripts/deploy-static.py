@@ -110,6 +110,51 @@ def load_release_files(release_dir: Path, version: str) -> list[dict[str, object
         )
     if len(artifacts) != 4:
         raise RuntimeError(f"Expected four Android artifacts, found {len(artifacts)}")
+
+    project_descriptors = manifest.get("projectAssets", [])
+    expected_project_ids = {"source", "history", "delivery", "manifest"}
+    actual_project_ids = {str(item.get("id")) for item in project_descriptors}
+    if actual_project_ids != expected_project_ids:
+        raise RuntimeError(
+            "Project asset descriptors are incomplete: "
+            f"expected {sorted(expected_project_ids)}, found {sorted(actual_project_ids)}"
+        )
+
+    project_manifest_path = release_dir / "project-assets-manifest.json"
+    with project_manifest_path.open("r", encoding="utf-8-sig") as stream:
+        project_manifest = json.load(stream)
+    if str(project_manifest.get("versionName")) != version:
+        raise RuntimeError("Project asset manifest version does not match --version")
+    project_checks = {
+        str(item["fileName"]): item for item in project_manifest.get("assets", [])
+    }
+
+    for descriptor in project_descriptors:
+        file_name = str(descriptor["fileName"])
+        local_path = release_dir / file_name
+        if not local_path.is_file():
+            raise FileNotFoundError(local_path)
+        actual_hash = sha256(local_path)
+        actual_size = local_path.stat().st_size
+        if str(descriptor["id"]) != "manifest":
+            expected = project_checks.get(file_name)
+            if expected is None:
+                raise RuntimeError(f"Missing project checksum entry: {file_name}")
+            if actual_hash != str(expected["sha256"]).upper():
+                raise RuntimeError(f"Local project SHA-256 mismatch: {file_name}")
+            if actual_size != int(expected["sizeBytes"]):
+                raise RuntimeError(f"Local project size mismatch: {file_name}")
+        artifacts.append(
+            {
+                "name": file_name,
+                "path": local_path,
+                "sha256": actual_hash,
+                "size": actual_size,
+            }
+        )
+
+    if len(artifacts) != 8:
+        raise RuntimeError(f"Expected eight public release artifacts, found {len(artifacts)}")
     return artifacts
 
 
@@ -227,7 +272,10 @@ def main() -> int:
             raise
 
         run(ssh, f"rm -rf {quote(remote_site + '.previous')} {quote(staging_root)}")
-        print(f"Deployed download center {args.version}; verified four APK artifacts.")
+        print(
+            f"Deployed download center {args.version}; verified four APK and "
+            "four complete-project artifacts."
+        )
         print(f"Backup: {backup_root}")
         print(
             "WARNING: static deployment does not update software_update_policies. "

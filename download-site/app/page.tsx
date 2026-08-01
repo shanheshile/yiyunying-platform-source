@@ -1,16 +1,20 @@
 "use client";
 
 import {
+  Archive,
   BadgeCheck,
+  BookOpenCheck,
   Check,
   ChevronDown,
   Clipboard,
   Download,
   ExternalLink,
+  FileCode2,
   FileCheck2,
   LockKeyhole,
   MonitorSmartphone,
   PackageCheck,
+  GitBranch,
   ShieldCheck,
   Smartphone,
 } from "lucide-react";
@@ -30,6 +34,13 @@ type Release = {
   accent: string;
 };
 
+type ProjectAsset = {
+  id: "source" | "history" | "delivery" | "manifest";
+  fileName: string;
+  label: string;
+  description: string;
+};
+
 const VERSION = releaseMetadata.versionName;
 const RELEASE_DATE = releaseMetadata.releaseDate;
 const DOWNLOAD_ROOT = `${releaseMetadata.downloadRootBase}/${VERSION}`;
@@ -41,6 +52,8 @@ function getIsAndroidSnapshot() {
 }
 
 const RELEASES = releaseMetadata.releases as Release[];
+const PROJECT_ASSETS =
+  (releaseMetadata as { projectAssets?: ProjectAsset[] }).projectAssets ?? [];
 const RELEASE_NOTES: string[] = Array.isArray(releaseMetadata.releaseNotes)
   ? releaseMetadata.releaseNotes
   : String(releaseMetadata.releaseNotes ?? "")
@@ -103,6 +116,7 @@ export default function Home() {
         </a>
         <nav aria-label="页面导航">
           <a href="#download">软件下载</a>
+          <a href="#project-files">完整项目</a>
           <a href="#release-notes">版本说明</a>
           <a href="#install">安装帮助</a>
         </nav>
@@ -239,6 +253,43 @@ export default function Home() {
               Android 安装包
             </div>
           </aside>
+        </div>
+      </section>
+
+      <section className="project-band" id="project-files">
+        <div className="section-heading project-heading">
+          <p>PROJECT DELIVERY</p>
+          <h2>完整项目与开发历史</h2>
+          <span>
+            下载当前源码、完整 Git 历史或带交接文档的总包；所有文件均可通过校验清单复核。
+          </span>
+        </div>
+        <div className="project-grid">
+          {PROJECT_ASSETS.map((asset) => {
+            const Icon =
+              asset.id === "source"
+                ? FileCode2
+                : asset.id === "history"
+                  ? GitBranch
+                  : asset.id === "delivery"
+                    ? Archive
+                    : BookOpenCheck;
+            return (
+              <a
+                className="project-download"
+                href={`${DOWNLOAD_ROOT}/${asset.fileName}`}
+                key={asset.id}
+                download
+              >
+                <Icon aria-hidden="true" />
+                <span>
+                  <strong>{asset.label}</strong>
+                  <small>{asset.description}</small>
+                </span>
+                <Download aria-hidden="true" />
+              </a>
+            );
+          })}
         </div>
       </section>
 
