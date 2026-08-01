@@ -116,7 +116,6 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private JsonObject pendingForwardMoment;
     private long replyingCommentId;
     private long targetUserId;
-    private boolean pinSectionVisible;
     private long targetMomentId;
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
@@ -223,8 +222,6 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         super.onCreate(state);
         targetUserId = getIntent().getLongExtra(EXTRA_USER_ID, 0L);
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
-        // 置顶分区仅在「本人/指定联系人」动态内可见；公共动态不展示他人置顶
-        pinSectionVisible = targetUserId > 0L;
         targetUserTitle = getIntent().getStringExtra(EXTRA_USER_TITLE);
         if (targetUserTitle == null) targetUserTitle = "";
         binding = ActivityMomentTimelineBinding.inflate(getLayoutInflater());
@@ -1496,7 +1493,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                         itemLatitude,
                         itemLongitude)
                     : null);
-                boolean profileTimeline = targetMomentId <= 0 && targetUserId > 0;
+                boolean profileTimeline = MomentDisplayPolicy.showsProfileSections(targetMomentId, targetUserId);
                 row.pinBadge.setVisibility(profileTimeline && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
                 boolean lastPinned = profileTimeline && flag(item, "is_pinned");
                 if (lastPinned) {
@@ -1538,7 +1535,11 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.authorArea.setVisibility(hideRepeatedAuthor ? View.GONE : View.VISIBLE);
                 row.avatar.setOnClickListener(profile);
                 row.authorArea.setOnClickListener(profile);
-                boolean manageable = flag(item, "can_pin") || flag(item, "can_edit") || flag(item, "can_delete");
+                boolean manageable = MomentDisplayPolicy.isManageable(
+                    flag(item, "can_pin"),
+                    flag(item, "can_edit"),
+                    flag(item, "can_hide"),
+                    flag(item, "can_delete"));
                 row.moreButton.setVisibility(manageable ? View.VISIBLE : View.GONE);
                 row.moreButton.setOnClickListener(view -> showMomentMenu(item.deepCopy()));
                 List<JsonObject> media = new ArrayList<>();

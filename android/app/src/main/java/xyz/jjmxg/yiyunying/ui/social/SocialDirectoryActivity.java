@@ -91,12 +91,20 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     }
 
     public static void openCreateGroup(Context context) {
+        RoomCreateActivity.open(context, false);
+    }
+
+    public static void openCreateChatroom(Context context) {
+        RoomCreateActivity.open(context, true);
+    }
+
+    public static void openBasicCreateGroup(Context context) {
         context.startActivity(new Intent(context, SocialDirectoryActivity.class)
             .putExtra(EXTRA_MODE, MODE_ROOMS)
             .putExtra(EXTRA_CREATE_KIND, CREATE_GROUP));
     }
 
-    public static void openCreateChatroom(Context context) {
+    public static void openBasicCreateChatroom(Context context) {
         context.startActivity(new Intent(context, SocialDirectoryActivity.class)
             .putExtra(EXTRA_MODE, MODE_ROOMS)
             .putExtra(EXTRA_CREATE_KIND, CREATE_CHATROOM));
@@ -458,8 +466,14 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     private void chooseRoomKind() {
         new YiyunyingDialogBuilder(this)
             .setBusinessTitle("新建会话")
-            .setItems(new String[]{"新建群聊", "新建聊天室"}, (dialog, which) ->
-                createRoom(which == 1 ? CREATE_CHATROOM : CREATE_GROUP))
+            .setMessage("快速创建可选择好友和固定标签；基础创建保留原有简洁流程。")
+            .setItems(new String[]{
+                "快速新建群聊", "快速新建聊天室", "基础创建群聊", "基础创建聊天室"
+            }, (dialog, which) -> {
+                if (which == 0) openCreateGroup(this);
+                else if (which == 1) openCreateChatroom(this);
+                else createRoom(which == 3 ? CREATE_CHATROOM : CREATE_GROUP);
+            })
             .setNegativeButton("取消", null)
             .show();
     }

@@ -4,7 +4,7 @@
     android:id="@+id/systemInsetRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/glass_surface_strong">
+    android:background="@color/surface">
 
     <androidx.drawerlayout.widget.DrawerLayout
         android:id="@+id/drawerLayout"

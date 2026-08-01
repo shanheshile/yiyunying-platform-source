@@ -18,7 +18,6 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.activity.OnBackPressedCallback;
-import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
@@ -74,7 +73,6 @@ public final class UserSettingsActivity extends SystemInsetActivity {
     private boolean categoryOpen;
     private boolean directSection;
     private boolean userRole;
-    private boolean updateInfoOpen;
     private String activeSection = SECTION_ROOT;
     private String dynamicVisibilityMode = "public";
     private int dynamicVisibleDays;
@@ -181,7 +179,10 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         binding.blacklistButton.setOnClickListener(view -> BlacklistActivity.open(this));
         binding.permissionCenterButton.setOnClickListener(view -> RolePermissionActivity.openSelf(this));
         binding.cacheButton.setOnClickListener(view -> CacheManagementActivity.open(this));
-        binding.updateButton.setOnClickListener(view -> showUpdateMaintenanceInfo());
+        binding.updateStatusText.setText(tr("当前版本：") + BuildConfig.VERSION_NAME
+            + "\n" + tr("点击上方入口会立即连接更新服务，无需重启软件。"));
+        binding.updateButton.setOnClickListener(view ->
+            LifecycleChecker.checkNow(this, binding == null ? null : binding.getRoot()));
         if (userRole) load();
         else setLoading(false);
         directSection = userRole
@@ -211,35 +212,6 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             int index = Math.min(1, binding.storageGroup.getChildCount());
             binding.storageGroup.addView(binding.systemPermissionButton, index);
         }
-    }
-
-    private void showUpdateMaintenanceInfo() {
-        if (updateInfoOpen || binding == null || isFinishing() || isDestroyed()) return;
-        updateInfoOpen = true;
-        binding.updateButton.setEnabled(false);
-        try {
-            AlertDialog dialog = new YiyunyingDialogBuilder(this)
-                .setTitle(tr("软件更新与维护"))
-                .setMessage(tr("当前版本：") + BuildConfig.VERSION_NAME
-                    + "\n\n" + tr("立即检查会直接请求更新服务，不需要退出并重新打开软件。"))
-                .setPositiveButton(tr("立即检查"), (ignored, which) -> {
-                    resetUpdateInfoState();
-                    LifecycleChecker.checkNow(this, binding == null ? null : binding.getRoot());
-                })
-                .setNegativeButton(tr("关闭"), null)
-                .create();
-            dialog.setOnDismissListener(ignored -> resetUpdateInfoState());
-            dialog.show();
-        } catch (RuntimeException | LinkageError exception) {
-            resetUpdateInfoState();
-            CrashReporter.record("打开软件更新与维护", exception);
-            showMessage(tr("更新与维护信息暂时无法打开，请稍后重试").toString(), Snackbar.LENGTH_LONG);
-        }
-    }
-
-    private void resetUpdateInfoState() {
-        updateInfoOpen = false;
-        if (binding != null) binding.updateButton.setEnabled(true);
     }
 
     private void showCategory(View group, String section, String title, boolean resetScroll) {
@@ -955,7 +927,6 @@ public final class UserSettingsActivity extends SystemInsetActivity {
 
     @Override protected void onDestroy() {
         if (request != null) request.cancel();
-        updateInfoOpen = false;
         binding = null;
         super.onDestroy();
     }

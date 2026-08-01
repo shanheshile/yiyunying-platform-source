@@ -22,10 +22,10 @@ public class BottomDockStylerPolicyTest {
     }
 
     @Test
-    public void xiaomiAddsOnlyTheCompatibilityHeight() {
-        assertEquals(68, BottomDockStyler.heightDp(1.0f, false));
-        assertEquals(74, BottomDockStyler.heightDp(1.0f, true));
-        assertEquals(76, BottomDockStyler.heightDp(1.5f, false));
-        assertEquals(82, BottomDockStyler.heightDp(1.5f, true));
+    public void xiaomiGetsEnoughHeightForItsExtraFontMetrics() {
+        assertEquals(72, BottomDockStyler.heightDp(1.0f, false));
+        assertEquals(80, BottomDockStyler.heightDp(1.0f, true));
+        assertEquals(80, BottomDockStyler.heightDp(1.5f, false));
+        assertEquals(88, BottomDockStyler.heightDp(1.5f, true));
     }
 }

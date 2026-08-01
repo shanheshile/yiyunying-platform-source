@@ -1,12 +1,17 @@
 package xyz.jjmxg.yiyunying.ui.chat;
 
+import android.app.Activity;
 import android.app.Dialog;
+import android.app.PictureInPictureParams;
 import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.media.MediaPlayer;
 import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Rational;
 import android.os.Build;
 import android.view.GestureDetector;
 import android.view.Gravity;
@@ -58,6 +63,12 @@ public final class InlineMediaPreviewDialog {
         private final SeekBar seek;
         private final MaterialButton speed;
         private final MaterialButton fullscreen;
+        private final MaterialButton rewind;
+        private final MaterialButton forward;
+        private final MaterialButton rotate;
+        private final MaterialButton pip;
+        private final LinearLayout videoControls;
+        private final TextView viewers;
         private final MaterialButton previous;
         private final MaterialButton next;
         private int index;
@@ -73,11 +84,14 @@ public final class InlineMediaPreviewDialog {
         private boolean temporaryFast;
         private boolean immersive;
         private final float initialBrightness;
+        private final int initialRequestedOrientation;
 
         Preview(Context context, List<JsonObject> source, int selectedIndex) {
             this.context = context;
-            initialBrightness = context instanceof android.app.Activity
-                ? ((android.app.Activity) context).getWindow().getAttributes().screenBrightness : -1f;
+            Activity host = hostActivity();
+            initialBrightness = host == null ? -1f : host.getWindow().getAttributes().screenBrightness;
+            initialRequestedOrientation = host == null
+                ? ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED : host.getRequestedOrientation();
             for (JsonObject item : source) if (item != null) items.add(item.deepCopy());
             index = Math.max(0, Math.min(items.size() - 1, selectedIndex));
             dialog = new Dialog(context, android.R.style.Theme_Material_NoActionBar_Fullscreen);
@@ -115,11 +129,13 @@ public final class InlineMediaPreviewDialog {
             next.setBackgroundColor(Color.argb(132, 0, 0, 0));
             next.setOnClickListener(view -> move(1));
 
-            LinearLayout controls = new LinearLayout(context);
-            controls.setGravity(Gravity.CENTER_VERTICAL);
-            controls.setPadding(dp(12), dp(6), dp(12), dp(10));
+            videoControls = new LinearLayout(context);
+            videoControls.setOrientation(LinearLayout.VERTICAL);
+            videoControls.setPadding(dp(10), dp(2), dp(10), dp(8));
+
+            LinearLayout progressRow = new LinearLayout(context);
+            progressRow.setGravity(Gravity.CENTER_VERTICAL);
             seek = new SeekBar(context);
-            seek.setVisibility(View.GONE);
             seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     if (fromUser && video != null) video.seekTo(progress);
@@ -130,20 +146,47 @@ public final class InlineMediaPreviewDialog {
             });
             time = new TextView(context);
             time.setTextColor(Color.LTGRAY);
-            time.setTextSize(12);
+            time.setTextSize(11);
             time.setGravity(Gravity.CENTER);
-            time.setVisibility(View.GONE);
+            viewers = new TextView(context);
+            viewers.setTextColor(Color.LTGRAY);
+            viewers.setTextSize(11);
+            viewers.setGravity(Gravity.CENTER);
+            viewers.setSingleLine(true);
+            progressRow.addView(seek, new LinearLayout.LayoutParams(0, dp(42), 1f));
+            progressRow.addView(time, new LinearLayout.LayoutParams(dp(92), dp(42)));
+            progressRow.addView(viewers, new LinearLayout.LayoutParams(dp(92), dp(42)));
+            videoControls.addView(progressRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+
+            LinearLayout actionRow = new LinearLayout(context);
+            actionRow.setGravity(Gravity.CENTER);
+            rewind = textButton("-10秒");
+            rewind.setTextSize(11);
+            rewind.setOnClickListener(view -> seekBy(-10_000));
             speed = textButton("1.0×");
-            speed.setVisibility(View.GONE);
+            speed.setTextSize(11);
             speed.setOnClickListener(view -> cycleSpeed());
-            fullscreen = iconButton(R.drawable.ic_fullscreen, "全屏播放");
-            fullscreen.setVisibility(View.GONE);
+            forward = textButton("+10秒");
+            forward.setTextSize(11);
+            forward.setOnClickListener(view -> seekBy(10_000));
+            rotate = textButton("横屏");
+            rotate.setTextSize(11);
+            rotate.setOnClickListener(view -> toggleOrientation());
+            pip = textButton("小窗");
+            pip.setTextSize(11);
+            pip.setOnClickListener(view -> enterPictureInPicture());
+            fullscreen = iconButton(R.drawable.ic_fullscreen, "沉浸式播放");
             fullscreen.setOnClickListener(view -> toggleImmersive());
-            controls.addView(seek, new LinearLayout.LayoutParams(0, dp(48), 1f));
-            controls.addView(time, new LinearLayout.LayoutParams(dp(88), dp(48)));
-            controls.addView(speed, new LinearLayout.LayoutParams(dp(68), dp(48)));
-            controls.addView(fullscreen, new LinearLayout.LayoutParams(dp(52), dp(48)));
-            root.addView(controls, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+            MaterialButton[] actions = {rewind, speed, forward, rotate, pip, fullscreen};
+            for (MaterialButton action : actions) {
+                actionRow.addView(action, new LinearLayout.LayoutParams(0, dp(46), 1f));
+            }
+            videoControls.addView(actionRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            videoControls.setVisibility(View.GONE);
+            root.addView(videoControls, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(100)));
 
             GestureDetector swipe = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
                 @Override public boolean onDown(MotionEvent event) { return true; }
@@ -156,10 +199,12 @@ public final class InlineMediaPreviewDialog {
             });
             stage.setOnTouchListener((view, event) -> swipe.onTouchEvent(event));
             dialog.setContentView(root);
+            dialog.setCanceledOnTouchOutside(false);
             dialog.setOnDismissListener(ignored -> {
                 releaseVideo();
                 setImmersive(false);
                 restoreBrightness();
+                restoreOrientation();
             });
         }
 
@@ -199,10 +244,7 @@ public final class InlineMediaPreviewDialog {
         }
 
         private void renderImage(JsonObject item) {
-            seek.setVisibility(View.GONE);
-            time.setVisibility(View.GONE);
-            speed.setVisibility(View.GONE);
-            fullscreen.setVisibility(View.GONE);
+            videoControls.setVisibility(View.GONE);
             ZoomImageView image = new ZoomImageView(context, this::move);
             currentImage = image;
             image.setBackgroundColor(Color.BLACK);
@@ -224,12 +266,12 @@ public final class InlineMediaPreviewDialog {
         }
 
         private void renderVideo(JsonObject item) {
-            seek.setVisibility(View.VISIBLE);
-            time.setVisibility(View.VISIBLE);
-            speed.setVisibility(View.VISIBLE);
-            fullscreen.setVisibility(View.VISIBLE);
+            videoControls.setVisibility(View.VISIBLE);
             playbackSpeed = 1f;
             speed.setText("1.0×");
+            int viewerCount = Math.max(Jsons.intValue(item, "online_viewers", 0),
+                Math.max(Jsons.intValue(item, "viewer_count", 0), Jsons.intValue(item, "view_count", 0)));
+            viewers.setText(viewerCount > 0 ? viewerCount + " 人观看" : "本地预览");
             prepared = false;
 
             video = new AspectRatioVideoView(context);
@@ -331,7 +373,10 @@ public final class InlineMediaPreviewDialog {
                     return true;
                 }
                 @Override public boolean onDoubleTap(MotionEvent event) {
-                    togglePlayback();
+                    float width = Math.max(1f, video == null ? stage.getWidth() : video.getWidth());
+                    if (event.getX() < width / 3f) seekBy(-10_000);
+                    else if (event.getX() > width * 2f / 3f) seekBy(10_000);
+                    else togglePlayback();
                     return true;
                 }
                 @Override public void onLongPress(MotionEvent event) {
@@ -406,6 +451,48 @@ public final class InlineMediaPreviewDialog {
             }
         };
 
+        private void seekBy(int deltaMs) {
+            if (!prepared || video == null) return;
+            try {
+                int target = Math.max(0, Math.min(video.getDuration(), video.getCurrentPosition() + deltaMs));
+                video.seekTo(target);
+                seek.setProgress(target);
+                updateTime(target);
+                Toast.makeText(context, deltaMs < 0 ? "后退 10 秒" : "前进 10 秒", Toast.LENGTH_SHORT).show();
+            } catch (RuntimeException ignored) { }
+        }
+
+        private void toggleOrientation() {
+            Activity activity = hostActivity();
+            if (activity == null) return;
+            boolean landscape = context.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+            activity.setRequestedOrientation(landscape
+                ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            rotate.setText(landscape ? "横屏" : "竖屏");
+        }
+
+        private void enterPictureInPicture() {
+            Activity activity = hostActivity();
+            if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                Toast.makeText(context, "当前设备暂不支持小窗播放", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            try {
+                int width = videoPlayer == null ? 16 : Math.max(1, videoPlayer.getVideoWidth());
+                int height = videoPlayer == null ? 9 : Math.max(1, videoPlayer.getVideoHeight());
+                PictureInPictureParams params = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(width, height))
+                    .build();
+                if (!activity.enterPictureInPictureMode(params)) {
+                    Toast.makeText(context, "请先允许画中画权限", Toast.LENGTH_SHORT).show();
+                }
+            } catch (RuntimeException exception) {
+                Toast.makeText(context, "请在系统设置中允许画中画", Toast.LENGTH_SHORT).show();
+            }
+        }
+
         private void cycleSpeed() {
             float[] values = {0.5f, 1f, 1.5f, 2f};
             int current = 0;
@@ -471,12 +558,38 @@ public final class InlineMediaPreviewDialog {
                 distanceY > 0 ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER, 0);
         }
 
+        private Activity hostActivity() {
+            Context current = context;
+            while (current instanceof ContextWrapper) {
+                if (current instanceof Activity) return (Activity) current;
+                Context base = ((ContextWrapper) current).getBaseContext();
+                if (base == current) break;
+                current = base;
+            }
+            return current instanceof Activity ? (Activity) current : null;
+        }
+
+        private void restoreOrientation() {
+            Activity activity = hostActivity();
+            if (isActivityUnavailable(activity)) return;
+            try { activity.setRequestedOrientation(initialRequestedOrientation); }
+            catch (RuntimeException ignored) { }
+        }
+
         private void restoreBrightness() {
-            if (!(context instanceof android.app.Activity)) return;
-            Window window = ((android.app.Activity) context).getWindow();
-            WindowManager.LayoutParams params = window.getAttributes();
-            params.screenBrightness = initialBrightness;
-            window.setAttributes(params);
+            Activity activity = hostActivity();
+            if (isActivityUnavailable(activity)) return;
+            try {
+                Window window = activity.getWindow();
+                WindowManager.LayoutParams params = window.getAttributes();
+                params.screenBrightness = initialBrightness;
+                window.setAttributes(params);
+            } catch (RuntimeException ignored) { }
+        }
+
+        private boolean isActivityUnavailable(Activity activity) {
+            return activity == null || activity.isFinishing()
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed());
         }
 
         private void updateTime(long current) {

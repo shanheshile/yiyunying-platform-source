@@ -14,9 +14,9 @@ import java.util.Locale;
 
 /** Keeps bottom navigation labels visible across OEM font and display scaling. */
 public final class BottomDockStyler {
-    private static final int BASE_HEIGHT_DP = 68;
-    private static final int MAX_HEIGHT_DP = 78;
-    private static final int XIAOMI_EXTRA_HEIGHT_DP = 6;
+    private static final int BASE_HEIGHT_DP = 72;
+    private static final int XIAOMI_EXTRA_HEIGHT_DP = 8;
+    private static final int MAX_HEIGHT_DP = 90;
 
     private BottomDockStyler() { }
 
@@ -37,8 +37,8 @@ public final class BottomDockStyler {
         navigation.setItemIconSize(dp(context, 22));
         navigation.setLabelMaxLines(1);
         navigation.setLabelFontScalingEnabled(true);
-        navigation.setItemPaddingTop(dp(context, xiaomiTextMetrics ? 3 : 4));
-        navigation.setItemPaddingBottom(dp(context, xiaomiTextMetrics ? 7 : 4));
+        navigation.setItemPaddingTop(dp(context, xiaomiTextMetrics ? 5 : 4));
+        navigation.setItemPaddingBottom(dp(context, xiaomiTextMetrics ? 8 : 5));
         navigation.setActiveIndicatorLabelPadding(dp(context, 1));
         navigation.setPadding(navigation.getPaddingLeft(), 0, navigation.getPaddingRight(), 0);
         navigation.setClipToPadding(false);
@@ -58,11 +58,8 @@ public final class BottomDockStyler {
             label.setVisibility(View.VISIBLE);
             label.setMaxLines(1);
             label.setSingleLine(true);
-            label.setIncludeFontPadding(xiaomiTextMetrics);
-            if (xiaomiTextMetrics) {
-                label.setMinHeight(Math.max(label.getMinHeight(), labelMinHeightPx(label)));
-                unclampAncestors(label, navigation);
-            }
+            label.setIncludeFontPadding(true);
+            label.setTranslationY(0f);
             label.setAlpha(1f);
         }
         if (!(view instanceof ViewGroup)) return;
@@ -81,24 +78,8 @@ public final class BottomDockStyler {
     static int heightDp(float fontScale, boolean xiaomiTextMetrics) {
         float safeScale = Math.max(1f, fontScale);
         int scaled = BASE_HEIGHT_DP + Math.round((safeScale - 1f) * 16f);
-        int normal = Math.min(MAX_HEIGHT_DP, scaled);
-        return normal + (xiaomiTextMetrics ? XIAOMI_EXTRA_HEIGHT_DP : 0);
-    }
-
-    private static int labelMinHeightPx(TextView label) {
-        int fontHeight = label.getPaint().getFontMetricsInt(null);
-        return fontHeight + dp(label.getContext(), 4);
-    }
-
-    private static void unclampAncestors(View child, View stopAt) {
-        android.view.ViewParent parent = child.getParent();
-        while (parent instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) parent;
-            group.setClipChildren(false);
-            group.setClipToPadding(false);
-            if (group == stopAt) break;
-            parent = group.getParent();
-        }
+        if (xiaomiTextMetrics) scaled += XIAOMI_EXTRA_HEIGHT_DP;
+        return Math.min(MAX_HEIGHT_DP, scaled);
     }
 
     private static boolean isMenuLabel(BottomNavigationView navigation, TextView candidate) {

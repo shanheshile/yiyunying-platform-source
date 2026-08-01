@@ -38,8 +38,8 @@ final class UpdateBottomSheet {
             }
         };
         BottomSheetDialog dialog = new BottomSheetDialog(activity);
-        dialog.setCancelable(!forced);
-        dialog.setCanceledOnTouchOutside(!forced);
+        dialog.setCancelable(false);
+        dialog.setCanceledOnTouchOutside(false);
 
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);

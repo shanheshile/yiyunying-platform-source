@@ -393,15 +393,14 @@ public final class MessagesHubFragment extends BaseFragment implements UserTabPa
     }
 
     @Override public void onPrimaryAction() {
-        new YiyunyingDialogBuilder(requireContext())
-            .setTitle("新建会话")
-            .setItems(new String[]{"添加好友", "新建群聊", "新建聊天室"}, (dialog, which) -> {
-                if (which == 0) AddFriendActivity.open(requireContext());
-                else if (which == 1) SocialDirectoryActivity.openCreateGroup(requireContext());
-                else SocialDirectoryActivity.openCreateChatroom(requireContext());
-            })
-            .setNegativeButton("取消", null)
-            .show();
+        List<GlassActionDialog.Action> actions = new ArrayList<>();
+        actions.add(new GlassActionDialog.Action("添加好友", R.drawable.ic_users,
+            () -> AddFriendActivity.open(requireContext())));
+        actions.add(new GlassActionDialog.Action("新建群聊", R.drawable.ic_users,
+            () -> SocialDirectoryActivity.openCreateGroup(requireContext())));
+        actions.add(new GlassActionDialog.Action("新建聊天室", R.drawable.ic_chat,
+            () -> SocialDirectoryActivity.openCreateChatroom(requireContext())));
+        GlassActionDialog.show(requireContext(), "新建会话", actions);
     }
 
     @Override public void onDestroyView() {

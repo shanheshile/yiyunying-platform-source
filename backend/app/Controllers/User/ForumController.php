@@ -161,10 +161,16 @@ final class ForumController
             "SELECT c.id, c.parent_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
                     c.is_pinned, c.pin_order, c.like_count, c.favorite_count, c.created_at, c.updated_at,
                     u.uid, p.nickname, p.avatar,
+                    parent_comment.user_id AS reply_to_user_id,
+                    parent_user.uid AS reply_to_uid,
+                    COALESCE(NULLIF(parent_profile.nickname, ''), parent_user.account, '') AS reply_to_name,
                     CASE WHEN liked.id IS NULL THEN 0 ELSE 1 END AS liked,
                     CASE WHEN favorite.id IS NULL THEN 0 ELSE 1 END AS favorited
              FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
+             LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
+             LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
+             LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
              LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
                AND liked.target_type = 'comment' AND liked.target_id = c.id
              LEFT JOIN forum_content_favorites favorite ON favorite.app_id = c.app_id AND favorite.user_id = ?
@@ -419,10 +425,16 @@ final class ForumController
             "SELECT c.id, c.parent_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
                     c.is_pinned, c.pin_order, c.like_count, c.favorite_count,
                     c.created_at, c.updated_at, u.uid, p.nickname, p.avatar,
+                    parent_comment.user_id AS reply_to_user_id,
+                    parent_user.uid AS reply_to_uid,
+                    COALESCE(NULLIF(parent_profile.nickname, ''), parent_user.account, '') AS reply_to_name,
                     CASE WHEN liked.id IS NULL THEN 0 ELSE 1 END AS liked,
                     CASE WHEN favorite.id IS NULL THEN 0 ELSE 1 END AS favorited
              FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
+             LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
+             LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
+             LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
              LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
                AND liked.target_type = 'comment' AND liked.target_id = c.id
              LEFT JOIN forum_content_favorites favorite ON favorite.app_id = c.app_id AND favorite.user_id = ?

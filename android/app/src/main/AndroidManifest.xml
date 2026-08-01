@@ -114,6 +114,8 @@
 
         <activity
             android:name=".ui.chat.ChatActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.location.LocationPickerActivity"
@@ -134,9 +136,14 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.chat.GroupAlbumDetailActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.social.SocialDirectoryActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.social.RoomCreateActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.social.FriendPickerActivity"
@@ -176,6 +183,8 @@
             android:screenOrientation="portrait" />
         <activity
             android:name=".ui.social.FavoriteCenterActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.wallet.WalletLedgerActivity"
@@ -211,18 +220,24 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.forum.ForumPostActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.forum.ForumComposerActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.moment.MomentTimelineActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.profile.UserProfileActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.poll.PollActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.poll.PollComposerActivity"
@@ -230,6 +245,8 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.resource.ResourceHallActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.resource.ResourceSubmitActivity"
@@ -251,6 +268,8 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.document.SharedDocumentActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.document.DocumentEditorActivity"

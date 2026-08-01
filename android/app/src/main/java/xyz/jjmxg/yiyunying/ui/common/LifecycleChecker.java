@@ -42,9 +42,12 @@ public final class LifecycleChecker {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("edition_code", AppEdition.code());
         query.put("version_code", String.valueOf(BuildConfig.VERSION_CODE));
+        query.put("version_name", BuildConfig.VERSION_NAME);
         if (manual) {
+            String nonce = String.valueOf(System.currentTimeMillis());
             query.put("request_mode", "manual");
-            query.put("checked_at", String.valueOf(System.currentTimeMillis()));
+            query.put("checked_at", nonce);
+            query.put("cache_bust", nonce);
         }
         if ("user".equals(AppEdition.code())) {
             query.put("app_key", session.appKey());

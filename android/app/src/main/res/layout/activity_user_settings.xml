@@ -911,8 +911,19 @@
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
                     android:gravity="start|center_vertical"
-                    android:text="软件更新与维护状态"
+                    android:text="立即检查软件更新与维护"
                     app:icon="@drawable/ic_refresh" />
+
+                <TextView
+                    android:id="@+id/updateStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="12dp"
+                    android:text="当前版本与更新说明"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
             </LinearLayout>
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

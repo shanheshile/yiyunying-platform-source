@@ -21,6 +21,7 @@ import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.databinding.FragmentFeatureHubBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemFeatureLinkBinding;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
+import xyz.jjmxg.yiyunying.ui.common.GlassActionDialog;
 import xyz.jjmxg.yiyunying.ui.forum.ForumListActivity;
 import xyz.jjmxg.yiyunying.ui.moment.MomentTimelineActivity;
 import xyz.jjmxg.yiyunying.ui.poll.PollActivity;
@@ -108,17 +109,30 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
     }
 
     private void showQuickActions(String[] labels, String[] modules) {
-        new YiyunyingDialogBuilder(requireContext())
-            .setTitle("选择操作")
-            .setItems(labels, (dialog, which) -> {
-                if ("moments_compose".equals(modules[which])) MomentTimelineActivity.open(requireContext(), true);
-                else if ("forum_posts".equals(modules[which])) ForumListActivity.open(requireContext());
-                else if ("polls".equals(modules[which])) PollActivity.open(requireContext());
-                else if ("resources".equals(modules[which])) ResourceHallActivity.open(requireContext());
-                else host().openModule(modules[which]);
-            })
-            .setNegativeButton("取消", null)
-            .show();
+        List<GlassActionDialog.Action> actions = new ArrayList<>();
+        for (int i = 0; i < labels.length && i < modules.length; i++) {
+            String label = labels[i];
+            String module = modules[i];
+            actions.add(new GlassActionDialog.Action(label, actionIcon(module), () -> openQuickAction(module)));
+        }
+        GlassActionDialog.show(requireContext(), "选择操作", actions);
+    }
+
+    private void openQuickAction(String module) {
+        if ("moments_compose".equals(module)) MomentTimelineActivity.open(requireContext(), true);
+        else if ("forum_posts".equals(module)) ForumListActivity.open(requireContext());
+        else if ("polls".equals(module)) PollActivity.open(requireContext());
+        else if ("resources".equals(module)) ResourceHallActivity.open(requireContext());
+        else host().openModule(module);
+    }
+
+    @DrawableRes private int actionIcon(String module) {
+        if ("moments_compose".equals(module)) return R.drawable.ic_album;
+        if ("forum_posts".equals(module)) return R.drawable.ic_forum;
+        if ("bounties".equals(module) || "red_packets".equals(module)) return R.drawable.ic_wallet;
+        if ("resources".equals(module) || "shop_goods".equals(module)) return R.drawable.ic_apps;
+        if ("polls".equals(module)) return R.drawable.ic_stats;
+        return R.drawable.ic_content;
     }
 
     private List<FeatureItem> items() {
@@ -145,8 +159,6 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
             result.add(item("意见反馈", "提交问题、建议和图片", "feedbacks", R.drawable.ic_file));
             result.add(item("邀请记录", "查看邀请码和邀请奖励", "invites", R.drawable.ic_users));
             result.add(item("文件与存储", "查看、上传、下载与管理软件内文件", "upload", R.drawable.ic_file));
-            result.add(item("设置", "集中管理外观、消息隐私、账号安全、权限、黑名单、存储、更新与维护",
-                "user_settings", R.drawable.ic_settings));
         }
         return result;
     }

@@ -149,8 +149,16 @@ final class GroupController
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
         $defaultJoinMode = $isChatroom ? ChatRoomService::JOIN_OPEN : ChatRoomService::JOIN_APPROVAL;
         $joinMode = ChatRoomService::joinMode($request->input('join_mode', $defaultJoinMode));
+        $initialMemberIds = self::initialFriendIds($request, $user);
+        $maxMembers = max(2, min(5000, (int) $request->input('max_members', $defaultMemberLimit)));
+        if (count($initialMemberIds) + 1 > $maxMembers) {
+            throw new HttpException('首批成员数量超过群人数上限', 0, 422, [
+                'selected' => count($initialMemberIds),
+                'max_members' => $maxMembers,
+            ]);
+        }
         $roomId = Database::transaction(static function () use (
-            $request, $user, $name, $joinMode, $ownedLimit, $defaultMemberLimit, $roomKind, $entity
+            $request, $user, $name, $joinMode, $ownedLimit, $maxMembers, $roomKind, $entity, $initialMemberIds
         ): int {
             Database::one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $user['id']]);
             $owned = (int) (Database::one(
@@ -180,12 +188,15 @@ final class GroupController
             ChatRoomService::savePolicy($room, [
                 'owner_user_id' => (int) $user['id'],
                 'join_mode' => $joinMode,
-                'max_members' => (int) $request->input('max_members', $defaultMemberLimit),
+                'max_members' => $maxMembers,
                 'allow_member_invite' => Validator::boolean($request->input('allow_member_invite', true), 'allow_member_invite'),
                 'mute_all' => false,
                 'announcement' => (string) $request->input('announcement', ''),
             ]);
             ChatRoomService::addMember($room, (int) $user['id'], 'owner');
+            foreach ($initialMemberIds as $memberId) {
+                ChatRoomService::addMember($room, $memberId, 'member');
+            }
             return $id;
         });
         $room = ChatRoomService::adminRoom((int) $user['admin_id'], (int) $user['app_id'], $roomId);
@@ -194,8 +205,50 @@ final class GroupController
         ]);
         return Response::success([
             'room' => ChatRoomService::detail($room, (int) $user['id']),
+            'initial_member_ids' => $initialMemberIds,
         ], $entity . '创建成功', 201);
     }
+
+    private static function initialFriendIds(Request $request, array $user): array
+    {
+        $raw = $request->input('initial_member_ids', []);
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($raw)) {
+            throw new HttpException('initial_member_ids 必须是用户编号数组', 0, 422);
+        }
+        $ids = [];
+        foreach ($raw as $value) {
+            if (!is_scalar($value)) continue;
+            $id = (int) $value;
+            if ($id > 0 && $id !== (int) $user['id']) $ids[$id] = $id;
+        }
+        $ids = array_values($ids);
+        if (count($ids) > 99) {
+            throw new HttpException('一次最多选择 99 位好友', 0, 422);
+        }
+        if ($ids === []) return [];
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $params = [(int) $user['app_id'], (int) $user['id']];
+        array_push($params, ...$ids);
+        $rows = Database::all(
+            "SELECT friend_user_id FROM friends
+             WHERE app_id = ? AND user_id = ? AND status = 1
+               AND friend_user_id IN ({$placeholders})",
+            $params
+        );
+        $allowed = [];
+        foreach ($rows as $row) $allowed[(int) $row['friend_user_id']] = true;
+        $invalid = array_values(array_filter($ids, static fn (int $id): bool => !isset($allowed[$id])));
+        if ($invalid !== []) {
+            throw new HttpException('只能邀请当前账号的好友', 0, 422, ['invalid_user_ids' => $invalid]);
+        }
+        return $ids;
+    }
+
     public static function show(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);

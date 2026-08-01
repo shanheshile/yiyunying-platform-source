@@ -26,6 +26,8 @@ public final class InlineAudioPlayerView extends LinearLayout {
     private final SeekBar audioProgress;
     private final VoiceWaveformView voiceProgress;
     private final TextView time;
+    private MaterialButton rewindButton;
+    private MaterialButton forwardButton;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final String source;
     private MediaPlayer player;
@@ -63,13 +65,27 @@ public final class InlineAudioPlayerView extends LinearLayout {
         speedButton.setAllCaps(false);
         renderSpeedButton();
         speedButton.setOnClickListener(view -> cycleSpeed());
-        addView(speedButton, new LayoutParams(dp(48), dp(34)));
+        addView(speedButton, new LayoutParams(dp(44), dp(34)));
+
+        if (!voiceMode) {
+            rewindButton = seekButton("-10");
+            rewindButton.setContentDescription("后退 10 秒");
+            rewindButton.setOnClickListener(view -> seekBy(-10_000));
+            addView(rewindButton, new LayoutParams(dp(36), dp(34)));
+        }
 
         play = new MaterialButton(context, null, com.google.android.material.R.attr.materialIconButtonStyle);
         play.setIconResource(R.drawable.ic_play);
         play.setIconTint(ColorStateList.valueOf(context.getColor(R.color.on_surface)));
         play.setContentDescription(voiceMode ? "播放语音" : "播放音频");
         addView(play, new LayoutParams(dp(42), dp(42)));
+
+        if (!voiceMode) {
+            forwardButton = seekButton("+10");
+            forwardButton.setContentDescription("前进 10 秒");
+            forwardButton.setOnClickListener(view -> seekBy(10_000));
+            addView(forwardButton, new LayoutParams(dp(36), dp(34)));
+        }
 
         if (voiceMode) {
             voiceProgress = new VoiceWaveformView(context);
@@ -100,7 +116,7 @@ public final class InlineAudioPlayerView extends LinearLayout {
         time.setGravity(Gravity.CENTER);
         time.setSingleLine(true);
         time.setText(format(0) + " / " + format(knownDurationMs));
-        addView(time, new LayoutParams(dp(86), dp(42)));
+        addView(time, new LayoutParams(dp(78), dp(42)));
 
         play.setOnClickListener(view -> toggle());
     }
@@ -162,6 +178,34 @@ public final class InlineAudioPlayerView extends LinearLayout {
             try { player.seekTo(value); } catch (RuntimeException ignored) { }
         }
         updateTime(value);
+    }
+
+    private MaterialButton seekButton(String label) {
+        MaterialButton button = new MaterialButton(getContext(), null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        button.setText(label);
+        button.setTextSize(9);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setTextColor(getContext().getColor(R.color.on_surface));
+        button.setStrokeColor(ColorStateList.valueOf(getContext().getColor(R.color.outline)));
+        return button;
+    }
+
+    private void seekBy(int deltaMs) {
+        if (player == null) return;
+        try {
+            int target = Math.max(0, Math.min(player.getDuration(), player.getCurrentPosition() + deltaMs));
+            player.seekTo(target);
+            setProgressValue(target);
+            updateTime(target);
+        } catch (RuntimeException ignored) { }
     }
 
     private void cycleSpeed() {

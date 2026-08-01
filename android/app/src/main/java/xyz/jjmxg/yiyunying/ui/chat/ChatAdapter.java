@@ -197,7 +197,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.sender.setText(sender);
         holder.binding.senderHeader.setGravity(system ? Gravity.CENTER_HORIZONTAL : (mine ? Gravity.END : Gravity.START));
         bindSenderBadge(holder, item);
-        String content = Jsons.string(item, "content");
+        String content = messageContent(item);
         boolean forwarded = Jsons.longValue(item, "forward_bundle_id") > 0 || !Jsons.object(item, "forward_bundle").entrySet().isEmpty();
         boolean hasReply = Jsons.longValue(item, "reply_to_message_id") > 0
             && !"recall".equals(Jsons.string(item, "content_type"));
@@ -254,9 +254,30 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.root.setOnClickListener(view -> {
             if (selectionMode && selectable) listener.onSelectionChanged(item, !selectedIds.contains(messageId));
         });
-        holder.binding.bubble.setOnLongClickListener(selectable ? view -> {
-            listener.onLongPress(item); return true;
-        } : null);
+        View.OnLongClickListener longPress = selectable ? view -> {
+            listener.onLongPress(item);
+            return true;
+        } : null;
+        holder.binding.bubble.setOnLongClickListener(longPress);
+        holder.binding.messageBody.setOnLongClickListener(longPress);
+        holder.binding.root.setOnLongClickListener(longPress);
+        holder.binding.bubble.setLongClickable(selectable);
+        holder.binding.messageBody.setLongClickable(selectable);
+        holder.binding.root.setLongClickable(selectable);
+    }
+
+    private static String messageContent(JsonObject item) {
+        String[] fields = {"content", "message", "text", "body", "display_content"};
+        for (String field : fields) {
+            String value = Jsons.string(item, field);
+            if (!value.isEmpty()) return value;
+        }
+        JsonObject payload = Jsons.object(item, "payload");
+        for (String field : fields) {
+            String value = Jsons.string(payload, field);
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     private void bindReply(Holder holder, JsonObject item) {

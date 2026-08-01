@@ -327,13 +327,16 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private void renderComments(JsonArray comments) {
         binding.commentsContainer.removeAllViews();
         binding.emptyComments.setVisibility(comments.isEmpty() ? View.VISIBLE : View.GONE);
+        Map<Long, View> commentAnchors = new LinkedHashMap<>();
         for (JsonElement element : comments) {
             if (!element.isJsonObject()) continue;
             JsonObject comment = element.getAsJsonObject();
+            long commentId = Jsons.longValue(comment, "id");
+            long parentCommentId = Jsons.longValue(comment, "parent_id");
             MaterialCardView card = new MaterialCardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cardParams.bottomMargin = dp(8);
-            if (Jsons.longValue(comment, "parent_id") > 0) cardParams.leftMargin = dp(30);
+            if (parentCommentId > 0) cardParams.leftMargin = dp(30);
             card.setLayoutParams(cardParams);
             card.setRadius(dp(6));
             card.setCardElevation(0);
@@ -358,7 +361,32 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 nickname.isEmpty() ? RuntimeLanguage.translate(this, "用户 ").toString()
                     + Jsons.longValue(comment, "user_id") : nickname);
             name.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall);
-            content.addView(name);
+            LinearLayout authorRow = new LinearLayout(this);
+            authorRow.setOrientation(LinearLayout.HORIZONTAL);
+            authorRow.setGravity(Gravity.CENTER_VERTICAL);
+            authorRow.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (parentCommentId > 0) {
+                TextView replyTarget = new TextView(this);
+                String replyToName = Jsons.string(comment, "reply_to_name");
+                if (replyToName.isEmpty()) {
+                    long replyToUserId = Jsons.longValue(comment, "reply_to_user_id");
+                    replyToName = replyToUserId > 0 ? "用户 " + replyToUserId : "上一条评论";
+                }
+                replyTarget.setText(" 回复 " + replyToName);
+                replyTarget.setTextColor(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(this));
+                replyTarget.setTextSize(13);
+                replyTarget.setPadding(dp(4), dp(4), dp(6), dp(4));
+                replyTarget.setOnClickListener(view -> {
+                    View anchor = commentAnchors.get(parentCommentId);
+                    if (anchor != null) {
+                        focusCommentCard(anchor, "已定位到被回复的评论");
+                    } else {
+                        Snackbar.make(binding.getRoot(), "被回复的评论不在当前列表", Snackbar.LENGTH_SHORT).show();
+                    }
+                });
+                authorRow.addView(replyTarget, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            content.addView(authorRow);
             TextView text = new TextView(this);
             RuntimeLanguage.setDynamicText(text, Jsons.string(comment, "content"));
             text.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge);
@@ -400,17 +428,22 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 card.setOnLongClickListener(view -> { detail.onClick(view); return true; });
             }
             binding.commentsContainer.addView(card);
-            if (focusCommentId > 0L && focusCommentId == Jsons.longValue(comment, "id")) {
+            commentAnchors.put(commentId, card);
+            if (focusCommentId > 0L && focusCommentId == commentId) {
                 focusCommentId = 0L;
-                binding.scroll.post(() -> {
-                    if (!isUiActive()) return;
-                    binding.scroll.smoothScrollTo(0, binding.commentsContainer.getTop() + card.getTop());
-                    card.setAlpha(0.45f);
-                    card.animate().alpha(1f).setDuration(520L).start();
-                    Snackbar.make(binding.getRoot(), "已定位到 @ 你的评论", Snackbar.LENGTH_SHORT).show();
-                });
+                focusCommentCard(card, "已定位到 @ 你的评论");
             }
         }
+    }
+
+    private void focusCommentCard(View card, String message) {
+        binding.scroll.post(() -> {
+            if (!isUiActive()) return;
+            binding.scroll.smoothScrollTo(0, binding.commentsContainer.getTop() + card.getTop());
+            card.setAlpha(0.45f);
+            card.animate().alpha(1f).setDuration(520L).start();
+            Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_SHORT).show();
+        });
     }
 
     private MaterialButton commentButton(String label, View.OnClickListener listener) {
