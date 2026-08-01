@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string] $ReleaseRoot,
     [switch] $AllowDirty
@@ -48,17 +48,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $releaseDirectory 'release-manifest.
     throw "请先生成 Android 发布产物：$releaseDirectory"
 }
 
-Push-Location $projectRoot
-try {
-    if (-not $AllowDirty) {
-        $dirty = @(& git status --porcelain --untracked-files=no)
-        Assert-GitSucceeded '读取工作区状态'
-        if ($dirty.Count -gt 0) {
-            throw '完整项目包必须从干净提交生成；请先提交本次改动。'
-        }
+if (-not $AllowDirty) {
+    $dirty = @(& git '-C' $projectRoot 'status' '--porcelain' '--untracked-files=no')
+    Assert-GitSucceeded '读取工作区状态'
+    if ($dirty.Count -gt 0) {
+        throw '完整项目包必须从干净提交生成；请先提交本次改动。'
     }
+}
 
-    $commit = (& git rev-parse HEAD).Trim()
+$commit = (& git '-C' $projectRoot 'rev-parse' 'HEAD').Trim()
     Assert-GitSucceeded '读取 Git 提交'
     $sourceName = "yiyunying-source-v$version.zip"
     $historyName = "yiyunying-git-history-v$version.bundle"
@@ -68,9 +66,9 @@ try {
     $deliveryPath = Join-Path $releaseDirectory $deliveryName
 
     Remove-Item -LiteralPath $sourcePath, $historyPath, $deliveryPath -Force -ErrorAction SilentlyContinue
-    & git archive --format=zip --output=$sourcePath HEAD
+    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$sourcePath" 'HEAD'
     Assert-GitSucceeded '生成源码快照'
-    & git bundle create $historyPath --all
+    & git '-C' $projectRoot 'bundle' 'create' $historyPath '--all'
     Assert-GitSucceeded '生成 Git 历史包'
 
     $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ("yiyunying-delivery-" + [Guid]::NewGuid().ToString('N'))
@@ -132,11 +130,7 @@ try {
     }
     Write-Utf8Json -Path (Join-Path $releaseDirectory 'project-assets-manifest.json') -Value $manifest
 
-    Write-Host "完整项目产物已生成：$releaseDirectory"
-    Write-Host "版本：$version"
-    Write-Host "Git 提交：$commit"
-    Write-Host '已生成源码快照、完整 Git 历史、项目交接总包和 SHA-256 校验清单。'
-}
-finally {
-    Pop-Location
-}
+Write-Host "完整项目产物已生成：$releaseDirectory"
+Write-Host "版本：$version"
+Write-Host "Git 提交：$commit"
+Write-Host '已生成源码快照、完整 Git 历史、项目交接总包和 SHA-256 校验清单。'
