@@ -223,6 +223,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private RequestHandle conversationResolveRequest;
     private boolean messageRequestInFlight;
     private boolean messageRefreshQueued;
+    private boolean durableSnapshotRequested;
     private long messageRequestGeneration;
     private long conversationResolveGeneration;
     private int incrementalPollCount;
@@ -573,6 +574,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             @Override public void onEditHistory(JsonObject message) { showEditHistory(message); }
             @Override public void onDeleteSystem(JsonObject message) { deleteSystemMessage(message); }
             @Override public void onReplyClick(long messageId) { jumpToMessage(messageId); }
+            @Override public void onCallClick(JsonObject message) { repeatCall(message); }
             @Override public void onAvatarClick(JsonObject message) {
                 long userId = Jsons.longValue(message, "sender_id");
                 if (userId == 0) userId = Jsons.longValue(message, "user_id");
@@ -974,6 +976,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         incrementalPollCount = 0;
         pendingNewMessageCount = 0;
         renderNewMessageIndicator();
+        durableSnapshotRequested = false;
         firstLoad = true;
         loadMessages();
     }
@@ -991,6 +994,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         lastId = 0;
         incrementalPollCount = 0;
         pendingNewMessageCount = 0;
+        durableSnapshotRequested = false;
         firstLoad = true;
         binding.emptyText.setVisibility(View.GONE);
         return true;
@@ -1387,6 +1391,41 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (peerName == null || peerName.trim().isEmpty()) peerName = "好友";
         try {
             VoiceCallActivity.startOutgoing(this, peerId, peerName, "", video);
+        } catch (RuntimeException error) {
+            Snackbar.make(binding.getRoot(), "无法打开通话页面，请稍后重试", Snackbar.LENGTH_LONG).show();
+        }
+    }
+
+    private void repeatCall(JsonObject message) {
+        if (AppAccess.from(this).session().role() != Role.USER) {
+            Snackbar.make(binding.getRoot(), "当前身份不能发起用户网络通话", Snackbar.LENGTH_LONG).show();
+            return;
+        }
+        long selfId = AppAccess.from(this).session().actorId();
+        long callerId = Jsons.longValue(message, "call_caller_user_id");
+        long calleeId = Jsons.longValue(message, "call_callee_user_id");
+        long peerId = selfId == callerId ? calleeId : (selfId == calleeId ? callerId : 0L);
+        if (peerId <= 0L && MODE_CONVERSATION.equals(mode())) peerId = resolvedConversationPeerId();
+        if (peerId <= 0L) {
+            Snackbar.make(binding.getRoot(), "仅通话参与者可以再次呼叫", Snackbar.LENGTH_LONG).show();
+            return;
+        }
+        boolean video = "video".equalsIgnoreCase(Jsons.string(message, "call_type"));
+        String peerName = selfId == callerId
+            ? Jsons.string(message, "call_callee_name") : Jsons.string(message, "call_caller_name");
+        String peerAvatar = selfId == callerId
+            ? Jsons.string(message, "call_callee_avatar") : Jsons.string(message, "call_caller_avatar");
+        if (peerName.trim().isEmpty() && MODE_CONVERSATION.equals(mode())) peerName = normalTitle;
+        if (peerName == null || peerName.trim().isEmpty()) peerName = "群成员";
+        peerName = peerName.trim();
+        try {
+            if (MODE_ROOM.equals(mode())) {
+                long roomId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
+                VoiceCallActivity.startOutgoing(
+                    this, peerId, peerName, peerAvatar, video, "room", roomId, normalTitle);
+            } else {
+                VoiceCallActivity.startOutgoing(this, peerId, peerName, peerAvatar, video);
+            }
         } catch (RuntimeException error) {
             Snackbar.make(binding.getRoot(), "无法打开通话页面，请稍后重试", Snackbar.LENGTH_LONG).show();
         }
@@ -3515,6 +3554,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 return;
             }
             adoptCreatedConversation(result.dataObject());
+            mergeCreatedMessage(result.dataObject());
             refreshMessagesNow();
         });
     }
@@ -4127,7 +4167,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         final boolean fullReconciliation = !contextSearch && searchQuery.isEmpty() && lastId > 0
             && !query.containsKey("since_id") && !MODE_SERVICE_ADMIN.equals(mode());
         final long requestGeneration = ++messageRequestGeneration;
-        if (firstLoad && !contextSearch) loadCachedMessages(path, query, requestGeneration);
+        if (firstLoad && !contextSearch) {
+            loadDurableMessageSnapshot(requestGeneration);
+            loadCachedMessages(path, query, requestGeneration);
+        }
         messageRequestInFlight = true;
         messageRefreshQueued = false;
         if (firstLoad) binding.progress.setVisibility(View.VISIBLE);
@@ -4150,7 +4193,9 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                     ? null : captureHistoryViewportAnchor();
                 MessageMergeResult merged = merge(result.items());
                 if (merged.changed || adapter.getItemCount() == 0) {
-                    adapter.submit(orderedMessageSnapshot());
+                    List<JsonObject> snapshot = orderedMessageSnapshot();
+                    adapter.submit(snapshot);
+                    saveDurableMessageSnapshot(snapshot);
                     scheduleViewportAnchorRestore(readingAnchor, 0L, 120L);
                 }
                 binding.emptyText.setVisibility(messages.isEmpty() ? View.VISIBLE : View.GONE);
@@ -4180,6 +4225,57 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             }
             scheduleNextMessageSync();
         });
+    }
+
+    private void loadDurableMessageSnapshot(long generation) {
+        if (durableSnapshotRequested) return;
+        durableSnapshotRequested = true;
+        ChatMessageSnapshotStore.loadAsync(
+            this,
+            AppAccess.from(this).session().cacheIdentity(),
+            messageSnapshotKeys(),
+            cached -> handler.post(() -> {
+                if (!running || binding == null || !firstLoad || generation != messageRequestGeneration
+                    || cached == null || cached.isEmpty()) return;
+                JsonArray values = new JsonArray();
+                for (JsonObject item : cached) values.add(item);
+                MessageMergeResult merged = merge(values);
+                if (merged.changed || adapter.getItemCount() == 0) {
+                    adapter.submit(orderedMessageSnapshot());
+                }
+                binding.progress.setVisibility(View.INVISIBLE);
+                binding.emptyText.setVisibility(messages.isEmpty() ? View.VISIBLE : View.GONE);
+                if (!messages.isEmpty()) scrollToLatestMessage(false);
+            })
+        );
+    }
+
+    private void saveDurableMessageSnapshot(List<JsonObject> snapshot) {
+        if (snapshot == null || snapshot.isEmpty() || !searchQuery.isEmpty()) return;
+        ChatMessageSnapshotStore.saveAsync(
+            this,
+            AppAccess.from(this).session().cacheIdentity(),
+            messageSnapshotKeys(),
+            snapshot
+        );
+    }
+
+    private List<String> messageSnapshotKeys() {
+        List<String> keys = new ArrayList<>();
+        long appId = AppAccess.from(this).session().selectedAppId();
+        long targetId = getIntent().getLongExtra(EXTRA_TARGET_ID, 0L);
+        if (MODE_CONVERSATION.equals(mode())) {
+            if (targetId > 0L) keys.add(appId + "|private|conversation|" + targetId);
+            long peerId = resolvedConversationPeerId();
+            if (peerId > 0L) keys.add(appId + "|private|peer|" + peerId);
+        } else if (MODE_ROOM.equals(mode())) {
+            if (targetId > 0L) keys.add(appId + "|room|" + targetId);
+        } else if (MODE_SERVICE_ADMIN.equals(mode())) {
+            if (targetId > 0L) keys.add(appId + "|service-admin|" + targetId);
+        } else {
+            keys.add(appId + "|service-user|" + AppAccess.from(this).session().actorId());
+        }
+        return keys;
     }
 
     private void loadCachedMessages(String path, Map<String, String> query, long generation) {
@@ -4706,6 +4802,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 return;
             }
             adoptCreatedConversation(result.dataObject());
+            mergeCreatedMessage(result.dataObject());
             String activeDraftKey = draftKey();
             String currentInput = binding.messageInput.getText() == null
                 ? ""
@@ -5295,8 +5392,30 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 return;
             }
             adoptCreatedConversation(result.dataObject());
+            mergeCreatedMessage(result.dataObject());
             refreshMessagesNow();
         });
+    }
+
+    private void mergeCreatedMessage(JsonObject data) {
+        if (binding == null || data == null) return;
+        JsonObject created = Jsons.object(data, "message");
+        if (created.size() == 0 || Jsons.longValue(created, "id") <= 0L) return;
+        JsonArray values = new JsonArray();
+        values.add(created);
+        MessageMergeResult merged = merge(values);
+        if (merged.changed || adapter.getItemCount() == 0) {
+            List<JsonObject> snapshot = orderedMessageSnapshot();
+            adapter.submit(snapshot);
+            saveDurableMessageSnapshot(snapshot);
+        }
+        firstLoad = false;
+        pendingNewMessageCount = 0;
+        userHoldingHistory = false;
+        binding.progress.setVisibility(View.INVISIBLE);
+        binding.emptyText.setVisibility(View.GONE);
+        renderNewMessageIndicator();
+        scrollToLatestMessage(false);
     }
 
     private void previewSticker(JsonObject sticker) {
@@ -5729,6 +5848,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         pendingNewMessageCount = 0;
         viewportRestoreGeneration++;
         userHoldingHistory = false;
+        durableSnapshotRequested = false;
         firstLoad = true;
         resolvedPeerId = Math.max(0L, getIntent().getLongExtra(EXTRA_PEER_ID, 0L));
         searchQuery = "";
@@ -5852,19 +5972,29 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     }
 
     private void chooseForwardTarget(List<Long> ids) {
-        String[] labels = {"好友私聊", "群聊或聊天室", "发布为论坛新帖", "评论到已有帖子", "在线客服"};
-        String[] types = {"private", "group", "forum_post", "forum", "service"};
+        String[] labels = {"好友私聊", "群聊", "聊天室", "发布为论坛新帖", "评论到已有帖子", "在线客服"};
+        String[] types = {"private", "group", "chat_room", "forum_post", "forum", "service"};
         new YiyunyingDialogBuilder(this).setTitle("转发到")
             .setItems(labels, (dialog, which) -> {
-                if ("service".equals(types[which])) chooseForwardPrivacy(ids, "service", java.util.Collections.singletonList(0L));
+                if ("service".equals(types[which])) confirmForwardToService(ids);
                 else loadForwardTargets(ids, types[which]);
             }).setNegativeButton("取消", null).show();
+    }
+
+    private void confirmForwardToService(List<Long> ids) {
+        new YiyunyingDialogBuilder(this)
+            .setTitle("发送给在线客服")
+            .setMessage("确认把选中的 " + ids.size() + " 条聊天记录发送给在线客服吗？客服转发依法保留真实会话来源。")
+            .setPositiveButton("确认发送", (dialog, which) ->
+                chooseForwardPrivacy(ids, "service", java.util.Collections.singletonList(0L)))
+            .setNegativeButton("取消", null)
+            .show();
     }
 
     private void loadForwardTargets(List<Long> ids, String targetType) {
         if (forwardRequest != null) return;
         String path = "private".equals(targetType) ? "/api/user/friends"
-            : ("group".equals(targetType) ? "/api/user/chat-rooms"
+            : (("group".equals(targetType) || "chat_room".equals(targetType)) ? "/api/user/chat-rooms"
             : ("forum_post".equals(targetType) ? "/api/user/forum-plates" : "/api/user/forum-posts"));
         LinkedHashMap<String, String> query = new LinkedHashMap<>();
         query.put("limit", "500");
@@ -5879,7 +6009,12 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             }
             List<JsonObject> targets = new ArrayList<>();
             for (JsonObject item : result.objectItems()) {
-                if (!"group".equals(targetType) || boolValue(item, "joined")) targets.add(item);
+                if ("group".equals(targetType) || "chat_room".equals(targetType)) {
+                    String actualType = "chat_room".equals(Jsons.string(item, "room_kind")) ? "chat_room" : "group";
+                    if (boolValue(item, "joined") && targetType.equals(actualType)) targets.add(item);
+                } else {
+                    targets.add(item);
+                }
             }
             if (targets.isEmpty()) {
                 Snackbar.make(binding.getRoot(), "没有可用的转发目标", Snackbar.LENGTH_LONG).show();
@@ -5931,7 +6066,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
         TextInputLayout searchLayout = new TextInputLayout(this);
         searchLayout.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
-        searchLayout.setHint("forum_post".equals(targetType) ? "搜索论坛板块" : "搜索好友、群聊或帖子");
+        String searchHint = "forum_post".equals(targetType) ? "搜索论坛板块"
+            : ("group".equals(targetType) ? "搜索群聊"
+            : ("chat_room".equals(targetType) ? "搜索聊天室" : "搜索好友或帖子"));
+        searchLayout.setHint(searchHint);
         searchLayout.setStartIconDrawable(R.drawable.ic_search);
         TextInputEditText search = new TextInputEditText(this);
         search.setSingleLine(true);
@@ -6068,7 +6206,9 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private String forwardTargetLabel(JsonObject target, String targetType) {
         if ("private".equals(targetType)) return first(target, "nickname", "account") + " · " + Jsons.string(target, "account");
-        String prefix = "forum_post".equals(targetType) ? "板块 " : "编号 ";
+        String prefix = "forum_post".equals(targetType) ? "板块 "
+            : ("group".equals(targetType) ? "群号 "
+            : ("chat_room".equals(targetType) ? "聊天室号 " : "编号 "));
         return first(target, "name", "title") + " · " + prefix + Jsons.longValue(target, "id");
     }
 

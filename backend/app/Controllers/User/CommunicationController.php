@@ -608,11 +608,25 @@ final class CommunicationController
                     COALESCE(NULLIF(p.nickname, ''), u.account,
                       CASE m.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台'
                            WHEN 'system' THEN '系统' ELSE '用户' END) AS sender_name,
-                    COALESCE(p.avatar, '') AS sender_avatar
+                    COALESCE(p.avatar, '') AS sender_avatar,
+                    vc.id AS call_id, vc.call_type, vc.status AS call_status,
+                    vc.duration_seconds AS call_duration_seconds,
+                    vc.caller_user_id AS call_caller_user_id,
+                    vc.callee_user_id AS call_callee_user_id,
+                    vc.context_type AS call_context_type, vc.context_id AS call_context_id,
+                    COALESCE(NULLIF(call_caller_profile.nickname, ''), call_caller.account, '') AS call_caller_name,
+                    COALESCE(NULLIF(call_callee_profile.nickname, ''), call_callee.account, '') AS call_callee_name,
+                    COALESCE(call_caller_profile.avatar, '') AS call_caller_avatar,
+                    COALESCE(call_callee_profile.avatar, '') AS call_callee_avatar
              FROM messages m LEFT JOIN message_user_states s ON s.message_id = m.id AND s.user_id = ?
              LEFT JOIN message_recalls r ON r.message_id = m.id
              LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE NULL END
              LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN voice_calls vc ON vc.private_message_id = m.id
+             LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
+             LEFT JOIN user_profiles call_caller_profile ON call_caller_profile.user_id = call_caller.id
+             LEFT JOIN users call_callee ON call_callee.id = vc.callee_user_id
+             LEFT JOIN user_profiles call_callee_profile ON call_callee_profile.user_id = call_callee.id
              WHERE {$whereSql} ORDER BY m.id " . ($sinceId > 0 ? 'ASC' : 'DESC') . " LIMIT {$limit} OFFSET {$offset}",
             array_merge([(int) $user['id']], $query)
         );
@@ -717,7 +731,11 @@ final class CommunicationController
                 'UPDATE conversations SET last_message_id = ?, last_message_at = NOW(), updated_at = NOW() WHERE id = ?',
                 [$messageId, (int) $conversation['id']]
             );
-            return ['conversation_id' => (int) $conversation['id'], 'message_id' => $messageId];
+            return [
+                'conversation_id' => (int) $conversation['id'],
+                'message_id' => $messageId,
+                'reply_to_message_id' => $replyId,
+            ];
         });
         $mentions = $request->input('mentions', []);
         if (!is_array($mentions)) $mentions = [];
@@ -741,7 +759,60 @@ final class CommunicationController
             }
         }
         LogService::userOperation($request, $user, 'message', 'private_send', $result['message_id'], ['to_user_id' => $toUserId]);
-        return Response::success($result + ['is_self_chat' => $selfChat], $selfChat ? '已发送到我的聊天' : '私信发送成功', 201);
+        $message = self::sentPrivateMessage(
+            $user,
+            (int) $result['message_id'],
+            $toUserId,
+            $payload,
+            $tagsJson,
+            $result['reply_to_message_id'] === null ? null : (int) $result['reply_to_message_id'],
+            $selfChat
+        );
+        unset($result['reply_to_message_id']);
+        return Response::success(
+            $result + ['is_self_chat' => $selfChat, 'message' => $message],
+            $selfChat ? '已发送到我的聊天' : '私信发送成功',
+            201
+        );
+    }
+
+    private static function sentPrivateMessage(
+        array $user,
+        int $messageId,
+        int $receiverUserId,
+        array $payload,
+        string $tagsJson,
+        ?int $replyToMessageId,
+        bool $isSelfChat
+    ): array {
+        $stored = Database::one('SELECT created_at FROM messages WHERE id = ? LIMIT 1', [$messageId]);
+        $displayName = trim((string) ($user['nickname'] ?? $user['account'] ?? '用户'));
+        if ($displayName === '') $displayName = '用户';
+        $items = [[
+            'id' => $messageId,
+            'sender_type' => 'user',
+            'sender_id' => (int) $user['id'],
+            'receiver_user_id' => $receiverUserId,
+            'title' => '',
+            'content_type' => (string) $payload['content_type'],
+            'content' => (string) $payload['content'],
+            'tags_json' => $tagsJson,
+            'reply_to_message_id' => $replyToMessageId,
+            'is_read' => $isSelfChat ? 1 : 0,
+            'read_at' => null,
+            'created_at' => (string) ($stored['created_at'] ?? date('Y-m-d H:i:s')),
+            'is_favorite' => 0,
+            'recalled' => false,
+            'sender_account' => (string) ($user['account'] ?? ''),
+            'sender_name' => $displayName,
+            'sender_avatar' => (string) ($user['avatar'] ?? ''),
+            'can_recall' => true,
+        ]];
+        $items = ContentTagService::hydrate($items);
+        $items = MessageMediaService::hydrate($items, 'private_message', (int) $user['app_id']);
+        $items = MessageForwardService::hydrate($items, 'private_message', (int) $user['app_id']);
+        $items = MessagePresentationService::hydrate($items, 'private');
+        return $items[0] ?? [];
     }
 
     public static function forwardMessages(Request $request): \Yiyunying\Core\ApiResponse
@@ -800,14 +871,16 @@ final class CommunicationController
                 'anonymous_sender_keys' => $anonymousSenderKeys,
             ]);
             if ($targetType === 'private') $target = self::forwardToPrivate($user, $targetId, $content, $tagsJson);
-            elseif ($targetType === 'group' || $targetType === 'chat_room') $target = self::forwardToGroup($user, $targetId, $content, $tagsJson);
+            elseif ($targetType === 'group' || $targetType === 'chat_room') $target = self::forwardToGroup(
+                $user, $targetId, $content, $tagsJson, $targetType
+            );
             elseif ($targetType === 'forum') $target = self::forwardToForum($user, $targetId, $content);
             elseif ($targetType === 'forum_post') $target = self::forwardToForumPost(
                 $user, $targetId, $forumTitle, $forumIntro, $content, $forumCategoryId, $forumTags
             );
             else $target = self::forwardToService($user, $content);
             $linkType = match ((string) $target['target_type']) {
-                'private' => 'private_message', 'group' => 'group_message',
+                'private' => 'private_message', 'group', 'chat_room' => 'group_message',
                 'forum' => 'forum_comment', 'forum_post' => 'forum_post', default => 'service_message',
             };
             $linkId = (int) ($target['message_id'] ?? $target['comment_id'] ?? $target['post_id'] ?? 0);
@@ -1480,11 +1553,25 @@ final class CommunicationController
             $query[] = (int) $request->input('since_id');
         }
         $items = Database::all(
-            'SELECT m.id, m.user_id, m.content_type, m.content, m.created_at,
-                    u.account, p.nickname, p.avatar, cm.role
+            'SELECT m.id, m.user_id, m.sender_type, m.content_type, m.content, m.created_at,
+                    u.account, p.nickname, p.avatar, cm.role,
+                    vc.id AS call_id, vc.call_type, vc.status AS call_status,
+                    vc.duration_seconds AS call_duration_seconds,
+                    vc.caller_user_id AS call_caller_user_id,
+                    vc.callee_user_id AS call_callee_user_id,
+                    vc.context_type AS call_context_type, vc.context_id AS call_context_id,
+                    COALESCE(NULLIF(call_caller_profile.nickname, \'\'), call_caller.account, \'\') AS call_caller_name,
+                    COALESCE(NULLIF(call_callee_profile.nickname, \'\'), call_callee.account, \'\') AS call_callee_name,
+                    COALESCE(call_caller_profile.avatar, \'\') AS call_caller_avatar,
+                    COALESCE(call_callee_profile.avatar, \'\') AS call_callee_avatar
              FROM chat_room_messages m INNER JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
              LEFT JOIN chat_room_members cm ON cm.room_id = m.room_id AND cm.user_id = m.user_id
+             LEFT JOIN voice_calls vc ON vc.room_message_id = m.id
+             LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
+             LEFT JOIN user_profiles call_caller_profile ON call_caller_profile.user_id = call_caller.id
+             LEFT JOIN users call_callee ON call_callee.id = vc.callee_user_id
+             LEFT JOIN user_profiles call_callee_profile ON call_callee_profile.user_id = call_callee.id
              WHERE ' . implode(' AND ', $where) . " ORDER BY m.id DESC LIMIT {$limit}",
             $query
         );
@@ -1788,9 +1875,20 @@ final class CommunicationController
         return ['conversation_id' => (int) $conversation['id'], 'message_id' => $messageId, 'target_type' => 'private', 'is_self_chat' => $selfChat];
     }
 
-    private static function forwardToGroup(array $user, int $roomId, string $content, string $tagsJson): array
+    private static function forwardToGroup(
+        array $user,
+        int $roomId,
+        string $content,
+        string $tagsJson,
+        string $expectedType
+    ): array
     {
         $room = ChatRoomService::userRoom($user, $roomId, true);
+        $actualType = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        if ($actualType !== $expectedType) {
+            $expectedName = $expectedType === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
+            throw new HttpException("所选目标不是{$expectedName}，请重新选择", 0, 422);
+        }
         $member = ChatRoomService::requireMember($user, $room);
         $policy = ChatRoomService::policy($room);
         if ((bool) $policy['mute_all'] && !in_array((string) $member['role'], ['owner', 'admin'], true)) throw new HttpException('当前群聊已开启全员禁言', 403, 403);
@@ -1801,7 +1899,7 @@ final class CommunicationController
              VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, NOW())',
             [(int) $user['admin_id'], (int) $user['app_id'], $roomId, (int) $user['id'], 'user', 'forward', $content, $tagsJson]
         );
-        return ['room_id' => $roomId, 'message_id' => $messageId, 'target_type' => 'group'];
+        return ['room_id' => $roomId, 'message_id' => $messageId, 'target_type' => $actualType];
     }
 
     private static function forwardToForum(array $user, int $postId, string $content): array

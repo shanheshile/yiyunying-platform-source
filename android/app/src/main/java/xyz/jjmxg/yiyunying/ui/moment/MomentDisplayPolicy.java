@@ -4,8 +4,8 @@ package xyz.jjmxg.yiyunying.ui.moment;
 final class MomentDisplayPolicy {
     private MomentDisplayPolicy() {}
 
-    static boolean showsProfileSections(long targetMomentId, long targetUserId) {
-        return targetMomentId <= 0L && targetUserId > 0L;
+    static boolean showsProfileSections(long targetMomentId, boolean profileTimeline) {
+        return targetMomentId <= 0L && profileTimeline;
     }
 
     static boolean isManageable(boolean canPin, boolean canEdit, boolean canHide, boolean canDelete) {

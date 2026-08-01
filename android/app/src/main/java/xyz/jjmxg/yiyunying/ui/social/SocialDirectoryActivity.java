@@ -52,6 +52,7 @@ import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 
 public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity {
     private static final String EXTRA_MODE = "mode";
+    private static final String EXTRA_ROOM_KIND_FILTER = "room_kind_filter";
     private static final String EXTRA_CREATE_KIND = "create_kind";
     private static final String MODE_FRIENDS = "friends";
     private static final String MODE_ROOMS = "rooms";
@@ -81,6 +82,7 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     private boolean pickerAllowEmpty;
     private int pickerMax = 1;
     private String excludedReason = "该好友不可选择";
+    private String roomKindFilter = "";
 
     public static void openFriends(Context context) {
         context.startActivity(new Intent(context, SocialDirectoryActivity.class).putExtra(EXTRA_MODE, MODE_FRIENDS));
@@ -146,8 +148,27 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     }
 
     public static Intent pickRoomsIntent(Context context, int max, String title, long[] excludedRoomIds) {
+        return pickRoomsIntent(context, max, title, excludedRoomIds, "");
+    }
+
+    public static Intent pickGroupsIntent(Context context, int max, String title, long[] excludedRoomIds) {
+        return pickRoomsIntent(context, max, title, excludedRoomIds, "group");
+    }
+
+    public static Intent pickChatroomsIntent(Context context, int max, String title, long[] excludedRoomIds) {
+        return pickRoomsIntent(context, max, title, excludedRoomIds, "chat_room");
+    }
+
+    private static Intent pickRoomsIntent(
+        Context context,
+        int max,
+        String title,
+        long[] excludedRoomIds,
+        String roomKindFilter
+    ) {
         return new Intent(context, SocialDirectoryActivity.class)
             .putExtra(EXTRA_MODE, MODE_ROOMS)
+            .putExtra(EXTRA_ROOM_KIND_FILTER, roomKindFilter)
             .putExtra(EXTRA_PICK_MODE, true)
             .putExtra(EXTRA_PICK_MAX, Math.max(1, max))
             .putExtra(EXTRA_PICK_TITLE, title == null ? "选择群聊或聊天室" : title)
@@ -158,6 +179,10 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         pickerMode = getIntent().getBooleanExtra(EXTRA_PICK_MODE, false);
+        String requestedRoomKind = getIntent().getStringExtra(EXTRA_ROOM_KIND_FILTER);
+        if ("group".equals(requestedRoomKind) || "chat_room".equals(requestedRoomKind)) {
+            roomKindFilter = requestedRoomKind;
+        }
         pickerAllowEmpty = getIntent().getBooleanExtra(EXTRA_ALLOW_EMPTY, false);
         pickerMax = Math.max(1, getIntent().getIntExtra(EXTRA_PICK_MAX, 1));
         String requestedExcludedReason = getIntent().getStringExtra(EXTRA_EXCLUDED_REASON);
@@ -236,14 +261,14 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
             binding.progress.setVisibility(View.INVISIBLE);
             binding.swipeRefresh.setRefreshing(false);
             if (!result.isSuccessful()) { toast(result.message().isEmpty() ? "内容加载失败" : result.message()); return; }
-            List<JsonObject> next = result.objectItems();
+            List<JsonObject> next = filterRoomKind(result.objectItems());
             if (pickerMode) hydratePickerSelection(next);
             adapter.submit(next);
             binding.toolbar.setSubtitle(isFriends()
                 ? "当前分组 " + items.size() + " 位好友"
                 : roomSummary(items));
             binding.emptyText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
-            binding.emptyText.setText(isFriends() ? "当前分组还没有好友" : "当前分组还没有群聊或聊天室");
+            binding.emptyText.setText(isFriends() ? "当前分组还没有好友" : "当前分组还没有" + selectionEntity());
         });
     }
 
@@ -255,7 +280,7 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
         if (!isFriends()) query.put("limit", "200");
         AppAccess.from(this).repository().getCached(itemPath(), query, cached -> {
             if (binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
-            List<JsonObject> cachedItems = cached.objectItems();
+            List<JsonObject> cachedItems = filterRoomKind(cached.objectItems());
             if (pickerMode) hydratePickerSelection(cachedItems);
             adapter.submit(cachedItems);
             binding.toolbar.setSubtitle(isFriends()
@@ -562,7 +587,21 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
     private String selectionAvatar(JsonObject item) { return Jsons.string(item, isFriends() ? "avatar" : "icon"); }
     private int selectionPlaceholder() { return isFriends() ? R.drawable.ic_person : R.drawable.ic_users; }
     private String selectionUnit() { return isFriends() ? "人" : "个"; }
-    private String selectionEntity() { return isFriends() ? "好友" : "群聊或聊天室"; }
+    private String selectionEntity() {
+        if (isFriends()) return "好友";
+        if ("group".equals(roomKindFilter)) return "群聊";
+        if ("chat_room".equals(roomKindFilter)) return "聊天室";
+        return "群聊或聊天室";
+    }
+    private List<JsonObject> filterRoomKind(List<JsonObject> values) {
+        if (isFriends() || roomKindFilter.isEmpty()) return values;
+        List<JsonObject> filtered = new ArrayList<>();
+        for (JsonObject value : values) {
+            String kind = "chat_room".equals(Jsons.string(value, "room_kind")) ? "chat_room" : "group";
+            if (roomKindFilter.equals(kind)) filtered.add(value);
+        }
+        return filtered;
+    }
     private String roomEntity(JsonObject item) {
         return "chat_room".equals(Jsons.string(item, "room_kind")) ? "聊天室" : "群聊";
     }

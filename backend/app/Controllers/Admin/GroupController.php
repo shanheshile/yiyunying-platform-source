@@ -417,10 +417,24 @@ final class GroupController
         }
         $items = Database::all(
             'SELECT m.id, m.user_id, m.sender_type, m.sender_admin_id, m.content_type, m.content, m.tags_json,
-                    m.reply_to_message_id, m.created_at, u.account, p.nickname, p.avatar, cm.role
+                    m.reply_to_message_id, m.created_at, u.account, p.nickname, p.avatar, cm.role,
+                    vc.id AS call_id, vc.call_type, vc.status AS call_status,
+                    vc.duration_seconds AS call_duration_seconds,
+                    vc.caller_user_id AS call_caller_user_id,
+                    vc.callee_user_id AS call_callee_user_id,
+                    vc.context_type AS call_context_type, vc.context_id AS call_context_id,
+                    COALESCE(NULLIF(call_caller_profile.nickname, \'\'), call_caller.account, \'\') AS call_caller_name,
+                    COALESCE(NULLIF(call_callee_profile.nickname, \'\'), call_callee.account, \'\') AS call_callee_name,
+                    COALESCE(call_caller_profile.avatar, \'\') AS call_caller_avatar,
+                    COALESCE(call_callee_profile.avatar, \'\') AS call_callee_avatar
              FROM chat_room_messages m LEFT JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
              LEFT JOIN chat_room_members cm ON cm.room_id = m.room_id AND cm.user_id = m.user_id
+             LEFT JOIN voice_calls vc ON vc.room_message_id = m.id
+             LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
+             LEFT JOIN user_profiles call_caller_profile ON call_caller_profile.user_id = call_caller.id
+             LEFT JOIN users call_callee ON call_callee.id = vc.callee_user_id
+             LEFT JOIN user_profiles call_callee_profile ON call_callee_profile.user_id = call_callee.id
              WHERE ' . implode(' AND ', $where) . " ORDER BY m.id DESC LIMIT {$limit}",
             $query
         );

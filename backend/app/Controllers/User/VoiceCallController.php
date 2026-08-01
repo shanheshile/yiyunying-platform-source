@@ -452,52 +452,108 @@ final class VoiceCallController
         }
     }
 
-    private static function appendCallEvent(int $callId, string $event, int $actorId): void
+    private static function appendCallEvent(int $callId, string $event, int $_actorId): void
     {
-        $call = Database::one('SELECT * FROM voice_calls WHERE id = ?', [$callId]);
-        if ($call === null) return;
-        $actor = Database::one(
-            'SELECT u.account, p.nickname FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id WHERE u.id = ?',
-            [$actorId]
-        );
-        $actorName = trim((string) ($actor['nickname'] ?? $actor['account'] ?? '用户'));
-        $kind = (string) $call['call_type'] === 'video' ? '视频通话' : '语音通话';
-        $duration = max(0, (int) $call['duration_seconds']);
-        $durationText = sprintf('%02d:%02d', intdiv($duration, 60), $duration % 60);
-        $content = match ($event) {
-            'started' => $actorName . ' 发起了' . ((string) $call['context_type'] === 'room' ? '群内' : '') . $kind,
-            'answered' => $kind . '已接通',
-            'declined' => $kind . '未接',
-            'cancelled' => $kind . '已取消',
-            'missed' => $kind . '无人接听，已超时',
-            default => $kind . '已结束，通话时长 ' . $durationText,
-        };
-        if ((string) $call['context_type'] === 'room' && (int) $call['context_id'] > 0) {
-            Database::insert(
-                'INSERT INTO chat_room_messages
-                 (admin_id, app_id, room_id, user_id, sender_type, sender_admin_id, content_type, content, tags_json, status, created_at)
-                 VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, NOW())',
-                [(int) $call['admin_id'], (int) $call['app_id'], (int) $call['context_id'], $actorId,
-                    'system', 'system', $content, '["通话记录"]']
+        Database::transaction(static function () use ($callId, $event): void {
+            $call = Database::one('SELECT * FROM voice_calls WHERE id = ? FOR UPDATE', [$callId]);
+            if ($call === null) return;
+            $content = self::callCardContent($call, $event);
+            $callerId = (int) $call['caller_user_id'];
+
+            if ((string) $call['context_type'] === 'room' && (int) $call['context_id'] > 0) {
+                $messageId = (int) ($call['room_message_id'] ?? 0);
+                if ($messageId <= 0) {
+                    $messageId = Database::insert(
+                        'INSERT INTO chat_room_messages
+                         (admin_id, app_id, room_id, user_id, sender_type, sender_admin_id,
+                          content_type, content, tags_json, status, created_at)
+                         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, NOW())',
+                        [(int) $call['admin_id'], (int) $call['app_id'], (int) $call['context_id'],
+                            $callerId, 'user', 'call', $content, '["通话记录"]']
+                    );
+                    Database::execute(
+                        'UPDATE voice_calls SET room_message_id = ?, updated_at = NOW() WHERE id = ?',
+                        [$messageId, $callId]
+                    );
+                } else {
+                    Database::execute(
+                        "UPDATE chat_room_messages
+                         SET user_id = ?, sender_type = 'user', sender_admin_id = NULL,
+                             content_type = 'call', content = ?, tags_json = ?, status = 1
+                         WHERE id = ? AND room_id = ?",
+                        [$callerId, $content, '["通话记录"]', $messageId, (int) $call['context_id']]
+                    );
+                }
+                return;
+            }
+
+            $conversationId = (int) ($call['conversation_id'] ?? 0);
+            if ($conversationId <= 0) return;
+            $messageId = (int) ($call['private_message_id'] ?? 0);
+            $createdMessage = false;
+            if ($messageId <= 0) {
+                $legacy = Database::one(
+                    "SELECT id FROM messages
+                     WHERE conversation_id = ? AND title = ? AND status = 1
+                       AND tags_json LIKE '%通话记录%'
+                     ORDER BY id ASC LIMIT 1 FOR UPDATE",
+                    [$conversationId, (string) $callId]
+                );
+                $messageId = (int) ($legacy['id'] ?? 0);
+            }
+            if ($messageId <= 0) {
+                $messageId = Database::insert(
+                    'INSERT INTO messages
+                     (admin_id, app_id, conversation_id, sender_type, sender_id, receiver_user_id,
+                      title, content_type, content, tags_json, is_read, status, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, NOW())',
+                    [(int) $call['admin_id'], (int) $call['app_id'], $conversationId, 'user', $callerId,
+                        (int) $call['callee_user_id'], (string) $callId, 'call', $content, '["通话记录"]']
+                );
+                $createdMessage = true;
+            } else {
+                Database::execute(
+                    "UPDATE messages
+                     SET sender_type = 'user', sender_id = ?, receiver_user_id = ?,
+                         content_type = 'call', content = ?, tags_json = ?, status = 1
+                     WHERE id = ? AND conversation_id = ?",
+                    [$callerId, (int) $call['callee_user_id'], $content, '["通话记录"]',
+                        $messageId, $conversationId]
+                );
+            }
+            Database::execute(
+                'UPDATE voice_calls SET private_message_id = ?, updated_at = NOW() WHERE id = ?',
+                [$messageId, $callId]
             );
-            return;
-        }
-        $conversationId = (int) ($call['conversation_id'] ?? 0);
-        if ($conversationId <= 0) return;
-        $receiverId = $actorId === (int) $call['caller_user_id']
-            ? (int) $call['callee_user_id'] : (int) $call['caller_user_id'];
-        $messageId = Database::insert(
-            'INSERT INTO messages
-             (admin_id, app_id, conversation_id, sender_type, sender_id, receiver_user_id,
-              title, content_type, content, tags_json, is_read, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, NOW())',
-            [(int) $call['admin_id'], (int) $call['app_id'], $conversationId, 'system', $actorId,
-                $receiverId, (string) $callId, 'system', $content, '["通话记录"]']
-        );
-        Database::execute(
-            'UPDATE conversations SET last_message_id = ?, last_message_at = NOW(), updated_at = NOW() WHERE id = ?',
-            [$messageId, $conversationId]
-        );
+            Database::execute(
+                "UPDATE messages SET status = 0
+                 WHERE conversation_id = ? AND title = ? AND id <> ?
+                   AND sender_type = 'system' AND tags_json LIKE '%通话记录%'",
+                [$conversationId, (string) $callId, $messageId]
+            );
+            if ($createdMessage) {
+                Database::execute(
+                    'UPDATE conversations SET last_message_id = ?, last_message_at = NOW(), updated_at = NOW() WHERE id = ?',
+                    [$messageId, $conversationId]
+                );
+            }
+        });
+    }
+
+    private static function callCardContent(array $call, string $event): string
+    {
+        $kind = (string) $call['call_type'] === 'video' ? '视频通话' : '语音通话';
+        $duration = max(0, (int) ($call['duration_seconds'] ?? 0));
+        $durationText = intdiv($duration, 60) . '分' . ($duration % 60) . '秒';
+        $state = match ($event) {
+            'started' => '等待对方接听',
+            'answered' => '正在通话',
+            'declined' => '对方未接听',
+            'cancelled' => '已取消',
+            'missed' => '无人接听',
+            default => '通话时间：' . $durationText,
+        };
+        return $kind . "\n" . $state;
     }
 
     private static function statusLabel(string $status): string

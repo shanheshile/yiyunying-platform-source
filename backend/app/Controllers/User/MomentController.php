@@ -366,20 +366,20 @@ final class MomentController
         $moment = self::find($user, (int) $params['moment_id'], false);
         $targetType = strtolower(trim((string) $request->input('target_type', 'external')));
         if ($targetType === 'room') $targetType = 'group';
-        if (!in_array($targetType, ['private', 'group', 'service', 'forum', 'bounty', 'external'], true)) {
+        if (!in_array($targetType, ['private', 'group', 'chat_room', 'service', 'forum', 'bounty', 'external'], true)) {
             throw new HttpException('转发目标类型不正确', 0, 422);
         }
         $targetId = max(0, (int) $request->input('target_id', 0));
-        if (in_array($targetType, ['private', 'group'], true) && $targetId <= 0) {
+        if (in_array($targetType, ['private', 'group', 'chat_room'], true) && $targetId <= 0) {
             throw new HttpException('请选择有效的转发目标', 0, 422);
         }
-        $payload = in_array($targetType, ['private', 'group', 'service'], true)
+        $payload = in_array($targetType, ['private', 'group', 'chat_room', 'service'], true)
             ? self::forwardPayload($user, $moment)
             : null;
         $result = Database::transaction(static function () use ($user, $moment, $targetType, $targetId, $payload): array {
             $delivery = match ($targetType) {
                 'private' => self::forwardToPrivate($user, $targetId, $payload),
-                'group' => self::forwardToGroup($user, $targetId, $payload),
+                'group', 'chat_room' => self::forwardToGroup($user, $targetId, $payload, $targetType),
                 'service' => self::forwardToService($user, $payload),
                 default => [],
             };
@@ -392,7 +392,7 @@ final class MomentController
         });
         return Response::success(array_merge($result, [
             'forward_count' => self::count('moment_forwards', (int) $moment['id']),
-        ]), in_array($targetType, ['private', 'group', 'service'], true) ? '动态已发送' : '转发记录已创建', 201);
+        ]), in_array($targetType, ['private', 'group', 'chat_room', 'service'], true) ? '动态已发送' : '转发记录已创建', 201);
     }
 
     private static function forwardPayload(array $user, array $moment): array
@@ -491,9 +491,14 @@ final class MomentController
         ];
     }
 
-    private static function forwardToGroup(array $user, int $roomId, array $payload): array
+    private static function forwardToGroup(array $user, int $roomId, array $payload, string $expectedType): array
     {
         $room = ChatRoomService::userRoom($user, $roomId, true);
+        $actualType = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        if ($actualType !== $expectedType) {
+            $expectedName = $expectedType === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
+            throw new HttpException("所选目标不是{$expectedName}，请重新选择", 0, 422);
+        }
         $member = ChatRoomService::requireMember($user, $room);
         $policy = ChatRoomService::policy($room);
         if ((bool) $policy['mute_all'] && !in_array((string) $member['role'], ['owner', 'admin'], true)) {
@@ -512,7 +517,7 @@ final class MomentController
             ]
         );
         MessageMediaService::save('group_message', $messageId, $payload);
-        return ['target_type' => 'group', 'room_id' => $roomId, 'message_id' => $messageId];
+        return ['target_type' => $actualType, 'room_id' => $roomId, 'message_id' => $messageId];
     }
 
     private static function forwardToService(array $user, array $payload): array

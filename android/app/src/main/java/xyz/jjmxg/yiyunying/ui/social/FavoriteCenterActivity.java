@@ -67,7 +67,9 @@ public final class FavoriteCenterActivity extends xyz.jjmxg.yiyunying.ui.common.
 
     private final ActivityResultLauncher<Intent> friendRecipientPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> handleRecipients(result, false));
-    private final ActivityResultLauncher<Intent> roomRecipientPicker = registerForActivityResult(
+    private final ActivityResultLauncher<Intent> groupRecipientPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> handleRecipients(result, true));
+    private final ActivityResultLauncher<Intent> chatroomRecipientPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> handleRecipients(result, true));
 
     public static void open(Context context) {
@@ -505,13 +507,16 @@ public final class FavoriteCenterActivity extends xyz.jjmxg.yiyunying.ui.common.
         if (selectedItems.isEmpty() || actionRequest != null) return;
         new YiyunyingDialogBuilder(this)
             .setTitle("发送收藏")
-            .setItems(new String[]{"发送给好友", "发送到群聊或聊天室"}, (dialog, which) -> {
+            .setItems(new String[]{"发送给好友", "发送到群聊", "发送到聊天室"}, (dialog, which) -> {
                 if (which == 0) {
                     friendRecipientPicker.launch(SocialDirectoryActivity.pickFriendsIntent(
                         this, 10, "选择接收收藏的好友", new long[0], "该好友不可选择"));
+                } else if (which == 1) {
+                    groupRecipientPicker.launch(SocialDirectoryActivity.pickGroupsIntent(
+                        this, 10, "选择接收收藏的群聊", new long[0]));
                 } else {
-                    roomRecipientPicker.launch(SocialDirectoryActivity.pickRoomsIntent(
-                        this, 10, "选择接收收藏的群聊或聊天室", new long[0]));
+                    chatroomRecipientPicker.launch(SocialDirectoryActivity.pickChatroomsIntent(
+                        this, 10, "选择接收收藏的聊天室", new long[0]));
                 }
             })
             .setNegativeButton("取消", null)

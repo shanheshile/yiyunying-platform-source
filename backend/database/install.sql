@@ -1695,6 +1695,8 @@ CREATE TABLE IF NOT EXISTS `voice_calls` (
   `caller_user_id` BIGINT UNSIGNED NOT NULL,
   `callee_user_id` BIGINT UNSIGNED NOT NULL,
   `conversation_id` BIGINT UNSIGNED DEFAULT NULL,
+  `private_message_id` BIGINT UNSIGNED DEFAULT NULL,
+  `room_message_id` BIGINT UNSIGNED DEFAULT NULL,
   `context_type` VARCHAR(20) NOT NULL DEFAULT 'private',
   `context_id` BIGINT UNSIGNED DEFAULT NULL,
   `context_name` VARCHAR(120) NOT NULL DEFAULT '',
@@ -1713,6 +1715,8 @@ CREATE TABLE IF NOT EXISTS `voice_calls` (
   KEY `idx_voice_calls_callee_status` (`app_id`, `callee_user_id`, `status`, `created_at`),
   KEY `idx_voice_calls_expiry` (`status`, `expires_at`),
   KEY `idx_voice_calls_context` (`app_id`, `context_type`, `context_id`, `created_at`),
+  KEY `idx_voice_calls_private_message` (`private_message_id`),
+  KEY `idx_voice_calls_room_message` (`room_message_id`),
   CONSTRAINT `fk_voice_calls_caller` FOREIGN KEY (`caller_user_id`, `app_id`, `admin_id`)
     REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_voice_calls_callee` FOREIGN KEY (`callee_user_id`, `app_id`, `admin_id`)

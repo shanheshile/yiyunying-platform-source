@@ -7,15 +7,15 @@ import org.junit.Test;
 
 public class MomentDisplayPolicyTest {
     @Test public void publicTimelineDoesNotExposePinnedSections() {
-        assertFalse(MomentDisplayPolicy.showsProfileSections(0L, 0L));
+        assertFalse(MomentDisplayPolicy.showsProfileSections(0L, false));
     }
 
-    @Test public void profileTimelineShowsPinnedAndRegularSections() {
-        assertTrue(MomentDisplayPolicy.showsProfileSections(0L, 42L));
+    @Test public void profileTimelineMayShowPinnedSection() {
+        assertTrue(MomentDisplayPolicy.showsProfileSections(0L, true));
     }
 
     @Test public void immersiveDetailNeverShowsTimelineSections() {
-        assertFalse(MomentDisplayPolicy.showsProfileSections(7L, 42L));
+        assertFalse(MomentDisplayPolicy.showsProfileSections(7L, true));
     }
 
     @Test public void hideOnlyPermissionStillShowsMomentActions() {

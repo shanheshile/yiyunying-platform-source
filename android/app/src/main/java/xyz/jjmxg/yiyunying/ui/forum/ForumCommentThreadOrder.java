@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,6 +56,23 @@ final class ForumCommentThreadOrder {
         // Preserve source order for orphaned or partially paged threads.
         for (CommentRef ref : source) ordered.add(ref.sourceIndex);
         return new ArrayList<>(ordered);
+    }
+
+    static Map<Integer, Long> resolvedRootIds(List<CommentRef> source) {
+        Map<Long, CommentRef> byId = new HashMap<>();
+        for (CommentRef ref : source) {
+            if (ref.id > 0L) byId.put(ref.id, ref);
+        }
+
+        Map<Long, Long> cache = new HashMap<>();
+        Map<Integer, Long> roots = new LinkedHashMap<>();
+        for (CommentRef ref : source) {
+            long root = ref.parentId <= 0L
+                ? ref.id
+                : resolveRoot(ref, byId, cache, new HashSet<>());
+            roots.put(ref.sourceIndex, root);
+        }
+        return roots;
     }
 
     private static long resolveRoot(

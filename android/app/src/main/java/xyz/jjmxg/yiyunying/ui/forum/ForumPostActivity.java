@@ -2,6 +2,7 @@ package xyz.jjmxg.yiyunying.ui.forum;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -328,6 +329,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentsContainer.removeAllViews();
         binding.emptyComments.setVisibility(comments.isEmpty() ? View.VISIBLE : View.GONE);
         Map<Long, View> commentAnchors = new LinkedHashMap<>();
+        Map<Long, LinearLayout> threadContainers = new LinkedHashMap<>();
         List<JsonObject> commentItems = new ArrayList<>();
         List<ForumCommentThreadOrder.CommentRef> commentRefs = new ArrayList<>();
         for (JsonElement element : comments) {
@@ -342,13 +344,27 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 Jsons.longValue(item, "root_comment_id")
             ));
         }
+        Map<Integer, Long> resolvedRoots = ForumCommentThreadOrder.resolvedRootIds(commentRefs);
         for (int orderedIndex : ForumCommentThreadOrder.orderedIndexes(commentRefs)) {
             JsonObject comment = commentItems.get(orderedIndex);
             long commentId = Jsons.longValue(comment, "id");
             long parentCommentId = Jsons.longValue(comment, "parent_id");
+            long rootCommentId = resolvedRoots.getOrDefault(orderedIndex, commentId);
+            LinearLayout thread = threadContainers.get(rootCommentId);
+            if (thread == null) {
+                thread = new LinearLayout(this);
+                thread.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams threadParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+                threadParams.bottomMargin = dp(12);
+                thread.setLayoutParams(threadParams);
+                binding.commentsContainer.addView(thread);
+                threadContainers.put(rootCommentId, thread);
+            }
             MaterialCardView card = new MaterialCardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            cardParams.bottomMargin = dp(8);
+            cardParams.bottomMargin = dp(6);
             if (parentCommentId > 0) cardParams.leftMargin = dp(30);
             card.setLayoutParams(cardParams);
             card.setRadius(dp(6));
@@ -440,7 +456,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 name.setOnClickListener(detail);
                 card.setOnLongClickListener(view -> { detail.onClick(view); return true; });
             }
-            binding.commentsContainer.addView(card);
+            thread.addView(card);
             commentAnchors.put(commentId, card);
             if (focusCommentId > 0L && focusCommentId == commentId) {
                 focusCommentId = 0L;
@@ -452,7 +468,11 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private void focusCommentCard(View card, String message) {
         binding.scroll.post(() -> {
             if (!isUiActive()) return;
-            binding.scroll.smoothScrollTo(0, binding.commentsContainer.getTop() + card.getTop());
+            Rect target = new Rect();
+            card.getDrawingRect(target);
+            binding.commentsContainer.offsetDescendantRectToMyCoords(card, target);
+            binding.scroll.smoothScrollTo(0,
+                Math.max(0, binding.commentsContainer.getTop() + target.top - dp(12)));
             card.setAlpha(0.45f);
             card.animate().alpha(1f).setDuration(520L).start();
             Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_SHORT).show();

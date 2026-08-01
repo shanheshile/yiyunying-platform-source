@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import org.junit.Test;
 
 public final class ForumCommentThreadOrderTest {
@@ -17,6 +18,9 @@ public final class ForumCommentThreadOrderTest {
         );
 
         assertEquals(Arrays.asList(0, 2, 1, 3), ForumCommentThreadOrder.orderedIndexes(comments));
+        Map<Integer, Long> roots = ForumCommentThreadOrder.resolvedRootIds(comments);
+        assertEquals(Long.valueOf(1L), roots.get(2));
+        assertEquals(Long.valueOf(5L), roots.get(3));
     }
 
     @Test

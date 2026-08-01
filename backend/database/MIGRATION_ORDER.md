@@ -56,8 +56,9 @@
 52. `migrations/upgrade_20260731_chat_room_kind.sql`
 53. `migrations/upgrade_20260801_auto_cache_media_policy.sql`
 54. `migrations/upgrade_20260801_forum_comment_threads.sql`
+55. `migrations/upgrade_20260801_call_message_cards.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.
 
-第 13、14 项顺序不能颠倒：先创建 UID、身份绑定和解绑申请主体，再补充独立审核范围字段。通信接管必须在聊天、多媒体、身份和论坛迁移完成后执行；先建立匿名快照，再升级为用户匿名与 1/2/3 级实名审计双轨。第 28 项用于已经执行过第 27 项的数据库，为通话表补充音频/视频类型；第 29 项再加入群聊、聊天室等通话上下文。第 30 项补齐群文件夹与下载统计，第 31 项加入本地 AI 知识库/会话、节日界面策略和安装包校验字段，第 33 项补齐悬赏审核字段、管理视角和笔记日期检索，第 34 项加入群邀请历史消息可见边界，第 35 项补齐添加方式、通知渠道和动态可见对象，第 36、37 项依次建立生活动态主体与隐私互动能力，第 41 项补齐红包投放范围，第 42 项为群投票补充图片选项，第 43 项加入个人资料动态置顶顺序。执行后运行 `php tools/generate-reference.php` 可重新生成表结构参考；部署验收至少检查 `/api/health`、四级登录、`deploy/local-ai/verify-environment.sh`、`tools/smoke-identity-qr.ps1`、`tools/smoke-communication-takeover.ps1`、`tools/smoke-forward-privacy.ps1`、`tools/smoke-chat-commerce.ps1` 和 `tools/smoke-voice-calls.ps1`。
+第 13、14 项顺序不能颠倒：先创建 UID、身份绑定和解绑申请主体，再补充独立审核范围字段。通信接管必须在聊天、多媒体、身份和论坛迁移完成后执行；先建立匿名快照，再升级为用户匿名与 1/2/3 级实名审计双轨。第 28 项用于已经执行过第 27 项的数据库，为通话表补充音频/视频类型；第 29 项再加入群聊、聊天室等通话上下文。第 30 项补齐群文件夹与下载统计，第 31 项加入本地 AI 知识库/会话、节日界面策略和安装包校验字段，第 33 项补齐悬赏审核字段、管理视角和笔记日期检索，第 34 项加入群邀请历史消息可见边界，第 35 项补齐添加方式、通知渠道和动态可见对象，第 36、37 项依次建立生活动态主体与隐私互动能力，第 41 项补齐红包投放范围，第 42 项为群投票补充图片选项，第 43 项加入个人资料动态置顶顺序，第 54 项固定论坛回复根楼，第 55 项把通话卡片关联到发起方原消息并迁移旧系统提示。执行后运行 `php tools/generate-reference.php` 可重新生成表结构参考；部署验收至少检查 `/api/health`、四级登录、`deploy/local-ai/verify-environment.sh`、`tools/smoke-identity-qr.ps1`、`tools/smoke-communication-takeover.ps1`、`tools/smoke-forward-privacy.ps1`、`tools/smoke-chat-commerce.ps1` 和 `tools/smoke-voice-calls.ps1`。

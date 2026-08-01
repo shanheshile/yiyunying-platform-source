@@ -122,7 +122,8 @@ if ($dialogBuilderSource -notmatch 'isOverwrittenMaterialButtonBackground' -or
 if ($momentTimelineSource -notmatch 'targetUserId <= 0' -or
     $momentTimelineSource -notmatch 'section_label' -or
     $momentTimelineSource -notmatch 'pinnedSectionAdded' -or
-    $momentTimelineSource -notmatch 'regularSectionAdded') {
+    $momentTimelineSource -match 'regularSectionAdded' -or
+    $momentTimelineSource -match 'section_label",\s*"普通动态"') {
     throw 'Moment timeline must separate profile-only pinned content from the public feed.'
 }
 if ($momentVisibilitySource -notmatch 'appliesVisibleDays' -or

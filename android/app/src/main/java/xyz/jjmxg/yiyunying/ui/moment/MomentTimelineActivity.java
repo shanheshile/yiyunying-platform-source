@@ -83,6 +83,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private static final String EXTRA_USER_ID = "user_id";
     private static final String EXTRA_USER_TITLE = "user_title";
     private static final String EXTRA_MOMENT_ID = "moment_id";
+    private static final String EXTRA_PROFILE_TIMELINE = "profile_timeline";
     private static final int MAX_MEDIA = 9;
     private static final String[] VISIBILITY_VALUES = {
         "inherit", "public", "friends", "followers", "selected", "exclude", "private"
@@ -117,6 +118,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private long replyingCommentId;
     private long targetUserId;
     private long targetMomentId;
+    private boolean profileTimeline;
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
     private Integer composerVisibleDays;
@@ -151,7 +153,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             sendMomentForward(moment, "private", userId, false);
         });
 
-    private final ActivityResultLauncher<Intent> forwardRoomPicker = registerForActivityResult(
+    private final ActivityResultLauncher<Intent> forwardGroupPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             JsonObject moment = pendingForwardMoment;
             pendingForwardMoment = null;
@@ -159,8 +161,20 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 || result.getData() == null || moment == null) return;
             JsonObject selected = firstSelected(result.getData());
             long roomId = Jsons.longValue(selected, "id");
-            if (roomId <= 0) { message("没有取得有效的群聊或聊天室编号"); return; }
+            if (roomId <= 0) { message("没有取得有效的群聊编号"); return; }
             sendMomentForward(moment, "group", roomId, false);
+        });
+
+    private final ActivityResultLauncher<Intent> forwardChatroomPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+            JsonObject moment = pendingForwardMoment;
+            pendingForwardMoment = null;
+            if (!isUiActive() || result.getResultCode() != RESULT_OK
+                || result.getData() == null || moment == null) return;
+            JsonObject selected = firstSelected(result.getData());
+            long roomId = Jsons.longValue(selected, "id");
+            if (roomId <= 0) { message("没有取得有效的聊天室编号"); return; }
+            sendMomentForward(moment, "chat_room", roomId, false);
         });
 
     private final ActivityResultLauncher<String[]> locationPermission = registerForActivityResult(
@@ -203,7 +217,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (userId <= 0) return;
         context.startActivity(new Intent(context, MomentTimelineActivity.class)
             .putExtra(EXTRA_USER_ID, userId)
+            .putExtra(EXTRA_PROFILE_TIMELINE, true)
             .putExtra(EXTRA_USER_TITLE, title == null ? "" : title));
+    }
+
+    public static void openMine(Context context) {
+        context.startActivity(new Intent(context, MomentTimelineActivity.class)
+            .putExtra(EXTRA_PROFILE_TIMELINE, true));
     }
 
     public static void openMoment(Context context, long momentId, long userId, String title) {
@@ -222,6 +242,11 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         super.onCreate(state);
         targetUserId = getIntent().getLongExtra(EXTRA_USER_ID, 0L);
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
+        profileTimeline = targetMomentId <= 0 && (getIntent().getBooleanExtra(EXTRA_PROFILE_TIMELINE, false)
+            || targetUserId > 0L);
+        if (profileTimeline && targetUserId <= 0L) {
+            targetUserId = AppAccess.from(this).session().actorId();
+        }
         targetUserTitle = getIntent().getStringExtra(EXTRA_USER_TITLE);
         if (targetUserTitle == null) targetUserTitle = "";
         binding = ActivityMomentTimelineBinding.inflate(getLayoutInflater());
@@ -1179,7 +1204,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (actionRequest != null) { message("正在处理上一项操作"); return; }
         new YiyunyingDialogBuilder(this)
             .setTitle("转发动态")
-            .setItems(new String[]{"发送给好友", "发送到群聊或聊天室", "发送给在线客服", "系统分享"},
+            .setItems(new String[]{"发送给好友", "发送到群聊", "发送到聊天室", "发送给在线客服", "系统分享"},
                 (dialog, which) -> {
                     if (which == 0) {
                         pendingForwardMoment = item;
@@ -1187,14 +1212,28 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                             this, 1, "选择接收动态的好友", new long[0], "该好友不可选择"));
                     } else if (which == 1) {
                         pendingForwardMoment = item;
-                        forwardRoomPicker.launch(SocialDirectoryActivity.pickRoomsIntent(
-                            this, 1, "选择群聊或聊天室", new long[0]));
+                        forwardGroupPicker.launch(SocialDirectoryActivity.pickGroupsIntent(
+                            this, 1, "选择群聊", new long[0]));
                     } else if (which == 2) {
-                        sendMomentForward(item, "service", 0, false);
+                        pendingForwardMoment = item;
+                        forwardChatroomPicker.launch(SocialDirectoryActivity.pickChatroomsIntent(
+                            this, 1, "选择聊天室", new long[0]));
+                    } else if (which == 3) {
+                        confirmForwardToService(item);
                     } else {
                         sendMomentForward(item, "external", 0, true);
                     }
                 })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void confirmForwardToService(JsonObject item) {
+        new YiyunyingDialogBuilder(this)
+            .setTitle("发送给在线客服")
+            .setMessage("确认把这条动态发送给在线客服吗？客服会看到动态内容和原发布者信息。")
+            .setPositiveButton("确认发送", (dialog, which) ->
+                sendMomentForward(item, "service", 0, false))
             .setNegativeButton("取消", null)
             .show();
     }
@@ -1301,22 +1340,18 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         ArrayList<JsonObject> prepared = copyMoments(values);
         for (JsonObject value : prepared) value.remove("section_label");
         if (targetMomentId > 0) return prepared;
-        if (targetUserId <= 0) {
+        if (!profileTimeline) {
             prepared.sort(MomentTimelineActivity::compareMomentsByTime);
             return prepared;
         }
         prepared.sort(MomentTimelineActivity::compareMoments);
         boolean pinnedSectionAdded = false;
-        boolean regularSectionAdded = false;
         for (JsonObject value : prepared) {
             if (flag(value, "is_pinned")) {
                 if (!pinnedSectionAdded) {
                     value.addProperty("section_label", "置顶动态");
                     pinnedSectionAdded = true;
                 }
-            } else if (!regularSectionAdded) {
-                value.addProperty("section_label", "普通动态");
-                regularSectionAdded = true;
             }
         }
         return prepared;
@@ -1493,9 +1528,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                         itemLatitude,
                         itemLongitude)
                     : null);
-                boolean profileTimeline = MomentDisplayPolicy.showsProfileSections(targetMomentId, targetUserId);
-                row.pinBadge.setVisibility(profileTimeline && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
-                boolean lastPinned = profileTimeline && flag(item, "is_pinned");
+                boolean showProfileSections = MomentDisplayPolicy.showsProfileSections(targetMomentId, profileTimeline);
+                row.pinBadge.setVisibility(showProfileSections && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
+                boolean lastPinned = showProfileSections && flag(item, "is_pinned");
                 if (lastPinned) {
                     int currentPosition = getBindingAdapterPosition();
                     int next = currentPosition == RecyclerView.NO_POSITION ? items.size() : currentPosition + 1;
@@ -1530,7 +1565,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.momentCard.setOnClickListener(opensDetail ? detail : null);
                 row.detailHint.setVisibility(opensDetail ? View.VISIBLE : View.GONE);
                 row.detailHint.setOnClickListener(opensDetail ? detail : null);
-                boolean hideRepeatedAuthor = targetUserId > 0;
+                boolean hideRepeatedAuthor = profileTimeline;
                 row.avatar.setVisibility(hideRepeatedAuthor ? View.GONE : View.VISIBLE);
                 row.authorArea.setVisibility(hideRepeatedAuthor ? View.GONE : View.VISIBLE);
                 row.avatar.setOnClickListener(profile);

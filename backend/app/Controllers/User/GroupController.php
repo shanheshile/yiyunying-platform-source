@@ -798,7 +798,45 @@ final class GroupController
             'room_id' => (int) $room['id'], 'content_type' => (string) $payload['content_type'],
             'attachment_count' => count($payload['attachments']),
         ]);
-        return Response::success(['message_id' => $id], '消息发送成功', 201);
+        return Response::success([
+            'message_id' => $id,
+            'message' => self::sentGroupMessage($user, $member, $id, $payload, $tagsJson, $reply),
+        ], '消息发送成功', 201);
+    }
+
+    private static function sentGroupMessage(
+        array $user,
+        array $member,
+        int $messageId,
+        array $payload,
+        string $tagsJson,
+        ?int $replyToMessageId
+    ): array {
+        $stored = Database::one('SELECT created_at FROM chat_room_messages WHERE id = ? LIMIT 1', [$messageId]);
+        $nickname = trim((string) ($user['nickname'] ?? $user['account'] ?? '群成员'));
+        if ($nickname === '') $nickname = '群成员';
+        $items = [[
+            'id' => $messageId,
+            'user_id' => (int) $user['id'],
+            'sender_type' => 'user',
+            'sender_admin_id' => null,
+            'content_type' => (string) $payload['content_type'],
+            'content' => (string) $payload['content'],
+            'tags_json' => $tagsJson,
+            'reply_to_message_id' => $replyToMessageId,
+            'created_at' => (string) ($stored['created_at'] ?? date('Y-m-d H:i:s')),
+            'account' => (string) ($user['account'] ?? ''),
+            'nickname' => $nickname,
+            'avatar' => (string) ($user['avatar'] ?? ''),
+            'role' => (string) ($member['role'] ?? 'member'),
+            'is_favorite' => 0,
+            'can_recall' => true,
+        ]];
+        $items = ContentTagService::hydrate($items);
+        $items = MessageMediaService::hydrate($items, 'group_message', (int) $user['app_id']);
+        $items = MessageForwardService::hydrate($items, 'group_message', (int) $user['app_id']);
+        $items = MessagePresentationService::hydrate($items, 'group');
+        return $items[0] ?? [];
     }
 
     public static function editMessage(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -1417,10 +1455,24 @@ final class GroupController
                     COALESCE(NULLIF(p.nickname, \'\'), u.account,
                       CASE m.sender_type WHEN \'admin\' THEN \'管理员\' WHEN \'platform\' THEN \'平台\'
                            WHEN \'system\' THEN \'系统\' ELSE \'群成员\' END) AS nickname,
-                    COALESCE(p.avatar, \'\') AS avatar, cm.role, COALESCE(state.is_favorite, 0) AS is_favorite
+                    COALESCE(p.avatar, \'\') AS avatar, cm.role, COALESCE(state.is_favorite, 0) AS is_favorite,
+                    vc.id AS call_id, vc.call_type, vc.status AS call_status,
+                    vc.duration_seconds AS call_duration_seconds,
+                    vc.caller_user_id AS call_caller_user_id,
+                    vc.callee_user_id AS call_callee_user_id,
+                    vc.context_type AS call_context_type, vc.context_id AS call_context_id,
+                    COALESCE(NULLIF(call_caller_profile.nickname, \'\'), call_caller.account, \'\') AS call_caller_name,
+                    COALESCE(NULLIF(call_callee_profile.nickname, \'\'), call_callee.account, \'\') AS call_callee_name,
+                    COALESCE(call_caller_profile.avatar, \'\') AS call_caller_avatar,
+                    COALESCE(call_callee_profile.avatar, \'\') AS call_callee_avatar
              FROM chat_room_messages m LEFT JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
              LEFT JOIN chat_room_members cm ON cm.room_id = m.room_id AND cm.user_id = m.user_id
+             LEFT JOIN voice_calls vc ON vc.room_message_id = m.id
+             LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
+             LEFT JOIN user_profiles call_caller_profile ON call_caller_profile.user_id = call_caller.id
+             LEFT JOIN users call_callee ON call_callee.id = vc.callee_user_id
+             LEFT JOIN user_profiles call_callee_profile ON call_callee_profile.user_id = call_callee.id
              LEFT JOIN communication_message_states state ON state.scope_type = \'group\'
                AND state.message_id = m.id AND state.user_id = ?
              WHERE ' . implode(' AND ', $where) . " ORDER BY m.id DESC LIMIT {$limit}",

@@ -3,6 +3,7 @@ package xyz.jjmxg.yiyunying.ui.chat;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -19,6 +20,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.graphics.ColorUtils;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
@@ -57,6 +59,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         default void onEditHistory(JsonObject message) { }
         default void onDeleteSystem(JsonObject message) { }
         default void onReplyClick(long messageId) { }
+        default void onCallClick(JsonObject message) { }
         default void onMessageHeightWillChange() { }
     }
 
@@ -180,6 +183,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         JsonObject item = items.get(position);
         boolean mine = isMine(item);
         boolean system = "system".equals(Jsons.string(item, "sender_type"));
+        boolean call = isCallMessage(item);
         boolean recalled = "recall".equals(Jsons.string(item, "content_type")) || booleanValue(item, "is_recalled");
         boolean selectable = !system && !recalled;
         holder.binding.messageRow.setGravity(system ? Gravity.CENTER_HORIZONTAL : (mine ? Gravity.END | Gravity.TOP : Gravity.START | Gravity.TOP));
@@ -214,6 +218,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.mediaContainer.setLayoutParams(mediaParams);
         holder.binding.mediaContainer.setGravity(mine ? Gravity.END : Gravity.START);
         LinkNavigator.setTextWithLinks(holder.binding.content, content);
+        bindCallPresentation(holder, item, call);
         holder.binding.content.setVisibility(content.isEmpty() || forwarded ? View.GONE : View.VISIBLE);
         bindReply(holder, item);
         holder.binding.content.setTextSize(system || recalled ? 12 : 15);
@@ -251,9 +256,15 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.selectionRail.setVisibility(selectionMode && selectable ? View.VISIBLE : View.GONE);
         holder.binding.selectCheck.setChecked(selectedIds.contains(messageId));
         holder.binding.selectCheck.setOnClickListener(view -> listener.onSelectionChanged(item, holder.binding.selectCheck.isChecked()));
-        holder.binding.root.setOnClickListener(view -> {
-            if (selectionMode && selectable) listener.onSelectionChanged(item, !selectedIds.contains(messageId));
-        });
+        View.OnClickListener messageClick = view -> {
+            if (selectionMode && selectable) {
+                listener.onSelectionChanged(item, !selectedIds.contains(messageId));
+            } else if (call) {
+                listener.onCallClick(item);
+            }
+        };
+        holder.binding.root.setOnClickListener(messageClick);
+        holder.binding.bubble.setOnClickListener(call || selectionMode ? messageClick : null);
         View.OnLongClickListener longPress = selectable ? view -> {
             listener.onLongPress(item);
             return true;
@@ -278,6 +289,28 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (!value.isEmpty()) return value;
         }
         return "";
+    }
+
+    private void bindCallPresentation(Holder holder, JsonObject item, boolean call) {
+        TextView content = holder.binding.content;
+        content.setCompoundDrawablePadding(call ? dp(holder.itemView.getContext(), 9) : 0);
+        content.setMinHeight(call ? dp(holder.itemView.getContext(), 44) : 0);
+        content.setGravity(call ? Gravity.CENTER_VERTICAL : Gravity.NO_GRAVITY);
+        if (!call) {
+            content.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, null, null);
+            return;
+        }
+        boolean video = "video".equalsIgnoreCase(Jsons.string(item, "call_type"));
+        Drawable icon = AppCompatResources.getDrawable(
+            holder.itemView.getContext(), video ? R.drawable.ic_videocam : R.drawable.ic_phone);
+        if (icon != null) icon.mutate().setTint(ThemeColors.primary(holder.itemView.getContext()));
+        content.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null);
+        content.setContentDescription((video ? "视频通话" : "语音通话") + "，点击再次呼叫");
+    }
+
+    private static boolean isCallMessage(JsonObject item) {
+        return "call".equalsIgnoreCase(Jsons.string(item, "content_type"))
+            || Jsons.longValue(item, "call_id") > 0L;
     }
 
     private void bindReply(Holder holder, JsonObject item) {
