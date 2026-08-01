@@ -1,16 +1,11 @@
 {
     "schemaVersion":  2,
-    "versionName":  "2.7.4",
-    "versionCode":  49,
+    "versionName":  "2.7.5",
+    "versionCode":  50,
     "releaseDate":  "2026-08-01",
-    "generatedAt":  "2026-08-01T05:43:08.6195101+08:00",
-    "downloadRootBase":  "/downloads",
-    "releaseNotes":  [
-                         "新增账号隔离的自动缓存策略、分类清理与服务端平台上限",
-                         "优化图片原图、GIF 动图、动态照片、视频、语音、音频、文档与普通文件的类型化预览",
-                         "完善视频封面、缓冲、进度、倍速、全屏和按网络自动播放策略",
-                         "补齐数据库迁移、十一领域验收矩阵与发布前静态检查"
-                     ],
+    "generatedAt":  "2026-08-01T08:18:43.4698808+08:00",
+    "downloadRootBase":  "http://appht.jjmxg.xyz/downloads",
+    "releaseNotes":  "小米系 Dock 字体度量专项修复（vivo 保持原有布局）；手动更新检查、通知栏下载进度与安装校验；聊天五分钟与跨日时间节点",
     "releases":  [
                      {
                          "id":  "user",
@@ -18,13 +13,13 @@
                          "shortName":  "用户端",
                          "audience":  "普通用户",
                          "description":  "聊天、动态、活动、商城与个人中心",
-                         "fileName":  "yiyunying-user-v2.7.4-debug.apk",
+                         "fileName":  "yiyunying-user-v2.7.5-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.user.debug",
-                         "versionName":  "2.7.4-user-debug",
-                         "versionCode":  49,
-                         "sizeBytes":  96425332,
+                         "versionName":  "2.7.5-user-debug",
+                         "versionCode":  50,
+                         "sizeBytes":  96425472,
                          "size":  "91.96 MB",
-                         "sha256":  "E04383E50965B8852EE864E0A77EA9F40C1B26B4512939BD27922DEB58C8A7F7",
+                         "sha256":  "D0B795E4CF28CE7E3ACDD68224E537D4C4A1940AAD3E688FF860361264F88477",
                          "accent":  "blue"
                      },
                      {
@@ -33,13 +28,13 @@
                          "shortName":  "管理员",
                          "audience":  "管理员",
                          "description":  "用户、内容、订单与运营功能管理",
-                         "fileName":  "yiyunying-admin-v2.7.4-debug.apk",
+                         "fileName":  "yiyunying-admin-v2.7.5-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.admin.debug",
-                         "versionName":  "2.7.4-admin-debug",
-                         "versionCode":  49,
-                         "sizeBytes":  32023724,
+                         "versionName":  "2.7.5-admin-debug",
+                         "versionCode":  50,
+                         "sizeBytes":  32023856,
                          "size":  "30.54 MB",
-                         "sha256":  "6FA3991DDF571A818DB31E8A86A2CCF76EF781D0DA6B6AF94086AB06DA2EE4E8",
+                         "sha256":  "307E1148221DAA29506942927569913002C6A88E6315CD94DC7977329CF1E8A0",
                          "accent":  "green"
                      },
                      {
@@ -48,13 +43,13 @@
                          "shortName":  "授权平台",
                          "audience":  "授权运营方",
                          "description":  "授权应用、下级管理员与业务数据管理",
-                         "fileName":  "yiyunying-authorized-platform-v2.7.4-debug.apk",
+                         "fileName":  "yiyunying-authorized-platform-v2.7.5-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.authorized.debug",
-                         "versionName":  "2.7.4-authorized-platform-debug",
-                         "versionCode":  49,
-                         "sizeBytes":  32023728,
+                         "versionName":  "2.7.5-authorized-platform-debug",
+                         "versionCode":  50,
+                         "sizeBytes":  32023860,
                          "size":  "30.54 MB",
-                         "sha256":  "F07B503135260DD4583512F7ABACE83936AED424A4BC74C9763E6FF6DE2D3AC0",
+                         "sha256":  "3AD7FE410160D45E707B724F957CBFA18191905661A6392A309778E64A83310B",
                          "accent":  "amber"
                      },
                      {
@@ -63,13 +58,13 @@
                          "shortName":  "平台总控",
                          "audience":  "平台所有者",
                          "description":  "全平台应用、权限、财务与审计总控",
-                         "fileName":  "yiyunying-platform-owner-v2.7.4-debug.apk",
+                         "fileName":  "yiyunying-platform-owner-v2.7.5-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner.debug",
-                         "versionName":  "2.7.4-platform-owner-debug",
-                         "versionCode":  49,
-                         "sizeBytes":  32023728,
+                         "versionName":  "2.7.5-platform-owner-debug",
+                         "versionCode":  50,
+                         "sizeBytes":  32023860,
                          "size":  "30.54 MB",
-                         "sha256":  "3B33E3C4EB701F3B679D8A86B020C242EF3512C7EADBA6278A887B441E2F7847",
+                         "sha256":  "D31B957027932D3C64983D0AB67C9DA2DD84AE1DBFC76A63D7EC6011D658F2BE",
                          "accent":  "charcoal"
                      }
                  ]

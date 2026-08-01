@@ -47,6 +47,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityUserSettingsBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.ui.auth.ForgotPasswordActivity;
+import xyz.jjmxg.yiyunying.ui.common.LifecycleChecker;
 import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.home.HiddenConversationsActivity;
 import xyz.jjmxg.yiyunying.ui.home.RelationshipHubActivity;
@@ -220,8 +221,12 @@ public final class UserSettingsActivity extends SystemInsetActivity {
             AlertDialog dialog = new YiyunyingDialogBuilder(this)
                 .setTitle(tr("软件更新与维护"))
                 .setMessage(tr("当前版本：") + BuildConfig.VERSION_NAME
-                    + "\n\n" + tr("登录时和软件运行期间会自动检查维护状态与强制更新要求。"))
-                .setPositiveButton(tr("知道了"), null)
+                    + "\n\n" + tr("立即检查会直接请求更新服务，不需要退出并重新打开软件。"))
+                .setPositiveButton(tr("立即检查"), (ignored, which) -> {
+                    resetUpdateInfoState();
+                    LifecycleChecker.checkNow(this, binding == null ? null : binding.getRoot());
+                })
+                .setNegativeButton(tr("关闭"), null)
                 .create();
             dialog.setOnDismissListener(ignored -> resetUpdateInfoState());
             dialog.show();

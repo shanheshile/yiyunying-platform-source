@@ -5,9 +5,26 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:paddingTop="5dp"
     android:paddingBottom="5dp">
+
+    <TextView
+        android:id="@+id/timelineLabel"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:gravity="center"
+        android:includeFontPadding="true"
+        android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
+        android:textColor="@color/outline"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/messageBody"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
     <LinearLayout
         android:id="@+id/selectionRail"
@@ -247,5 +264,6 @@
                 android:textColor="?attr/colorOnPrimaryContainer"
                 android:textStyle="bold" />
         </FrameLayout>
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

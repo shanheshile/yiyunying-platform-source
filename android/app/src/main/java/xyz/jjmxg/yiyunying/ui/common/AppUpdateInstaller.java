@@ -1,6 +1,10 @@
 package xyz.jjmxg.yiyunying.ui.common;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -14,9 +18,11 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
-import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import com.google.gson.JsonObject;
 
 import java.io.File;
@@ -35,10 +41,14 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import xyz.jjmxg.yiyunying.core.CrashReporter;
+import xyz.jjmxg.yiyunying.core.NotificationIconResolver;
 import xyz.jjmxg.yiyunying.data.api.ApiClient;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 
 public final class AppUpdateInstaller {
+    private static final String UPDATE_CHANNEL = "software_updates";
+    private static final int UPDATE_NOTIFICATION_ID = 27150;
+
     private AppUpdateInstaller() { }
 
     public static void install(Activity activity, JsonObject update, boolean forced, Runnable onContinue) {
@@ -71,12 +81,16 @@ public final class AppUpdateInstaller {
         AlertDialog progress = new YiyunyingDialogBuilder(activity)
             .setTitle("正在下载更新")
             .setView(progressContent)
-            .setCancelable(!forced)
+            .setCancelable(false)
             .create();
+        progress.setCanceledOnTouchOutside(false);
+        ensureNotificationChannel(activity);
+        notifyProgress(activity, 0L, -1L);
         try {
             progress.show();
         } catch (RuntimeException | LinkageError exception) {
             CrashReporter.record("显示更新下载进度", exception);
+            notifyFailure(activity, "无法显示下载进度，请稍后重试");
             if (!forced) runContinue(onContinue);
             return;
         }
@@ -99,9 +113,11 @@ public final class AppUpdateInstaller {
             .readTimeout(5, TimeUnit.MINUTES)
             .callTimeout(8, TimeUnit.MINUTES)
             .build();
-        Request request = new Request.Builder().url(url).header("Accept", "application/vnd.android.package-archive,*/*").build();
+        Request request = new Request.Builder().url(url)
+            .header("Accept", "application/vnd.android.package-archive,*/*").build();
         client.newCall(request).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException exception) {
+                notifyFailure(activity, "下载更新失败，请检查网络后重试");
                 activity.runOnUiThread(() -> {
                     if (usable(activity)) {
                         safeDismiss(progress);
@@ -118,25 +134,30 @@ public final class AppUpdateInstaller {
                     } else {
                         ResponseBody body = safeResponse.body();
                         if (body == null) failure = "下载服务器没有返回安装包内容。";
-                        else failure = saveAndVerify(activity, body, temporary, apk, expectedSize, expectedHash, expectedPackage,
-                            (downloaded, totalBytes) -> activity.runOnUiThread(() -> {
-                                if (activity.isFinishing() || activity.isDestroyed()) return;
-                                if (totalBytes <= 0L) {
-                                    progressBar.setIndeterminate(true);
-                                    progressText.setText("已下载 " + readableBytes(downloaded));
-                                } else {
-                                    int percent = (int) Math.min(100L, downloaded * 100L / totalBytes);
-                                    progressBar.setIndeterminate(false);
-                                    progressBar.setProgress(percent);
-                                    progressText.setText("已下载 " + percent + "%  ·  "
-                                        + readableBytes(downloaded) + " / " + readableBytes(totalBytes));
-                                }
-                            }));
+                        else failure = saveAndVerify(activity, body, temporary, apk, expectedSize, expectedHash,
+                            expectedPackage, (downloaded, totalBytes) -> {
+                                notifyProgress(activity, downloaded, totalBytes);
+                                activity.runOnUiThread(() -> {
+                                    if (activity.isFinishing() || activity.isDestroyed()) return;
+                                    if (totalBytes <= 0L) {
+                                        progressBar.setIndeterminate(true);
+                                        progressText.setText("已下载 " + readableBytes(downloaded));
+                                    } else {
+                                        int percent = (int) Math.min(100L, downloaded * 100L / totalBytes);
+                                        progressBar.setIndeterminate(false);
+                                        progressBar.setProgress(percent);
+                                        progressText.setText("已下载 " + percent + "%  ·  "
+                                            + readableBytes(downloaded) + " / " + readableBytes(totalBytes));
+                                    }
+                                });
+                            });
                     }
                 } catch (IOException exception) {
                     failure = "保存安装包失败，请检查设备存储空间。";
                 }
                 String result = failure;
+                if (result == null) notifyReady(activity, apk);
+                else notifyFailure(activity, result);
                 activity.runOnUiThread(() -> {
                     if (!usable(activity)) return;
                     safeDismiss(progress);
@@ -244,9 +265,7 @@ public final class AppUpdateInstaller {
             return;
         }
         Uri content = FileProvider.getUriForFile(activity, activity.getPackageName() + ".capture-files", apk);
-        Intent install = new Intent(Intent.ACTION_VIEW)
-            .setDataAndType(content, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent install = installIntent(content);
         try {
             activity.startActivity(install);
             if (!forced) runContinue(onContinue);
@@ -255,7 +274,15 @@ public final class AppUpdateInstaller {
         }
     }
 
-    private static void showFailure(Activity activity, JsonObject update, boolean forced, Runnable onContinue, String message) {
+    private static Intent installIntent(Uri content) {
+        return new Intent(Intent.ACTION_VIEW)
+            .setDataAndType(content, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+    }
+
+    private static void showFailure(Activity activity, JsonObject update, boolean forced, Runnable onContinue,
+                                    String message) {
+        notifyFailure(activity, message);
         if (!usable(activity)) return;
         JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
         com.google.android.material.dialog.MaterialAlertDialogBuilder builder = new YiyunyingDialogBuilder(activity)
@@ -275,6 +302,87 @@ public final class AppUpdateInstaller {
             CrashReporter.record("显示更新失败提示", exception);
             if (!forced) runContinue(onContinue);
         }
+    }
+
+    private static void ensureNotificationChannel(Activity activity) {
+        if (Build.VERSION.SDK_INT < 26) return;
+        NotificationManager manager = activity.getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        NotificationChannel channel = new NotificationChannel(
+            UPDATE_CHANNEL, "软件更新", NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription("显示软件更新下载进度和安装状态");
+        channel.setSound(null, null);
+        manager.createNotificationChannel(channel);
+    }
+
+    private static void notifyProgress(Activity activity, long downloaded, long total) {
+        int percent = total > 0L ? (int) Math.min(100L, downloaded * 100L / total) : 0;
+        String detail = total > 0L
+            ? percent + "% · " + readableBytes(downloaded) + " / " + readableBytes(total)
+            : (downloaded > 0L ? "已下载 " + readableBytes(downloaded) : "正在连接下载服务器…");
+        NotificationCompat.Builder builder = notificationBuilder(activity)
+            .setContentTitle("正在下载软件更新")
+            .setContentText(detail)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setProgress(100, percent, total <= 0L);
+        notifySafely(activity, builder);
+    }
+
+    private static void notifyReady(Activity activity, File apk) {
+        NotificationCompat.Builder builder = notificationBuilder(activity)
+            .setContentTitle("更新已下载")
+            .setContentText("安装包校验通过，点击继续安装")
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setProgress(0, 0, false);
+        try {
+            Uri content = FileProvider.getUriForFile(activity,
+                activity.getPackageName() + ".capture-files", apk);
+            PendingIntent install = PendingIntent.getActivity(activity, UPDATE_NOTIFICATION_ID,
+                installIntent(content), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            builder.setContentIntent(install);
+        } catch (RuntimeException exception) {
+            CrashReporter.record("创建更新安装通知", exception);
+        }
+        notifySafely(activity, builder);
+    }
+
+    private static void notifyFailure(Activity activity, String message) {
+        if (activity == null) return;
+        ensureNotificationChannel(activity);
+        NotificationCompat.Builder builder = notificationBuilder(activity)
+            .setContentTitle("更新未完成")
+            .setContentText(message == null || message.trim().isEmpty() ? "请稍后重试" : message)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setProgress(0, 0, false);
+        notifySafely(activity, builder);
+    }
+
+    private static NotificationCompat.Builder notificationBuilder(Activity activity) {
+        return new NotificationCompat.Builder(activity, UPDATE_CHANNEL)
+            .setSmallIcon(NotificationIconResolver.smallIcon(activity))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+    }
+
+    private static void notifySafely(Activity activity, NotificationCompat.Builder builder) {
+        if (activity == null || builder == null || !notificationsAllowed(activity)) return;
+        try {
+            NotificationManagerCompat.from(activity).notify(UPDATE_NOTIFICATION_ID, builder.build());
+        } catch (SecurityException exception) {
+            CrashReporter.record("更新通知权限不可用", exception);
+        } catch (RuntimeException exception) {
+            CrashReporter.record("显示更新通知", exception);
+        }
+    }
+
+    private static boolean notificationsAllowed(Activity activity) {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+            || ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private static boolean usable(Activity activity) {

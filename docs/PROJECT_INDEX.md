@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- Android 版本：`2.7.4`（`versionCode 49`）
+- Android 版本：`2.7.5`（`versionCode 50`）
 - 客户端形态：用户端、管理员端、授权端、总控端
 - 服务端：PHP API、MySQL 数据库、WebSocket/TURN/推送等外部基础设施
 - 下载站：静态下载中心与版本元数据
@@ -23,7 +23,10 @@
 
 ## 文档导航
 
+- [全量需求与实施总纲](MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)：唯一主需求索引、编号、真实状态、实施顺序与完成定义
+
 - [项目总览](../README.md)
+- [2.7.5 发布说明与十一领域验收矩阵](releases/2.7.5.md)
 - [2.7.4 发布说明与十一领域验收矩阵](releases/2.7.4.md)
 - [2.7.3 发布说明与下一步开发目标](releases/2.7.3.md)
 - [架构说明](../ARCHITECTURE.md)

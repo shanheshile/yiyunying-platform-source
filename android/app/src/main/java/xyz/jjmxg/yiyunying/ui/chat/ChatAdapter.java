@@ -63,6 +63,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private final List<JsonObject> items = new ArrayList<>();
     private final Set<Long> expandedImages = new HashSet<>();
     private final Set<Long> collapsedTranscripts = new HashSet<>();
+    private final Set<Long> expandedTimelineLabels = new HashSet<>();
     private final Map<Long, Integer> stackedPositions = new HashMap<>();
     private final Set<Long> selectedIds = new LinkedHashSet<>();
     private final long actorId;
@@ -220,8 +221,24 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         renderMedia(holder, item);
         renderTags(holder, item);
         String time = Jsons.string(item, "created_at");
-        holder.binding.time.setText(time.length() > 16 ? time.substring(5, 16) : time);
-        holder.binding.time.setGravity(mine ? Gravity.END : Gravity.START);
+        String previousTime = position > 0 ? Jsons.string(items.get(position - 1), "created_at") : "";
+        long messageId = itemId(item);
+        boolean showTimeline = ChatTimelineFormatter.shouldShow(previousTime, time);
+        holder.binding.timelineLabel.setVisibility(showTimeline ? View.VISIBLE : View.GONE);
+        if (showTimeline) {
+            boolean detailedTimeline = expandedTimelineLabels.contains(messageId);
+            holder.binding.timelineLabel.setText(ChatTimelineFormatter.label(
+                time, System.currentTimeMillis(), detailedTimeline));
+            holder.binding.timelineLabel.setOnClickListener(view -> {
+                if (!expandedTimelineLabels.add(messageId)) expandedTimelineLabels.remove(messageId);
+                int current = holder.getBindingAdapterPosition();
+                if (current != RecyclerView.NO_POSITION) notifyItemChanged(current);
+            });
+        } else {
+            holder.binding.timelineLabel.setText("");
+            holder.binding.timelineLabel.setOnClickListener(null);
+        }
+        holder.binding.time.setVisibility(View.GONE);
         boolean edited = Jsons.longValue(item, "edit_count") > 0 && !system && !recalled;
         holder.binding.editedLabel.setVisibility(edited ? View.VISIBLE : View.GONE);
         holder.binding.editedLabel.setText(edited && Jsons.longValue(item, "edit_count") > 1
@@ -231,7 +248,6 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.systemDelete.setVisibility(deletableSystem ? View.VISIBLE : View.GONE);
         holder.binding.systemDelete.setOnClickListener(deletableSystem ? view -> listener.onDeleteSystem(item) : null);
         bindAvatar(holder, item, mine, system, sender);
-        long messageId = itemId(item);
         holder.binding.selectionRail.setVisibility(selectionMode && selectable ? View.VISIBLE : View.GONE);
         holder.binding.selectCheck.setChecked(selectedIds.contains(messageId));
         holder.binding.selectCheck.setOnClickListener(view -> listener.onSelectionChanged(item, holder.binding.selectCheck.isChecked()));

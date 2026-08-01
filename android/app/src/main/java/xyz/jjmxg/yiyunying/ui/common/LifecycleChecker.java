@@ -3,7 +3,6 @@ package xyz.jjmxg.yiyunying.ui.common;
 import android.app.Activity;
 import android.view.View;
 
-import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.gson.JsonObject;
 
@@ -24,6 +23,16 @@ public final class LifecycleChecker {
     }
 
     public static RequestHandle check(Activity activity, View anchor, Runnable onAllowed) {
+        return checkInternal(activity, anchor, onAllowed, false);
+    }
+
+    /** Runs a fresh lifecycle request from Settings instead of showing a static explanation. */
+    public static RequestHandle checkNow(Activity activity, View anchor) {
+        return checkInternal(activity, anchor, null, true);
+    }
+
+    private static RequestHandle checkInternal(Activity activity, View anchor, Runnable onAllowed,
+                                               boolean manual) {
         AtomicBoolean allowed = new AtomicBoolean(false);
         Runnable allowOnce = () -> {
             if (!allowed.compareAndSet(false, true) || !usable(activity)) return;
@@ -33,6 +42,10 @@ public final class LifecycleChecker {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("edition_code", AppEdition.code());
         query.put("version_code", String.valueOf(BuildConfig.VERSION_CODE));
+        if (manual) {
+            query.put("request_mode", "manual");
+            query.put("checked_at", String.valueOf(System.currentTimeMillis()));
+        }
         if ("user".equals(AppEdition.code())) {
             query.put("app_key", session.appKey());
         } else {
@@ -44,20 +57,27 @@ public final class LifecycleChecker {
         return AppAccess.from(activity).repository().getPublic("/api/public/lifecycle", query, result -> {
             if (!usable(activity)) return;
             if (!result.isSuccessful()) {
-                if (anchor != null && anchor.isAttachedToWindow()) {
-                    Snackbar.make(anchor, result.message().isEmpty()
-                        ? "更新维护检查失败，继续使用" : result.message(), Snackbar.LENGTH_LONG).show();
-                }
-                allowOnce.run();
+                showNotice(anchor, result.message().isEmpty()
+                    ? (manual ? "检查更新失败，请检查网络后重试" : "更新维护检查失败，继续使用")
+                    : result.message(), Snackbar.LENGTH_LONG);
+                if (!manual) allowOnce.run();
                 return;
             }
             JsonObject data = result.dataObject() == null ? new JsonObject() : result.dataObject().deepCopy();
             JsonObject maintenance = Jsons.object(data, "maintenance").deepCopy();
             if (booleanValue(maintenance, "active")) {
-                showMaintenance(activity, anchor, maintenance, allowOnce);
+                showMaintenance(activity, anchor, maintenance, allowOnce, manual);
                 return;
             }
             JsonObject update = Jsons.object(data, "update").deepCopy();
+            if (booleanValue(update, "available")) {
+                showUpdate(activity, update, manual ? null : allowOnce);
+                return;
+            }
+            if (manual) {
+                showNotice(anchor, "已是最新版本（" + BuildConfig.VERSION_NAME + "）", Snackbar.LENGTH_LONG);
+                return;
+            }
             JsonObject festival = Jsons.object(data, "festival_theme").deepCopy();
             Runnable afterUpdate = () -> {
                 if (!usable(activity)) return;
@@ -68,15 +88,12 @@ public final class LifecycleChecker {
                     allowOnce.run();
                 }
             };
-            if (booleanValue(update, "available")) {
-                showUpdate(activity, update, afterUpdate);
-                return;
-            }
             afterUpdate.run();
         });
     }
 
-    private static void showMaintenance(Activity activity, View anchor, JsonObject maintenance, Runnable onAllowed) {
+    private static void showMaintenance(Activity activity, View anchor, JsonObject maintenance,
+                                        Runnable onAllowed, boolean manual) {
         if (!usable(activity)) return;
         boolean forced = booleanValue(maintenance, "forced");
         String configuredTitle = Jsons.string(maintenance, "title");
@@ -90,11 +107,13 @@ public final class LifecycleChecker {
         builder.setCancelable(false)
             .setPositiveButton("重新检查", (dialog, which) -> {
                 if (!handled.compareAndSet(false, true) || !usable(activity)) return;
-                check(activity, anchor, onAllowed);
+                checkInternal(activity, anchor, manual ? null : onAllowed, manual);
             });
         if (!forced) {
-            builder.setNegativeButton("临时进入", (dialog, which) -> {
-                if (handled.compareAndSet(false, true)) runSafely(activity, onAllowed, "临时进入应用");
+            builder.setNegativeButton(manual ? "关闭" : "临时进入", (dialog, which) -> {
+                if (handled.compareAndSet(false, true) && !manual) {
+                    runSafely(activity, onAllowed, "临时进入应用");
+                }
             });
         } else {
             builder.setNegativeButton("退出", (dialog, which) -> {
@@ -106,13 +125,19 @@ public final class LifecycleChecker {
         } catch (RuntimeException | LinkageError exception) {
             CrashReporter.record("显示维护提示", exception);
             if (forced) activity.finishAffinity();
-            else runSafely(activity, onAllowed, "维护提示降级");
+            else if (!manual) runSafely(activity, onAllowed, "维护提示降级");
         }
     }
 
     private static void showUpdate(Activity activity, JsonObject update, Runnable onAllowed) {
         boolean forced = booleanValue(update, "force_update");
         UpdateBottomSheet.show(activity, update, forced, onAllowed);
+    }
+
+    private static void showNotice(View anchor, String message, int duration) {
+        if (anchor != null && anchor.isAttachedToWindow()) {
+            Snackbar.make(anchor, message, duration).show();
+        }
     }
 
     private static boolean booleanValue(JsonObject object, String key) {
