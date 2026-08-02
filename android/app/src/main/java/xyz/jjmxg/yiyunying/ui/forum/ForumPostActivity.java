@@ -81,6 +81,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private JsonObject post = new JsonObject();
     private final List<CommentAttachment> commentAttachments = new ArrayList<>();
     private final Set<Long> commentMentionIds = new LinkedHashSet<>();
+    private final Set<Long> expandedCommentThreads = new LinkedHashSet<>();
     private boolean suppressMentionPicker;
     private String commentPickerType = "file";
     private final ActivityResultLauncher<Intent> commentPicker = registerForActivityResult(
@@ -329,7 +330,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentsContainer.removeAllViews();
         binding.emptyComments.setVisibility(comments.isEmpty() ? View.VISIBLE : View.GONE);
         Map<Long, View> commentAnchors = new LinkedHashMap<>();
-        Map<Long, LinearLayout> threadContainers = new LinkedHashMap<>();
+        Map<Long, CommentThreadView> threadContainers = new LinkedHashMap<>();
         List<JsonObject> commentItems = new ArrayList<>();
         List<ForumCommentThreadOrder.CommentRef> commentRefs = new ArrayList<>();
         for (JsonElement element : comments) {
@@ -345,21 +346,21 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             ));
         }
         Map<Integer, Long> resolvedRoots = ForumCommentThreadOrder.resolvedRootIds(commentRefs);
+        long requestedFocusId = focusCommentId;
+        for (int index = 0; index < commentItems.size(); index++) {
+            if (Jsons.longValue(commentItems.get(index), "id") == requestedFocusId) {
+                expandedCommentThreads.add(resolvedRoots.getOrDefault(index, requestedFocusId));
+                break;
+            }
+        }
         for (int orderedIndex : ForumCommentThreadOrder.orderedIndexes(commentRefs)) {
             JsonObject comment = commentItems.get(orderedIndex);
             long commentId = Jsons.longValue(comment, "id");
             long parentCommentId = Jsons.longValue(comment, "parent_id");
             long rootCommentId = resolvedRoots.getOrDefault(orderedIndex, commentId);
-            LinearLayout thread = threadContainers.get(rootCommentId);
+            CommentThreadView thread = threadContainers.get(rootCommentId);
             if (thread == null) {
-                thread = new LinearLayout(this);
-                thread.setOrientation(LinearLayout.VERTICAL);
-                LinearLayout.LayoutParams threadParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-                threadParams.bottomMargin = dp(12);
-                thread.setLayoutParams(threadParams);
-                binding.commentsContainer.addView(thread);
+                thread = new CommentThreadView(rootCommentId);
                 threadContainers.put(rootCommentId, thread);
             }
             MaterialCardView card = new MaterialCardView(this);
@@ -456,12 +457,102 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 name.setOnClickListener(detail);
                 card.setOnLongClickListener(view -> { detail.onClick(view); return true; });
             }
-            thread.addView(card);
+            if (parentCommentId > 0L) {
+                thread.addReply(card, comment);
+            } else {
+                thread.rootContainer.addView(card);
+            }
             commentAnchors.put(commentId, card);
             if (focusCommentId > 0L && focusCommentId == commentId) {
                 focusCommentId = 0L;
                 focusCommentCard(card, "已定位到 @ 你的评论");
             }
+        }
+        for (CommentThreadView thread : threadContainers.values()) thread.refresh();
+    }
+
+    private final class CommentThreadView {
+        final long rootId;
+        final LinearLayout rootContainer;
+        final LinearLayout previewContainer;
+        final LinearLayout repliesContainer;
+        final MaterialButton toggle;
+        int replyCount;
+
+        CommentThreadView(long rootId) {
+            this.rootId = rootId;
+            LinearLayout wrapper = new LinearLayout(ForumPostActivity.this);
+            wrapper.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams wrapperParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+            wrapperParams.bottomMargin = dp(12);
+            wrapper.setLayoutParams(wrapperParams);
+
+            rootContainer = new LinearLayout(ForumPostActivity.this);
+            rootContainer.setOrientation(LinearLayout.VERTICAL);
+            previewContainer = new LinearLayout(ForumPostActivity.this);
+            previewContainer.setOrientation(LinearLayout.VERTICAL);
+            repliesContainer = new LinearLayout(ForumPostActivity.this);
+            repliesContainer.setOrientation(LinearLayout.VERTICAL);
+            toggle = new MaterialButton(ForumPostActivity.this);
+            toggle.setMinWidth(0);
+            toggle.setMinHeight(dp(40));
+            toggle.setInsetTop(0);
+            toggle.setInsetBottom(0);
+            toggle.setTextSize(13);
+            toggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            toggle.setOnClickListener(view -> {
+                if (expandedCommentThreads.contains(rootId)) expandedCommentThreads.remove(rootId);
+                else expandedCommentThreads.add(rootId);
+                refresh();
+            });
+
+            wrapper.addView(rootContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            previewParams.leftMargin = dp(42);
+            previewParams.rightMargin = dp(12);
+            wrapper.addView(previewContainer, previewParams);
+            LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
+            toggleParams.leftMargin = dp(32);
+            wrapper.addView(toggle, toggleParams);
+            wrapper.addView(repliesContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            binding.commentsContainer.addView(wrapper);
+        }
+
+        void addReply(MaterialCardView card, JsonObject comment) {
+            repliesContainer.addView(card);
+            replyCount++;
+            if (replyCount > 2) return;
+            TextView preview = new TextView(ForumPostActivity.this);
+            String author = Jsons.string(comment, "nickname");
+            if (author.isEmpty()) author = "用户 " + Jsons.longValue(comment, "user_id");
+            String content = Jsons.string(comment, "content").trim();
+            if (content.isEmpty() && !Jsons.array(comment, "attachments").isEmpty()) content = "[附件]";
+            preview.setText(author + "：" + content);
+            preview.setTextColor(getColor(R.color.on_surface_variant));
+            preview.setTextSize(13);
+            preview.setSingleLine(true);
+            preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            preview.setPadding(dp(8), dp(4), dp(8), dp(4));
+            preview.setOnClickListener(view -> {
+                expandedCommentThreads.add(rootId);
+                refresh();
+            });
+            previewContainer.addView(preview, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
+        }
+
+        void refresh() {
+            boolean expanded = expandedCommentThreads.contains(rootId);
+            previewContainer.setVisibility(replyCount > 0 && !expanded ? View.VISIBLE : View.GONE);
+            repliesContainer.setVisibility(replyCount > 0 && expanded ? View.VISIBLE : View.GONE);
+            toggle.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
+            toggle.setText(expanded ? "收起回复" : "展开 " + replyCount + " 条回复");
         }
     }
 

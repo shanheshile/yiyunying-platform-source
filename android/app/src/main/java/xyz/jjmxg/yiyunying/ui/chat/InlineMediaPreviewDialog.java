@@ -59,6 +59,7 @@ public final class InlineMediaPreviewDialog {
         private final FrameLayout stage;
         private final TextView title;
         private final MaterialButton original;
+        private final MaterialButton animation;
         private final TextView time;
         private final SeekBar seek;
         private final MaterialButton speed;
@@ -114,6 +115,10 @@ public final class InlineMediaPreviewDialog {
             original.setVisibility(View.GONE);
             original.setOnClickListener(view -> loadOriginalImage());
             toolbar.addView(original, new LinearLayout.LayoutParams(dp(88), dp(48)));
+            animation = textButton("播放动图");
+            animation.setVisibility(View.GONE);
+            animation.setOnClickListener(view -> replayAnimatedImage());
+            toolbar.addView(animation, new LinearLayout.LayoutParams(dp(88), dp(48)));
             MaterialButton info = iconButton(R.drawable.ic_file, "查看媒体信息");
             info.setOnClickListener(view -> showMediaInfo());
             toolbar.addView(info, new LinearLayout.LayoutParams(dp(52), dp(48)));
@@ -227,6 +232,8 @@ public final class InlineMediaPreviewDialog {
             originalLoaded = false;
             original.setText("查看原图");
             original.setVisibility(View.GONE);
+            animation.setText("播放动图");
+            animation.setVisibility(View.GONE);
             title.setText((index + 1) + " / " + items.size() + "  " + mediaTypeLabel(item));
             if (isVideo(item) || (isMotionPhoto(item) && !motionVideoUrl(item).isEmpty())) {
                 renderVideo(item);
@@ -255,8 +262,8 @@ public final class InlineMediaPreviewDialog {
             boolean animated = isAnimatedImage(item);
             if (animated) {
                 originalLoaded = true;
-                original.setText("原始动图");
-                original.setVisibility(View.VISIBLE);
+                animation.setText("重新播放");
+                animation.setVisibility(View.VISIBLE);
                 ImageLoader.get().load(absolute(source), image, R.drawable.ic_file);
                 return;
             }
@@ -666,6 +673,21 @@ public final class InlineMediaPreviewDialog {
             ImageLoader.get().load(absolute(source), currentImage, R.drawable.ic_file);
             originalLoaded = true;
             original.setText(isAnimatedImage(item) ? "原始动图" : "已是原图");
+        }
+
+        private void replayAnimatedImage() {
+            if (currentImage == null) return;
+            JsonObject item = items.get(index);
+            if (!isAnimatedImage(item)) return;
+            String source = originalImageUrl(item);
+            if (source.isEmpty()) {
+                Toast.makeText(context, "当前内容没有可播放的动图文件", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String absoluteSource = absolute(source);
+            ImageLoader.get().invalidate(absoluteSource);
+            ImageLoader.get().load(absoluteSource, currentImage, R.drawable.ic_file);
+            animation.setText("重新播放");
         }
 
         private String mediaType(JsonObject item) {

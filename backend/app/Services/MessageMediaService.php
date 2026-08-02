@@ -72,16 +72,27 @@ final class MessageMediaService
         if ($ids === []) return $items;
         $values = array_keys($ids);
         $placeholders = implode(',', array_fill(0, count($values), '?'));
-        $where = "target_type = ? AND target_id IN ({$placeholders})";
+        $where = "ma.target_type = ? AND ma.target_id IN ({$placeholders})";
         $query = array_merge([$targetType], $values);
         if ($appId !== null) {
-            $where .= ' AND app_id = ?';
+            $where .= ' AND ma.app_id = ?';
             $query[] = $appId;
         }
         $rows = Database::all(
-            "SELECT id, target_id, media_type, upload_id, sticker_id, url, thumbnail_url,
-                    file_name, mime_type, size_bytes, width, height, duration_ms, sort_order, metadata_json
-             FROM media_attachments WHERE {$where} ORDER BY target_id, sort_order, id",
+            "SELECT ma.id, ma.target_id, ma.media_type, ma.upload_id, ma.sticker_id, ma.url,
+                    COALESCE(NULLIF(up.thumbnail_url, ''), ma.thumbnail_url) AS thumbnail_url,
+                    ma.file_name, ma.mime_type, ma.size_bytes, ma.width, ma.height, ma.duration_ms,
+                    ma.sort_order, ma.metadata_json,
+                    COALESCE(NULLIF(up.original_file_url, ''), NULLIF(up.file_url, ''), ma.url) AS original_file_url,
+                    COALESCE(NULLIF(up.optimized_file_url, ''), ma.url) AS optimized_file_url,
+                    COALESCE(NULLIF(up.original_size_bytes, 0), ma.size_bytes) AS original_size_bytes,
+                    COALESCE(up.is_animated, 0) AS is_animated,
+                    COALESCE(up.upload_mode, 'original') AS upload_mode,
+                    COALESCE(up.optimization_status, 'not_required') AS optimization_status
+             FROM media_attachments ma
+             LEFT JOIN uploads up
+               ON up.id = ma.upload_id AND up.admin_id = ma.admin_id AND up.app_id = ma.app_id
+             WHERE {$where} ORDER BY ma.target_id, ma.sort_order, ma.id",
             $query
         );
         $grouped = [];
@@ -91,7 +102,10 @@ final class MessageMediaService
             $row['id'] = (int) $row['id'];
             $row['upload_id'] = $row['upload_id'] === null ? null : (int) $row['upload_id'];
             $row['sticker_id'] = $row['sticker_id'] === null ? null : (int) $row['sticker_id'];
-            foreach (['size_bytes', 'width', 'height', 'duration_ms', 'sort_order'] as $key) $row[$key] = (int) $row[$key];
+            foreach (['size_bytes', 'original_size_bytes', 'width', 'height', 'duration_ms', 'sort_order'] as $key) {
+                $row[$key] = (int) $row[$key];
+            }
+            $row['is_animated'] = (int) $row['is_animated'] === 1;
             $row['metadata'] = self::decodeObject($row['metadata_json'] ?? null);
             unset($row['metadata_json']);
             $grouped[$targetId][] = $row;

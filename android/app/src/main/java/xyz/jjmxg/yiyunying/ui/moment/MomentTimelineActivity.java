@@ -72,6 +72,7 @@ import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.location.LocationPickerActivity;
 import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
+import xyz.jjmxg.yiyunying.ui.social.FriendPickerActivity;
 import xyz.jjmxg.yiyunying.ui.social.SocialDirectoryActivity;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
 import xyz.jjmxg.yiyunying.ui.upload.ImageGalleryActivity;
@@ -96,6 +97,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private final ArrayList<Uri> composerUris = new ArrayList<>();
+    private final ArrayList<Long> composerVisibilityUserIds = new ArrayList<>();
     private final Runnable delayedSearch = this::load;
     private ActivityMomentTimelineBinding binding;
     private MomentAdapter adapter;
@@ -112,6 +114,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private BottomSheetDialog likesDialog;
     private SheetMomentLikesBinding likesBinding;
     private JsonObject editingMoment;
+    private boolean visibilityOnlyEdit;
     private JsonObject commentsMoment;
     private JsonObject likesMoment;
     private JsonObject pendingForwardMoment;
@@ -139,6 +142,18 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 if (uri != null && composerUris.size() < MAX_MEDIA) composerUris.add(uri);
             }
             renderComposerMedia();
+        });
+
+    private final ActivityResultLauncher<Intent> visibilityFriendPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (!isUiActive() || result.getResultCode() != RESULT_OK
+                || result.getData() == null || composerBinding == null) return;
+            long[] selected = result.getData().getLongArrayExtra(FriendPickerActivity.EXTRA_SELECTED_IDS);
+            composerVisibilityUserIds.clear();
+            if (selected != null) {
+                for (long userId : selected) if (userId > 0L) composerVisibilityUserIds.add(userId);
+            }
+            renderVisibility();
         });
 
     private final ActivityResultLauncher<Intent> forwardFriendPicker = registerForActivityResult(
@@ -374,10 +389,28 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     }
 
     private void showComposer(JsonObject item) {
+        showComposer(item, false);
+    }
+
+    private void showVisibilityEditor(JsonObject item) {
+        showComposer(item, true);
+    }
+
+    private void showComposer(JsonObject item, boolean visibilityOnly) {
         if (!isUiActive()) return;
         if (composerDialog != null && composerDialog.isShowing()) return;
         editingMoment = item == null ? null : item.deepCopy();
+        visibilityOnlyEdit = visibilityOnly && editingMoment != null;
         composerUris.clear();
+        composerVisibilityUserIds.clear();
+        if (item != null) {
+            for (JsonElement value : Jsons.array(item, "visibility_user_ids")) {
+                try {
+                    long userId = value.getAsLong();
+                    if (userId > 0L) composerVisibilityUserIds.add(userId);
+                } catch (RuntimeException ignored) { }
+            }
+        }
         composerVisibilityMode = item == null ? "inherit" : safeVisibilityMode(Jsons.string(item, "visibility_mode"));
         composerVisibleDays = item == null || !item.has("visible_days") || item.get("visible_days").isJsonNull()
             ? null : Jsons.intValue(item, "visible_days", 0);
@@ -391,10 +424,14 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         composerDialog = dialog;
         composerBinding = sheetBinding;
         dialog.setContentView(sheetBinding.getRoot());
-        composerBinding.titleText.setText(item == null ? "发布动态" : "编辑动态");
-        composerBinding.publishButton.setText(item == null ? "发布" : "保存");
+        composerBinding.titleText.setText(visibilityOnlyEdit ? "编辑可见范围" : item == null ? "发布动态" : "编辑内容");
+        composerBinding.publishButton.setText(visibilityOnlyEdit ? "保存范围" : item == null ? "发布" : "保存");
         if (item != null) composerBinding.contentInput.setText(Jsons.string(item, "content"));
-        if (item != null) composerBinding.visibilityUsersInput.setText(join(Jsons.array(item, "visibility_user_ids")));
+        composerBinding.contentLayout.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
+        composerBinding.mediaHint.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
+        composerBinding.mediaGrid.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
+        composerBinding.mediaActionsRow.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
+        composerBinding.locationHint.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
         composerBinding.mediaGrid.setLayoutManager(new GridLayoutManager(this, 3));
         composerBinding.mediaGrid.setItemAnimator(null);
         composerBinding.mediaButton.setOnClickListener(view -> mediaPicker.launch(
@@ -411,6 +448,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         });
         composerBinding.visibilityModeButton.setOnClickListener(view -> chooseVisibilityMode());
         composerBinding.visibleDaysButton.setOnClickListener(view -> chooseVisibleDays());
+        composerBinding.visibilityUsersInput.setFocusable(false);
+        composerBinding.visibilityUsersInput.setClickable(true);
+        composerBinding.visibilityUsersInput.setOnClickListener(view -> openVisibilityFriendPicker());
+        composerBinding.visibilityUsersLayout.setEndIconMode(
+            com.google.android.material.textfield.TextInputLayout.END_ICON_CUSTOM);
+        composerBinding.visibilityUsersLayout.setEndIconDrawable(R.drawable.ic_chevron_right);
+        composerBinding.visibilityUsersLayout.setEndIconOnClickListener(view -> openVisibilityFriendPicker());
         composerBinding.cancelButton.setOnClickListener(view -> dialog.dismiss());
         composerBinding.publishButton.setOnClickListener(view -> submitMoment());
         renderComposerMedia();
@@ -422,6 +466,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             composerBinding = null;
             composerDialog = null;
             editingMoment = null;
+            visibilityOnlyEdit = false;
+            composerVisibilityUserIds.clear();
             locationName = "";
             locationAddress = "";
             latitude = null;
@@ -615,8 +661,20 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         boolean excluded = "exclude".equals(composerVisibilityMode);
         composerBinding.visibilityUsersLayout.setVisibility(selected || excluded ? View.VISIBLE : View.GONE);
         composerBinding.visibilityUsersLayout.setHint(selected
-            ? "允许查看的 UID 或账号，用逗号分隔"
-            : "不允许查看的 UID 或账号，用逗号分隔");
+            ? "允许查看的好友"
+            : "不允许查看的好友");
+        composerBinding.visibilityUsersInput.setText(composerVisibilityUserIds.isEmpty()
+            ? "点击从好友列表选择"
+            : "已选择 " + composerVisibilityUserIds.size() + " 位好友");
+    }
+
+    private void openVisibilityFriendPicker() {
+        if (!isUiActive() || composerBinding == null) return;
+        boolean excluded = "exclude".equals(composerVisibilityMode);
+        visibilityFriendPicker.launch(FriendPickerActivity.pickerIntent(
+            this,
+            new ArrayList<>(composerVisibilityUserIds),
+            excluded ? "选择不让谁看" : "选择让谁看"));
     }
 
     private static String safeVisibilityMode(String value) {
@@ -650,6 +708,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void submitMoment() {
         if (composerBinding == null || actionRequest != null || uploadRequest != null) return;
+        if (visibilityOnlyEdit) {
+            submitVisibility();
+            return;
+        }
         String content = text(composerBinding.contentInput);
         int existingCount = editingMoment == null ? 0 : Jsons.array(editingMoment, "attachments").size();
         if (content.isEmpty() && composerUris.isEmpty() && existingCount == 0) {
@@ -702,7 +764,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         body.addProperty("visibility_mode", composerVisibilityMode);
         if (composerVisibleDays == null) body.add("visible_days", JsonNull.INSTANCE);
         else body.addProperty("visible_days", composerVisibleDays);
-        body.add("visibility_user_ids", tokens(text(composerBinding.visibilityUsersInput)));
+        body.add("visibility_user_ids", visibilityUserIdsJson());
         if (!locationName.isEmpty() && latitude != null && longitude != null) {
             body.addProperty("latitude", latitude);
             body.addProperty("longitude", longitude);
@@ -714,6 +776,43 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         actionRequest = editing
             ? AppAccess.from(this).repository().put("/api/user/moments/" + id, body, result -> completeSubmit(result, true))
             : AppAccess.from(this).repository().post("/api/user/moments", body, result -> completeSubmit(result, false));
+    }
+
+    private void submitVisibility() {
+        if (composerBinding == null || editingMoment == null || actionRequest != null) return;
+        long id = Jsons.longValue(editingMoment, "id");
+        if (id <= 0L) return;
+        setComposerEnabled(false);
+        JsonObject body = new JsonObject();
+        body.addProperty("visibility_mode", composerVisibilityMode);
+        if (composerVisibleDays == null) body.add("visible_days", JsonNull.INSTANCE);
+        else body.addProperty("visible_days", composerVisibleDays);
+        body.add("visibility_user_ids", visibilityUserIdsJson());
+        actionRequest = AppAccess.from(this).repository().put(
+            "/api/user/moments/" + id + "/visibility",
+            body,
+            result -> completeVisibilitySubmit(result));
+    }
+
+    private JsonArray visibilityUserIdsJson() {
+        JsonArray values = new JsonArray();
+        for (Long userId : composerVisibilityUserIds) if (userId != null && userId > 0L) values.add(userId);
+        return values;
+    }
+
+    private void completeVisibilitySubmit(xyz.jjmxg.yiyunying.data.api.ApiResult result) {
+        actionRequest = null;
+        if (composerBinding == null || isFinishing() || isDestroyed()) return;
+        if (result.isAuthenticationFailure()) { login(); return; }
+        if (!result.isSuccessful()) {
+            setComposerEnabled(true);
+            message(result.message().isEmpty() ? "可见范围保存失败" : result.message());
+            return;
+        }
+        BottomSheetDialog dialog = composerDialog;
+        if (dialog != null) dialog.dismiss();
+        message(result.message().isEmpty() ? "可见范围已更新" : result.message());
+        load(false);
     }
 
     private void completeSubmit(xyz.jjmxg.yiyunying.data.api.ApiResult result, boolean editing) {
@@ -750,7 +849,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         JsonObject snapshot = item.deepCopy();
         List<String> labels = new ArrayList<>();
         if (flag(snapshot, "can_pin")) labels.add(flag(snapshot, "is_pinned") ? "取消置顶" : "置顶动态");
-        if (flag(snapshot, "can_edit")) labels.add("编辑动态");
+        if (flag(snapshot, "can_edit")) labels.add("编辑内容");
+        if (flag(snapshot, "can_edit_visibility")) labels.add("编辑可见范围");
         if (flag(snapshot, "can_hide")) labels.add(flag(snapshot, "is_hidden") ? "取消隐藏" : "隐藏动态");
         if (flag(snapshot, "can_delete")) labels.add("删除动态");
         if (labels.isEmpty()) return;
@@ -765,7 +865,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     if (!isUiActive()) return;
                     if ("置顶动态".equals(action)) setMomentPinned(id, true);
                     else if ("取消置顶".equals(action)) setMomentPinned(id, false);
-                    else if ("编辑动态".equals(action)) showComposer(snapshot);
+                    else if ("编辑内容".equals(action)) showComposer(snapshot);
+                    else if ("编辑可见范围".equals(action)) showVisibilityEditor(snapshot);
                     else if ("隐藏动态".equals(action)) setMomentHidden(id, true);
                     else if ("取消隐藏".equals(action)) setMomentHidden(id, false);
                     else if ("删除动态".equals(action)) confirmDelete(snapshot);
@@ -1573,6 +1674,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 boolean manageable = MomentDisplayPolicy.isManageable(
                     flag(item, "can_pin"),
                     flag(item, "can_edit"),
+                    flag(item, "can_edit_visibility"),
                     flag(item, "can_hide"),
                     flag(item, "can_delete"));
                 row.moreButton.setVisibility(manageable ? View.VISIBLE : View.GONE);

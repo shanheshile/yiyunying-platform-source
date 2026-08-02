@@ -56,6 +56,9 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private MenuItem speedMenu;
     private MenuItem playbackMenu;
     private MenuItem fullscreenMenu;
+    private MenuItem originalMenu;
+    private MenuItem animationMenu;
+    private final Set<Integer> originalIndexes = new HashSet<>();
     private float playbackSpeed = 1f;
     private boolean immersive;
 
@@ -79,6 +82,12 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         MenuItem download = binding.toolbar.getMenu().add("保存到设备");
         download.setIcon(R.drawable.ic_file);
         download.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        originalMenu = binding.toolbar.getMenu().add("查看原图");
+        originalMenu.setIcon(R.drawable.ic_album);
+        originalMenu.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        animationMenu = binding.toolbar.getMenu().add("播放动图");
+        animationMenu.setIcon(R.drawable.ic_play);
+        animationMenu.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         speedMenu = binding.toolbar.getMenu().add("倍速 1.0x");
         speedMenu.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         playbackMenu = binding.toolbar.getMenu().add("亮度与音量");
@@ -86,7 +95,9 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         fullscreenMenu = binding.toolbar.getMenu().add("全屏");
         fullscreenMenu.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         binding.toolbar.setOnMenuItemClickListener(item -> {
-            if (item == speedMenu) showSpeedSelector();
+            if (item == originalMenu) loadOriginalCurrent();
+            else if (item == animationMenu) replayAnimatedCurrent();
+            else if (item == speedMenu) showSpeedSelector();
             else if (item == playbackMenu) showPlaybackSettings();
             else if (item == fullscreenMenu) toggleFullscreen();
             else confirmDownload();
@@ -117,6 +128,44 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         if (speedMenu != null) speedMenu.setVisible(video);
         if (playbackMenu != null) playbackMenu.setVisible(video);
         if (fullscreenMenu != null) fullscreenMenu.setVisible(video);
+        boolean animated = !video && isAnimatedImage(item);
+        String original = originalUrl(item);
+        String preview = previewUrl(item);
+        boolean hasSeparateOriginal = !original.isEmpty() && !original.equals(preview);
+        if (originalMenu != null) {
+            originalMenu.setVisible(!video && !animated);
+            originalMenu.setEnabled(hasSeparateOriginal && !originalIndexes.contains(position));
+            originalMenu.setTitle(originalIndexes.contains(position) || !hasSeparateOriginal ? "已是原图" : "查看原图");
+        }
+        if (animationMenu != null) {
+            animationMenu.setVisible(animated);
+            animationMenu.setTitle("重新播放动图");
+        }
+    }
+
+    private void loadOriginalCurrent() {
+        int position = binding.pager.getCurrentItem();
+        if (position < 0 || position >= images.size()) return;
+        JsonObject item = images.get(position);
+        if (originalUrl(item).isEmpty()) {
+            Snackbar.make(binding.getRoot(), "当前内容没有可用的原图", Snackbar.LENGTH_SHORT).show();
+            return;
+        }
+        originalIndexes.add(position);
+        adapter.notifyItemChanged(position);
+        updateTitle(position);
+    }
+
+    private void replayAnimatedCurrent() {
+        int position = binding.pager.getCurrentItem();
+        if (position < 0 || position >= images.size()) return;
+        JsonObject item = images.get(position);
+        if (!isAnimatedImage(item) || originalUrl(item).isEmpty()) return;
+        String source = mediaUrl(originalUrl(item));
+        ImageLoader.get().invalidate(source);
+        originalIndexes.add(position);
+        adapter.notifyItemChanged(position);
+        updateTitle(position);
     }
 
     private void toggleFullscreen() {
@@ -196,8 +245,10 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private void downloadCurrent() {
-        JsonObject image = images.get(binding.pager.getCurrentItem());
-        String url = mediaUrl(Jsons.string(image, "url"));
+        int position = binding.pager.getCurrentItem();
+        if (position < 0 || position >= images.size()) return;
+        JsonObject image = images.get(position);
+        String url = mediaUrl(originalUrl(image));
         String name = Jsons.string(image, "file_name");
         String type = Jsons.string(image, "media_type");
         boolean video = "video".equals(type) || Jsons.string(image, "mime_type").startsWith("video/");
@@ -237,7 +288,9 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             visible.add(holder);
             holder.frame.reset();
             JsonObject media = images.get(position);
-            String url = mediaUrl(Jsons.string(media, "url"));
+            String selected = originalIndexes.contains(position) || isAnimatedImage(media)
+                ? originalUrl(media) : previewUrl(media);
+            String url = mediaUrl(selected.isEmpty() ? originalUrl(media) : selected);
             boolean video = isVideo(media);
             holder.image.setVisibility(video ? android.view.View.GONE : android.view.View.VISIBLE);
             holder.video.setVisibility(video ? android.view.View.VISIBLE : android.view.View.GONE);
@@ -380,6 +433,47 @@ public final class ImageGalleryActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private boolean isVideo(JsonObject media) {
         return "video".equals(Jsons.string(media, "media_type")) || Jsons.string(media, "mime_type").startsWith("video/");
+    }
+
+    private boolean isAnimatedImage(JsonObject media) {
+        String type = firstText(media, "media_type", "file_category", "type").toLowerCase(java.util.Locale.ROOT);
+        String mime = firstText(media, "mime_type", "mime").toLowerCase(java.util.Locale.ROOT);
+        String name = firstText(media, "file_name", "original_name", "name").toLowerCase(java.util.Locale.ROOT);
+        return "gif".equals(type) || "image/gif".equals(mime) || booleanValue(media, "is_gif")
+            || booleanValue(media, "is_animated") || name.endsWith(".gif");
+    }
+
+    private String previewUrl(JsonObject media) {
+        return firstText(media, "thumbnail_url", "preview_url", "optimized_file_url", "image_url", "url");
+    }
+
+    private String originalUrl(JsonObject media) {
+        return firstText(media, "original_file_url", "original_url", "file_url", "media_url",
+            "download_url", "image_url", "url", "source_url");
+    }
+
+    private boolean booleanValue(JsonObject media, String key) {
+        if (media.has(key) && !media.get(key).isJsonNull()) {
+            try { return media.get(key).getAsBoolean(); } catch (RuntimeException ignored) { }
+        }
+        JsonObject metadata = Jsons.object(media, "metadata");
+        if (metadata.has(key) && !metadata.get(key).isJsonNull()) {
+            try { return metadata.get(key).getAsBoolean(); } catch (RuntimeException ignored) { }
+        }
+        return false;
+    }
+
+    private String firstText(JsonObject media, String... keys) {
+        for (String key : keys) {
+            String value = Jsons.string(media, key);
+            if (!value.isEmpty()) return value;
+        }
+        JsonObject metadata = Jsons.object(media, "metadata");
+        for (String key : keys) {
+            String value = Jsons.string(metadata, key);
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     private String mediaUrl(String value) {

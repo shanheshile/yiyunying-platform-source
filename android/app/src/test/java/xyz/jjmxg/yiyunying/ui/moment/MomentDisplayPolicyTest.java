@@ -19,6 +19,10 @@ public class MomentDisplayPolicyTest {
     }
 
     @Test public void hideOnlyPermissionStillShowsMomentActions() {
-        assertTrue(MomentDisplayPolicy.isManageable(false, false, true, false));
+        assertTrue(MomentDisplayPolicy.isManageable(false, false, false, true, false));
+    }
+
+    @Test public void visibilityOnlyPermissionStillShowsMomentActions() {
+        assertTrue(MomentDisplayPolicy.isManageable(false, false, true, false, false));
     }
 }

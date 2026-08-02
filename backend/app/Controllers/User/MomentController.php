@@ -136,7 +136,7 @@ final class MomentController
         $visibleDays = self::requestedVisibleDays($data, $before['visible_days'] === null ? null : (int) $before['visible_days']);
         $visibilityUserIds = array_key_exists('visibility_user_ids', $data)
             ? MomentVisibilityService::normalizeUserIds($data['visibility_user_ids'], (int) $user['app_id'], (int) $user['id'])
-            : MomentVisibilityService::decodeIds($before['visibility_user_ids_json'] ?? null);
+            : MomentVisibilityService::decodeIds($before['visibility_user_ids'] ?? []);
         Database::transaction(static function () use (
             $user, $momentId, $content, $locationName, $latitude, $longitude, $payload,
             $visibilityMode, $visibleDays, $visibilityUserIds
@@ -160,12 +160,55 @@ final class MomentController
         return Response::success(['moment' => self::find($user, $momentId, false)], '动态已更新');
     }
 
+    public static function updateVisibility(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = AuthService::user($request);
+        $momentId = (int) $params['moment_id'];
+        $before = self::find($user, $momentId, false);
+        self::ensureOwner($before, $user);
+        $data = $request->all();
+        $visibilityMode = array_key_exists('visibility_mode', $data)
+            ? MomentVisibilityService::normalizeMode((string) $data['visibility_mode'], true)
+            : (string) $before['visibility_mode'];
+        $visibleDays = self::requestedVisibleDays(
+            $data,
+            $before['visible_days'] === null ? null : (int) $before['visible_days']
+        );
+        $visibilityUserIds = array_key_exists('visibility_user_ids', $data)
+            ? MomentVisibilityService::normalizeUserIds(
+                $data['visibility_user_ids'],
+                (int) $user['app_id'],
+                (int) $user['id']
+            )
+            : MomentVisibilityService::decodeIds($before['visibility_user_ids'] ?? []);
+        Database::execute(
+            'UPDATE user_moments
+             SET visibility_mode = ?, visible_days = ?, visibility_user_ids_json = ?, updated_at = NOW()
+             WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND deleted_at IS NULL',
+            [
+                $visibilityMode,
+                $visibleDays,
+                MomentVisibilityService::encodeIds($visibilityUserIds),
+                $momentId,
+                (int) $user['admin_id'],
+                (int) $user['app_id'],
+                (int) $user['id'],
+            ]
+        );
+        LogService::userOperation($request, $user, 'moment', 'update_visibility', $momentId, [
+            'visibility_mode' => $visibilityMode,
+            'visible_days' => $visibleDays,
+            'visibility_user_ids' => $visibilityUserIds,
+        ]);
+        return Response::success(['moment' => self::find($user, $momentId, false)], '可见范围已更新');
+    }
+
     public static function delete(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = AuthService::user($request);
         $momentId = (int) $params['moment_id'];
         $moment = self::find($user, $momentId, true);
-        self::ensureOwnerAndWindow($moment, $user);
+        self::ensureOwner($moment, $user);
         $affected = Database::execute(
             'UPDATE user_moments SET deleted_at = NOW(), delete_expires_at = DATE_ADD(NOW(), INTERVAL 120 SECOND), updated_at = NOW()
              WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND deleted_at IS NULL',
@@ -612,9 +655,18 @@ final class MomentController
 
     private static function ensureOwnerAndWindow(array $moment, array $user): void
     {
-        if ((int) $moment['user_id'] !== (int) $user['id']) throw new HttpException('只能修改或删除自己的动态', 0, 403);
+        self::ensureOwner($moment, $user);
         $createdAt = strtotime((string) $moment['created_at']);
-        if ($createdAt === false || time() - $createdAt > self::EDIT_WINDOW_SECONDS) throw new HttpException('动态已超过 2 分钟，不能再修改或删除', 0, 422);
+        if ($createdAt === false || time() - $createdAt > self::EDIT_WINDOW_SECONDS) {
+            throw new HttpException('动态已超过 2 分钟，不能再修改内容', 0, 422);
+        }
+    }
+
+    private static function ensureOwner(array $moment, array $user): void
+    {
+        if ((int) $moment['user_id'] !== (int) $user['id']) {
+            throw new HttpException('只能管理自己的动态', 0, 403);
+        }
     }
 
     private static function decorate(array &$item, array $viewer): void
@@ -627,7 +679,8 @@ final class MomentController
         $item['display_name'] = trim((string) ($item['nickname'] ?? '')) !== '' ? (string) $item['nickname'] : (string) $item['account'];
         $item['is_edited'] = !empty($item['edited_at']);
         $item['can_edit'] = $owner && $withinWindow && empty($item['deleted_at']);
-        $item['can_delete'] = $item['can_edit'];
+        $item['can_edit_visibility'] = $owner && empty($item['deleted_at']);
+        $item['can_delete'] = $owner && empty($item['deleted_at']);
         $item['is_pinned'] = (int) ($item['is_pinned'] ?? 0) === 1;
         $item['pin_order'] = (int) ($item['pin_order'] ?? 0);
         $item['can_pin'] = $owner && empty($item['deleted_at']);

@@ -594,6 +594,7 @@ $router->get('/api/user/moments', [UserMoment::class, 'index']);
 $router->post('/api/user/moments', [UserMoment::class, 'create']);
 $router->get('/api/user/moments/{moment_id}', [UserMoment::class, 'show']);
 $router->put('/api/user/moments/{moment_id}', [UserMoment::class, 'update']);
+$router->put('/api/user/moments/{moment_id}/visibility', [UserMoment::class, 'updateVisibility']);
 $router->delete('/api/user/moments/{moment_id}', [UserMoment::class, 'delete']);
 $router->post('/api/user/moments/{moment_id}/restore', [UserMoment::class, 'restore']);
 $router->post('/api/user/moments/{moment_id}/pin', [UserMoment::class, 'setPin']);

@@ -8,7 +8,13 @@ final class MomentDisplayPolicy {
         return targetMomentId <= 0L && profileTimeline;
     }
 
-    static boolean isManageable(boolean canPin, boolean canEdit, boolean canHide, boolean canDelete) {
-        return canPin || canEdit || canHide || canDelete;
+    static boolean isManageable(
+        boolean canPin,
+        boolean canEdit,
+        boolean canEditVisibility,
+        boolean canHide,
+        boolean canDelete
+    ) {
+        return canPin || canEdit || canEditVisibility || canHide || canDelete;
     }
 }

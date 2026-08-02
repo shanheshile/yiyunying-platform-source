@@ -66,6 +66,10 @@ $messageNotificationSource = Get-Content -LiteralPath (Join-Path $root 'android/
 $callNotificationSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/service/VoiceCallForegroundService.java') -Raw -Encoding UTF8
 $dialogBuilderSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/common/YiyunyingDialogBuilder.java') -Raw -Encoding UTF8
 $momentTimelineSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/moment/MomentTimelineActivity.java') -Raw -Encoding UTF8
+$momentDisplayPolicySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/moment/MomentDisplayPolicy.java') -Raw -Encoding UTF8
+$forumPostSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumPostActivity.java') -Raw -Encoding UTF8
+$inlineMediaPreviewSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/chat/InlineMediaPreviewDialog.java') -Raw -Encoding UTF8
+$imageGallerySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/upload/ImageGalleryActivity.java') -Raw -Encoding UTF8
 $socialDirectorySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/social/SocialDirectoryActivity.java') -Raw -Encoding UTF8
 $friendQrSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/social/FriendQrActivity.java') -Raw -Encoding UTF8
 $moduleRegistrySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/domain/module/ModuleRegistry.java') -Raw -Encoding UTF8
@@ -79,6 +83,8 @@ $roomKindMigrationPath = Join-Path $root 'backend/database/migrations/upgrade_20
 $roomKindMigrationSource = Get-Content -LiteralPath $roomKindMigrationPath -Raw -Encoding UTF8
 $momentVisibilitySource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Services/MomentVisibilityService.php') -Raw -Encoding UTF8
 $momentControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/User/MomentController.php') -Raw -Encoding UTF8
+$messageMediaSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Services/MessageMediaService.php') -Raw -Encoding UTF8
+$apiRoutesSource = Get-Content -LiteralPath (Join-Path $root 'backend/routes/api.php') -Raw -Encoding UTF8
 $forumControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/User/ForumController.php') -Raw -Encoding UTF8
 $publicForumControllerSource = Get-Content -LiteralPath (Join-Path $root 'backend/app/Controllers/PublicApi/ForumController.php') -Raw -Encoding UTF8
 $forumThreadOrderSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumCommentThreadOrder.java') -Raw -Encoding UTF8
@@ -130,6 +136,34 @@ if ($momentVisibilitySource -notmatch 'appliesVisibleDays' -or
     $momentControllerSource -notmatch 'canView\(\$row, \$user, \$targetUserId > 0\)' -or
     $momentControllerSource -notmatch 'canView\(\$row, \$user, true\)') {
     throw 'Pinned moments must bypass only the profile/detail time window while preserving privacy checks.'
+}
+$momentActionError = 'Moment actions must independently support timed content edits, persistent visibility edits, friend selection, and deletion.'
+foreach ($needle in @('showVisibilityEditor', 'FriendPickerActivity.pickerIntent', 'showComposer(snapshot)', 'deleteMoment(item)', '"can_edit_visibility"', '"can_delete"')) {
+    if ($momentTimelineSource.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) { throw "$momentActionError Missing: $needle" }
+}
+foreach ($sourceNeedle in @(
+    [pscustomobject]@{ Source = $momentDisplayPolicySource; Needle = 'canEditVisibility' },
+    [pscustomobject]@{ Source = $momentControllerSource; Needle = 'function updateVisibility' },
+    [pscustomobject]@{ Source = $momentControllerSource; Needle = "'can_edit_visibility'" },
+    [pscustomobject]@{ Source = $momentControllerSource; Needle = "'can_delete'" },
+    [pscustomobject]@{ Source = $apiRoutesSource; Needle = '/api/user/moments/{moment_id}/visibility' }
+)) {
+    if ($sourceNeedle.Source.IndexOf($sourceNeedle.Needle, [StringComparison]::Ordinal) -lt 0) { throw "$momentActionError Missing: $($sourceNeedle.Needle)" }
+}
+$forumCollapseError = 'Forum reply threads must be collapsed by default with an explicit expand control.'
+foreach ($needle in @('expandedCommentThreads', 'repliesContainer.setVisibility(replyCount > 0 && expanded ? View.VISIBLE : View.GONE)', 'toggle.setOnClickListener', 'replyCount')) {
+    if ($forumPostSource.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) { throw $forumCollapseError }
+}
+$imagePreviewError = 'Image previews must expose original-image and animated-image controls backed by original media metadata.'
+foreach ($sourceNeedle in @(
+    [pscustomobject]@{ Source = $inlineMediaPreviewSource; Needle = 'loadOriginalImage' },
+    [pscustomobject]@{ Source = $inlineMediaPreviewSource; Needle = 'replayAnimatedImage' },
+    [pscustomobject]@{ Source = $imageGallerySource; Needle = 'originalMenu' },
+    [pscustomobject]@{ Source = $imageGallerySource; Needle = 'animationMenu' },
+    [pscustomobject]@{ Source = $messageMediaSource; Needle = 'AS original_file_url' },
+    [pscustomobject]@{ Source = $messageMediaSource; Needle = 'AS is_animated' }
+)) {
+    if ($sourceNeedle.Source.IndexOf($sourceNeedle.Needle, [StringComparison]::Ordinal) -lt 0) { throw $imagePreviewError }
 }
 if (-not (Test-Path -LiteralPath $forumThreadMigrationPath) -or
     $forumThreadMigrationSource -notmatch 'idx_forum_comments_root' -or
