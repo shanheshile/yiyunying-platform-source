@@ -57,6 +57,7 @@ $required = @(
     'database\migrations\upgrade_20260725_submission_risk_metadata.sql',
     'database\migrations\upgrade_20260731_chat_room_kind.sql',
     'database\migrations\upgrade_20260801_forum_comment_threads.sql',
+    'database\migrations\upgrade_20260802_moment_comment_interactions.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -93,6 +94,7 @@ $required = @(
     'tools\check-commerce-refund-policy.php',
     'tools\test-moment-pinned-visibility.php',
     'tools\test-forum-comment-thread-contract.php',
+    'tools\test-comment-voice-contract.php',
     'tools\generate-requirement-verification.php',
     'tools\generate-reference.php',
     'tools\generate-api-html.php',
@@ -225,6 +227,11 @@ exit($invalid === [] ? 0 : 1);
         throw "Forum comment thread contract checks failed.`n$forumThreadOutput"
     }
     Write-Host "Forum comment thread contract checks: passed"
+    $commentVoiceOutput = & $php.Source (Join-Path $root 'tools\test-comment-voice-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Comment voice contract checks failed.`n$commentVoiceOutput"
+    }
+    Write-Host "Comment voice contract checks: passed"
     Write-Host "PHP lint: passed ($($phpFiles.Count) files)"
 } else {
     Write-Host 'PHP is not in PATH; php -l was skipped.'

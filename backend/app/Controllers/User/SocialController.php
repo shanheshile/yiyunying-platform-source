@@ -372,6 +372,8 @@ final class SocialController
             $item['is_read'] = (bool) $item['is_read'];
             $item['group_name'] = self::notificationGroupDefinitions()[(string) $item['group_key']]['name'];
             $item['center_name'] = self::notificationCenterDefinitions()[(string) $item['center_key']]['name'];
+            $decoded = json_decode((string) ($item['data_json'] ?? ''), true);
+            $item['data'] = is_array($decoded) ? self::notificationPayload($decoded) : [];
         }
         unset($item);
 
@@ -649,6 +651,11 @@ final class SocialController
             'activity' => ['name' => '活动通知', 'description' => '抽奖、红包、投票、商城、订单和余额权益', 'order' => 20],
             'system' => ['name' => '系统通知', 'description' => '公告、系统消息、维护、更新、审核和平台提醒', 'order' => 30],
         ];
+    }
+
+    private static function notificationPayload(array $data): array
+    {
+        return isset($data['payload']) && is_array($data['payload']) ? $data['payload'] : $data;
     }
 
     private static function assertNotificationGroup(string $groupKey): void

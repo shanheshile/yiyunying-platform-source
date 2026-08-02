@@ -268,15 +268,30 @@ final class ForumController
             throw new HttpException('帖子已锁定，不能评论', 403, 403);
         }
         $payload = MessageMediaService::userPayload($user, $request->all());
+        foreach ($payload['attachments'] as &$attachment) {
+            $metadata = is_array($attachment['metadata'] ?? null) ? $attachment['metadata'] : [];
+            if (($metadata['audio_kind'] ?? '') !== 'voice') continue;
+            if (($attachment['media_type'] ?? '') !== 'audio') {
+                throw new HttpException('语音评论必须上传音频文件', 0, 422);
+            }
+            $durationMs = (int) ($attachment['duration_ms'] ?? 0);
+            if ($durationMs < 650 || $durationMs > 60000) {
+                throw new HttpException('语音评论时长应在 1 到 60 秒之间', 0, 422);
+            }
+            $metadata['audio_kind'] = 'voice';
+            $attachment['metadata'] = $metadata;
+        }
+        unset($attachment);
         if (mb_strlen((string) $payload['content']) > 5000) throw new HttpException('评论正文不能超过 5000 个字符', 0, 422);
         $tagsJson = ContentTagService::encode($request->input('tags', []));
         $parentId = (int) $request->input('parent_id', 0);
         $audit = AppService::setting((int) $user['app_id'], 'forum_comment_audit', false) ? 'pending' : 'approved';
         $receiverId = (int) ($post['user_id'] ?? 0);
         $rootCommentId = null;
+        $parent = null;
         if ($parentId > 0) {
             $parent = Database::one(
-                'SELECT id, parent_id, root_comment_id, user_id FROM forum_comments
+                'SELECT id, parent_id, root_comment_id, user_id, content FROM forum_comments
                  WHERE id = ? AND post_id = ? AND status = 1 AND (audit_status = ? OR user_id = ?)',
                 [$parentId, (int) $post['id'], 'approved', (int) $user['id']]
             );
@@ -305,13 +320,41 @@ final class ForumController
             return $id;
         });
         ForumExperienceService::refreshHeat((int) $post['id'], (int) $user['app_id']);
+        $senderName = trim((string) ($user['nickname'] ?? $user['account'] ?? '用户'));
+        if ($senderName === '') $senderName = '用户';
+        $commentSummary = trim((string) $payload['content']);
+        if ($commentSummary === '') $commentSummary = MessageMediaService::summary($payload['attachments']);
+        if ($commentSummary === '') $commentSummary = '[评论]';
+        $commentSummary = mb_substr($commentSummary, 0, 180);
+        $parentSummary = '';
+        if (is_array($parent)) {
+            $parentSummary = trim((string) ($parent['content'] ?? ''));
+            if ($parentSummary === '') {
+                $parentSummary = MessageMediaService::summary(
+                    MessageMediaService::attachments('forum_comment', (int) $parent['id'], (int) $user['app_id'])
+                );
+            }
+            $parentSummary = mb_substr($parentSummary, 0, 180);
+        }
         if ($audit === 'approved' && $receiverId > 0 && $receiverId !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $receiverId);
             if ($receiver !== null) NotificationService::send(
                 $receiver, $parentId > 0 ? 'forum_reply' : 'forum_comment',
                 $parentId > 0 ? '论坛评论收到回复' : '帖子收到新评论',
-                '《' . (string) $post['title'] . '》有了新的互动',
-                ['post_id' => (int) $post['id'], 'comment_id' => $id, 'user_id' => (int) $user['id']]
+                $senderName . ($parentId > 0 ? ' 回复你：' : ' 评论：') . $commentSummary,
+                [
+                    'post_id' => (int) $post['id'],
+                    'post_title' => (string) $post['title'],
+                    'comment_id' => $id,
+                    'comment_content' => $commentSummary,
+                    'parent_comment_id' => $parentId > 0 ? $parentId : null,
+                    'parent_comment_content' => $parentSummary,
+                    'actor_user_id' => (int) $user['id'],
+                    'actor_name' => $senderName,
+                    'focus' => 'comment',
+                    'location_hint' => '《' . (string) $post['title'] . '》评论区 · '
+                        . ($parentId > 0 ? '这条回复' : '这条评论'),
+                ]
             );
         }
         if ($audit === 'approved') {
@@ -320,7 +363,6 @@ final class ForumController
             $mentionIds = array_values(array_unique(array_filter(array_map('intval', $mentions),
                 static fn (int $mentionedId): bool => $mentionedId > 0
                     && $mentionedId !== (int) $user['id'] && $mentionedId !== $receiverId)));
-            $senderName = trim((string) ($user['nickname'] ?? $user['account'] ?? '用户'));
             foreach ($mentionIds as $mentionedId) {
                 $mentioned = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $mentionedId);
                 if ($mentioned === null) continue;
@@ -333,8 +375,15 @@ final class ForumController
                         'post_id' => (int) $post['id'],
                         'post_title' => (string) $post['title'],
                         'comment_id' => $id,
+                        'comment_content' => $commentSummary,
+                        'parent_comment_id' => $parentId > 0 ? $parentId : null,
+                        'parent_comment_content' => $parentSummary,
+                        'focus' => 'comment',
+                        'location_hint' => '《' . (string) $post['title'] . '》评论区 · 提到你的这条评论',
                         'sender_user_id' => (int) $user['id'],
-                        'sender_name' => $senderName === '' ? '用户' : $senderName,
+                        'sender_name' => $senderName,
+                        'actor_user_id' => (int) $user['id'],
+                        'actor_name' => $senderName,
                     ]
                 );
             }

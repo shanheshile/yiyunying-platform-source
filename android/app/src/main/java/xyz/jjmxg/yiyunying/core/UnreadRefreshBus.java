@@ -3,13 +3,12 @@ package xyz.jjmxg.yiyunying.core;
 import android.content.Context;
 
 /**
- * Minimal in-process bus used to ask the home shell to re-query unread badges
- * after notifications are marked read elsewhere (e.g. inside NotificationCenterFragment).
- * Kept dependency-free so it compiles on the project's current toolchain.
+ * Small in-process unread state bus. A negative count requests a server refresh;
+ * a non-negative count is already authoritative and should be rendered immediately.
  */
 public final class UnreadRefreshBus {
     public interface Listener {
-        void onRefreshRequested(Context context);
+        void onUnreadChanged(Context context, int notificationUnread);
     }
 
     private static Listener listener;
@@ -25,6 +24,12 @@ public final class UnreadRefreshBus {
     }
 
     public static void requestRefresh(Context context) {
-        if (listener != null) listener.onRefreshRequested(context);
+        if (listener != null) listener.onUnreadChanged(context, -1);
+    }
+
+    public static void publishNotificationUnread(Context context, int notificationUnread) {
+        if (listener != null) {
+            listener.onUnreadChanged(context, Math.max(0, notificationUnread));
+        }
     }
 }

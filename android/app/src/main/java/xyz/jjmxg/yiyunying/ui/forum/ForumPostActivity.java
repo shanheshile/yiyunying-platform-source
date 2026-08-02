@@ -1,7 +1,9 @@
 package xyz.jjmxg.yiyunying.ui.forum;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Rect;
 import android.graphics.Typeface;
@@ -26,6 +28,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.core.content.ContextCompat;
 
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.button.MaterialButton;
@@ -54,6 +57,7 @@ import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.browser.LinkNavigator;
+import xyz.jjmxg.yiyunying.ui.common.CommentVoiceRecorder;
 import xyz.jjmxg.yiyunying.ui.common.GlassActionDialog;
 import xyz.jjmxg.yiyunying.ui.common.ContentReportDialog;
 import xyz.jjmxg.yiyunying.ui.common.MediaViewRenderer;
@@ -87,9 +91,16 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private final Set<Long> expandedCommentThreads = new LinkedHashSet<>();
     private boolean suppressMentionPicker;
     private String commentPickerType = "file";
+    private CommentVoiceRecorder commentVoiceRecorder;
     private final ActivityResultLauncher<Intent> commentPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             if (isUiActive()) selectedCommentFiles(result);
+        });
+    private final ActivityResultLauncher<String> commentVoicePermission = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(), granted -> {
+            if (!isUiActive()) return;
+            if (Boolean.TRUE.equals(granted)) startCommentVoiceRecording();
+            else Snackbar.make(binding.getRoot(), "需要麦克风权限才能录制语音评论", Snackbar.LENGTH_LONG).show();
         });
 
     private boolean isUiActive() {
@@ -134,6 +145,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             this, "post", postId, Jsons.string(post, "title").isEmpty() ? "这篇帖子" : Jsons.string(post, "title")));
         binding.commentAttachButton.setOnClickListener(view -> showCommentAttachmentMenu());
         binding.commentEmojiButton.setOnClickListener(view -> showEmojiPicker());
+        binding.commentVoiceButton.setOnClickListener(view -> toggleCommentVoiceRecording());
         binding.sendCommentButton.setOnClickListener(view -> sendInlineComment());
         configureCommentEmojiPanel();
         boolean managementView = role != Role.USER;
@@ -471,7 +483,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             commentAnchors.put(commentId, card);
             if (focusCommentId > 0L && focusCommentId == commentId) {
                 focusCommentId = 0L;
-                focusCommentCard(card, "已定位到 @ 你的评论");
+                focusCommentCard(card, "已定位到这条评论");
             }
         }
         for (CommentThreadView thread : threadContainers.values()) thread.refresh();
@@ -768,11 +780,12 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         List<GlassActionDialog.Action> actions = new ArrayList<>();
         actions.add(new GlassActionDialog.Action("图片", R.drawable.ic_album, () -> pickComment("image", "image/*")));
         actions.add(new GlassActionDialog.Action("视频", R.drawable.ic_video, () -> pickComment("video", "video/*")));
+        actions.add(new GlassActionDialog.Action("录制语音", R.drawable.ic_mic, this::toggleCommentVoiceRecording));
         actions.add(new GlassActionDialog.Action("音频、文档与其他文件", R.drawable.ic_file,
             () -> pickComment("file", "*/*")));
         if (!commentAttachments.isEmpty()) {
             actions.add(new GlassActionDialog.Action("清空", R.drawable.ic_close, () -> {
-                commentAttachments.clear();
+                clearCommentAttachments();
                 renderCommentAttachments();
             }));
         }
@@ -843,11 +856,99 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             chip.setCloseIconVisible(true);
             int target = index;
             chip.setOnCloseIconClickListener(view -> {
-                if (target < commentAttachments.size()) commentAttachments.remove(target);
+                if (target < commentAttachments.size()) {
+                    CommentAttachment removed = commentAttachments.remove(target);
+                    removed.deleteTemporary();
+                }
                 renderCommentAttachments();
             });
             binding.commentPendingContainer.addView(chip);
         }
+    }
+
+    private void toggleCommentVoiceRecording() {
+        if (!isUiActive() || commentRequest != null || commentUploadRequest != null) return;
+        if (commentVoiceRecorder != null && commentVoiceRecorder.isRecording()) {
+            finishCommentVoiceRecording();
+            return;
+        }
+        if (commentAttachments.size() >= 20) {
+            Snackbar.make(binding.getRoot(), "评论附件最多 20 个", Snackbar.LENGTH_LONG).show();
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            commentVoicePermission.launch(Manifest.permission.RECORD_AUDIO);
+            return;
+        }
+        startCommentVoiceRecording();
+    }
+
+    private void startCommentVoiceRecording() {
+        if (!isUiActive()) return;
+        if (commentVoiceRecorder == null) commentVoiceRecorder = new CommentVoiceRecorder(this);
+        hideCommentEmojiPanel();
+        binding.commentInput.clearFocus();
+        InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (manager != null) manager.hideSoftInputFromWindow(binding.commentInput.getWindowToken(), 0);
+        try {
+            commentVoiceRecorder.start(new CommentVoiceRecorder.Listener() {
+                @Override public void onTick(long elapsedMs) {
+                    if (isUiActive()) updateCommentVoiceUi(true, elapsedMs);
+                }
+
+                @Override public void onLimitReached() {
+                    if (isUiActive()) finishCommentVoiceRecording();
+                }
+            });
+            updateCommentVoiceUi(true, 0L);
+        } catch (Exception exception) {
+            updateCommentVoiceUi(false, 0L);
+            Snackbar.make(binding.getRoot(), "无法启动录音，请检查麦克风是否被其他应用占用", Snackbar.LENGTH_LONG).show();
+        }
+    }
+
+    private void finishCommentVoiceRecording() {
+        if (!isUiActive() || commentVoiceRecorder == null || !commentVoiceRecorder.isRecording()) return;
+        CommentVoiceRecorder.Result result = commentVoiceRecorder.stop();
+        updateCommentVoiceUi(false, 0L);
+        if (result == null) {
+            Snackbar.make(binding.getRoot(), "录音时间太短，请重新录制", Snackbar.LENGTH_SHORT).show();
+            return;
+        }
+        if (!UploadPolicyStore.accepts(this, "audio", result.sizeBytes)) {
+            Snackbar.make(binding.getRoot(), UploadPolicyStore.rejectionMessage(this, "audio", result.sizeBytes),
+                Snackbar.LENGTH_LONG).show();
+            result.delete();
+            return;
+        }
+        commentAttachments.add(CommentAttachment.recordedVoice(result));
+        renderCommentAttachments();
+    }
+
+    private void cancelCommentVoiceRecording() {
+        if (commentVoiceRecorder != null) commentVoiceRecorder.cancel();
+        if (isUiActive()) updateCommentVoiceUi(false, 0L);
+    }
+
+    private void updateCommentVoiceUi(boolean recording, long elapsedMs) {
+        if (!isUiActive()) return;
+        binding.commentVoiceStatus.setVisibility(recording ? View.VISIBLE : View.GONE);
+        binding.commentVoiceStatus.setText(recording
+            ? "录音中 " + formatVoiceDuration(elapsedMs) + "，再点麦克风完成"
+            : "");
+        binding.commentVoiceIcon.setImageResource(recording ? R.drawable.ic_mic_off : R.drawable.ic_mic);
+        binding.commentVoiceButton.setContentDescription(recording ? "结束语音录制" : "录制语音评论");
+    }
+
+    private String formatVoiceDuration(long durationMs) {
+        long totalSeconds = Math.max(0L, durationMs / 1000L);
+        return String.format(Locale.CHINA, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L);
+    }
+
+    private void clearCommentAttachments() {
+        for (CommentAttachment attachment : commentAttachments) attachment.deleteTemporary();
+        commentAttachments.clear();
     }
 
     private void showEmojiPicker() {
@@ -896,6 +997,11 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
 
     private void sendInlineComment() {
         if (!isUiActive() || commentRequest != null || commentUploadRequest != null) return;
+        if (commentVoiceRecorder != null && commentVoiceRecorder.isRecording()) {
+            finishCommentVoiceRecording();
+            Snackbar.make(binding.getRoot(), "录音已完成，请确认后再次发送", Snackbar.LENGTH_SHORT).show();
+            return;
+        }
         String content = binding.commentInput.getText() == null ? "" : binding.commentInput.getText().toString().trim();
         if (content.isEmpty() && commentAttachments.isEmpty()) {
             binding.commentInput.setError("请输入评论或添加附件");
@@ -927,6 +1033,15 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             value.addProperty("file_name", item.name);
             value.addProperty("mime_type", item.mime);
             if (item.size > 0) value.addProperty("size_bytes", item.size);
+            if (item.durationMs > 0L) value.addProperty("duration_ms", item.durationMs);
+            if (item.recordedVoice != null) {
+                JsonObject metadata = new JsonObject();
+                metadata.addProperty("audio_kind", "voice");
+                JsonArray waveform = new JsonArray();
+                for (Integer amplitude : item.recordedVoice.waveform) waveform.add(amplitude);
+                metadata.add("waveform", waveform);
+                value.add("metadata", metadata);
+            }
             media.add(value);
             uploadCommentAttachments(content, index + 1, media);
         });
@@ -954,7 +1069,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             binding.commentInput.setHint(null);
             replyToCommentId = 0;
             commentMentionIds.clear();
-            commentAttachments.clear();
+            clearCommentAttachments();
             renderCommentAttachments();
             Snackbar.make(binding.getRoot(), "评论已发布", Snackbar.LENGTH_SHORT).show();
             load();
@@ -1053,6 +1168,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentInput.setEnabled(enabled);
         binding.commentAttachButton.setEnabled(enabled);
         binding.commentEmojiButton.setEnabled(enabled);
+        binding.commentVoiceButton.setEnabled(enabled);
         binding.sendCommentButton.setEnabled(enabled);
     }
 
@@ -1101,16 +1217,38 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         if (commentRequest != null) commentRequest.cancel();
         if (commentUploadRequest != null) commentUploadRequest.cancel();
         if (mentionRequest != null) mentionRequest.cancel();
+        cancelCommentVoiceRecording();
+        if (commentVoiceRecorder != null) commentVoiceRecorder.release();
+        clearCommentAttachments();
         binding = null;
         super.onDestroy();
     }
 
     private static final class CommentAttachment {
         final Uri uri; final String type; final String name; final String mime; final long size;
+        final long durationMs; final CommentVoiceRecorder.Result recordedVoice;
         CommentAttachment(Uri uri, String type, String name, String mime, long size) {
-            this.uri = uri; this.type = type; this.name = name; this.mime = mime; this.size = size;
+            this(uri, type, name, mime, size, 0L, null);
+        }
+        private CommentAttachment(Uri uri, String type, String name, String mime, long size,
+                                  long durationMs, CommentVoiceRecorder.Result recordedVoice) {
+            this.uri = uri;
+            this.type = type;
+            this.name = name;
+            this.mime = mime;
+            this.size = size;
+            this.durationMs = durationMs;
+            this.recordedVoice = recordedVoice;
+        }
+        static CommentAttachment recordedVoice(CommentVoiceRecorder.Result result) {
+            return new CommentAttachment(result.uri, "audio", result.file.getName(), "audio/mp4",
+                result.sizeBytes, result.durationMs, result);
+        }
+        void deleteTemporary() {
+            if (recordedVoice != null) recordedVoice.delete();
         }
         String label() {
+            if (recordedVoice != null) return "语音 · " + formatDuration(durationMs) + " · " + size(size);
             String label = "image".equals(type) ? "图片" : ("video".equals(type) ? "视频" : ("audio".equals(type) ? "音频" : "文件"));
             return label + " · " + name + (size > 0 ? " · " + size(size) : "");
         }
@@ -1123,6 +1261,10 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             if (bytes < 1024L) return bytes + " B";
             if (bytes < 1024L * 1024L) return String.format(Locale.CHINA, "%.1f KB", bytes / 1024d);
             return String.format(Locale.CHINA, "%.1f MB", bytes / 1024d / 1024d);
+        }
+        private static String formatDuration(long durationMs) {
+            long seconds = Math.max(0L, durationMs / 1000L);
+            return String.format(Locale.CHINA, "%02d:%02d", seconds / 60L, seconds % 60L);
         }
     }
 }

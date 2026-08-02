@@ -4121,6 +4121,7 @@ CREATE TABLE IF NOT EXISTS `moment_comments` (
   `moment_id` BIGINT UNSIGNED NOT NULL,
   `user_id` BIGINT UNSIGNED NOT NULL,
   `parent_id` BIGINT UNSIGNED DEFAULT NULL,
+  `sticker_id` BIGINT UNSIGNED DEFAULT NULL,
   `content` VARCHAR(2000) NOT NULL,
   `status` TINYINT NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4130,7 +4131,22 @@ CREATE TABLE IF NOT EXISTS `moment_comments` (
   KEY `idx_moment_comments_user` (`app_id`, `user_id`, `id`),
   CONSTRAINT `fk_moment_comments_moment` FOREIGN KEY (`moment_id`) REFERENCES `user_moments` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_moment_comments_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_moment_comments_parent` FOREIGN KEY (`parent_id`) REFERENCES `moment_comments` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_moment_comments_parent` FOREIGN KEY (`parent_id`) REFERENCES `moment_comments` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_moment_comments_sticker` FOREIGN KEY (`sticker_id`) REFERENCES `stickers` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `moment_comment_likes` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_id` BIGINT UNSIGNED NOT NULL,
+  `app_id` BIGINT UNSIGNED NOT NULL,
+  `comment_id` BIGINT UNSIGNED NOT NULL,
+  `user_id` BIGINT UNSIGNED NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_moment_comment_likes_user` (`comment_id`, `user_id`),
+  KEY `idx_moment_comment_likes_tenant` (`admin_id`, `app_id`, `user_id`, `id`),
+  CONSTRAINT `fk_moment_comment_likes_comment` FOREIGN KEY (`comment_id`) REFERENCES `moment_comments` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_moment_comment_likes_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `moment_favorites` (

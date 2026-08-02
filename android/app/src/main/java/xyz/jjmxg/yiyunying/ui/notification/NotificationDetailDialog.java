@@ -33,11 +33,14 @@ import xyz.jjmxg.yiyunying.data.api.Jsons;
 /** Presents a notification as user-facing content instead of exposing its JSON payload. */
 final class NotificationDetailDialog {
     private static final RelatedField[] RELATED_FIELDS = {
-        field("发起人", true, false, "actor_name", "nickname", "user_name"),
-        field("当前状态", false, true, "status_name", "status"),
-        field("处理说明", true, false, "reason", "audit_reason", "review_remark"),
+        field("互动用户", true, false, "actor_name", "nickname", "user_name"),
+        field("原内容", true, false, "moment_excerpt", "moment_content", "source_excerpt"),
         field("评论内容", true, false, "comment_content"),
         field("回复内容", true, false, "reply_content"),
+        field("回复对象", true, false, "parent_comment_content", "target_comment_content"),
+        field("定位说明", true, false, "location_hint"),
+        field("当前状态", false, true, "status_name", "status"),
+        field("处理说明", true, false, "reason", "audit_reason", "review_remark"),
         field("金额", false, false, "amount"),
         field("余额变动", false, false, "balance", "reward_balance"),
         field("礼物", true, false, "gift_name"),
@@ -104,6 +107,35 @@ final class NotificationDetailDialog {
         addMeta(context, root, "通知时间", fallback(value(notification, "created_at"), "未知"), true);
         addMeta(context, root, "阅读状态", booleanValue(notification, "is_read") ? "已读" : "未读", false);
         addMeta(context, root, "通知类型", categoryValue, false);
+
+        String destination = destinationText(payload, actionLabel);
+        if (!destination.isEmpty()) {
+            TextView destinationHeading = new TextView(context);
+            destinationHeading.setText(tr(context, "点击后定位到"));
+            destinationHeading.setTextColor(context.getColor(R.color.on_surface_variant));
+            destinationHeading.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge);
+
+            TextView destinationText = new TextView(context);
+            destinationText.setText(tr(context, destination));
+            destinationText.setTextColor(context.getColor(R.color.on_surface));
+            destinationText.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge);
+            destinationText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            destinationText.setPadding(dp(context, 14), dp(context, 11), dp(context, 14), dp(context, 11));
+
+            MaterialCardView destinationCard = new MaterialCardView(context);
+            destinationCard.setCardElevation(0);
+            destinationCard.setRadius(dp(context, 6));
+            destinationCard.setStrokeWidth(dp(context, 1));
+            destinationCard.setStrokeColor(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(context));
+            destinationCard.setCardBackgroundColor(context.getColor(R.color.surface_container));
+            destinationCard.addView(destinationText, new FrameLayout.LayoutParams(-1, -2));
+
+            LinearLayout.LayoutParams destinationHeadingParams = new LinearLayout.LayoutParams(-1, -2);
+            destinationHeadingParams.topMargin = dp(context, 18);
+            destinationHeadingParams.bottomMargin = dp(context, 7);
+            root.addView(destinationHeading, destinationHeadingParams);
+            root.addView(destinationCard, new LinearLayout.LayoutParams(-1, -2));
+        }
 
         LinearLayout related = buildRelated(context, payload);
         if (related.getChildCount() > 0) {
@@ -224,6 +256,18 @@ final class NotificationDetailDialog {
         }
         String serverCategory = fallback(value(item, "group_name"), value(item, "center_name"));
         return serverCategory.isEmpty() ? "其他通知" : serverCategory;
+    }
+
+    static String destinationText(JsonObject payload, String actionLabel) {
+        String explicit = value(payload, "location_hint");
+        if (!explicit.isEmpty()) return explicit;
+        String action = actionLabel == null ? "" : actionLabel.trim();
+        if (action.isEmpty()) return "";
+        if (action.contains("动态评论")) return "对应动态内的这条评论";
+        if (action.contains("动态")) return "对应动态详情";
+        if (action.contains("评论")) return "对应内容的评论位置";
+        if (action.startsWith("查看")) return action.substring(2);
+        return action;
     }
 
     private static boolean containsAny(String value, String... needles) {

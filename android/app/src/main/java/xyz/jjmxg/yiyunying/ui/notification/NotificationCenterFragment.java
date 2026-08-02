@@ -33,6 +33,7 @@ import xyz.jjmxg.yiyunying.databinding.FragmentNotificationCenterBinding;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
 import xyz.jjmxg.yiyunying.ui.forum.ForumPostActivity;
 import xyz.jjmxg.yiyunying.ui.main.MainActivity;
+import xyz.jjmxg.yiyunying.ui.moment.MomentTimelineActivity;
 import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 import xyz.jjmxg.yiyunying.ui.wallet.WalletLedgerActivity;
 
@@ -144,6 +145,7 @@ public final class NotificationCenterFragment extends BaseFragment {
             }
             initializeCollapseState();
             render(currentUnread());
+            publishUnreadTotal();
         });
     }
 
@@ -249,6 +251,22 @@ public final class NotificationCenterFragment extends BaseFragment {
     private Runnable notificationAction(Activity activity, JsonObject item, JsonObject payload) {
         if (isLifecycleNotification(item, payload)) return null;
         String group = Jsons.string(item, "group_key");
+        long momentId = firstPositive(payload, "moment_id", "dynamic_id", "target_moment_id");
+        long momentCommentId = firstPositive(payload, "comment_id", "reply_id", "target_comment_id");
+        if (momentId > 0) {
+            long targetMomentId = momentId;
+            long targetCommentId = momentCommentId;
+            long ownerId = firstPositive(payload, "moment_user_id", "owner_user_id", "user_id");
+            String ownerName = Jsons.string(payload, "moment_user_name");
+            return guardedNotificationAction(activity, () -> {
+                if (targetCommentId > 0) {
+                    MomentTimelineActivity.openMomentComments(
+                        activity, targetMomentId, ownerId, ownerName, targetCommentId);
+                } else {
+                    MomentTimelineActivity.openMoment(activity, targetMomentId, ownerId, ownerName);
+                }
+            });
+        }
         long postId = firstPositive(payload, "post_id", "forum_post_id", "thread_id", "target_post_id");
         if (postId <= 0 && ("forums".equals(group) || "comments".equals(group) || "likes".equals(group))
             && containsAny(notificationSource(item, payload), "post", "forum", "comment", "reply")) {
@@ -307,6 +325,10 @@ public final class NotificationCenterFragment extends BaseFragment {
 
     private static String notificationActionLabel(JsonObject item, JsonObject payload) {
         String group = Jsons.string(item, "group_key");
+        if (firstPositive(payload, "moment_id", "dynamic_id", "target_moment_id") > 0) {
+            return firstPositive(payload, "comment_id", "reply_id", "target_comment_id") > 0
+                ? "查看这条动态评论" : "查看这条动态";
+        }
         if (firstPositive(payload, "post_id", "forum_post_id", "thread_id", "target_post_id") > 0) {
             return firstPositive(payload, "comment_id", "forum_comment_id", "reply_id", "target_comment_id") > 0
                 ? "查看相关评论" : "查看帖子";
@@ -430,7 +452,7 @@ public final class NotificationCenterFragment extends BaseFragment {
                     decrementCenter(1);
                 }
                 render(currentUnread());
-                UnreadRefreshBus.requestRefresh(requireContext());
+                publishUnreadTotal();
             });
     }
 
@@ -462,7 +484,7 @@ public final class NotificationCenterFragment extends BaseFragment {
                 setGroupUnread(key, 0);
                 decrementCenter(unreadBefore);
                 render(currentUnread());
-                UnreadRefreshBus.requestRefresh(requireContext());
+                publishUnreadTotal();
                 Snackbar.make(binding.getRoot(), result.message(), Snackbar.LENGTH_SHORT).show();
             });
     }
@@ -479,7 +501,7 @@ public final class NotificationCenterFragment extends BaseFragment {
             for (JsonObject group : groups) group.addProperty("unread_count", 0);
             setCenterUnread(selectedCenter, 0);
             render(0);
-            UnreadRefreshBus.requestRefresh(requireContext());
+            publishUnreadTotal();
             Snackbar.make(binding.getRoot(), centerName(selectedCenter) + "已全部标记为已读", Snackbar.LENGTH_SHORT).show();
         });
     }
@@ -502,6 +524,20 @@ public final class NotificationCenterFragment extends BaseFragment {
         int total = 0;
         for (JsonObject group : groups) total += Jsons.intValue(group, "unread_count", 0);
         return total;
+    }
+
+    private int totalCenterUnread() {
+        if (centers.isEmpty()) return currentUnread();
+        int total = 0;
+        for (JsonObject center : centers) {
+            total += Math.max(0, Jsons.intValue(center, "unread_count", 0));
+        }
+        return total;
+    }
+
+    private void publishUnreadTotal() {
+        if (!isAdded()) return;
+        UnreadRefreshBus.publishNotificationUnread(requireContext(), totalCenterUnread());
     }
 
     private void renderCenterTabs() {

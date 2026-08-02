@@ -40,8 +40,10 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private final Handler unreadHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshUnread = this::refreshUnreadBadges;
-    private final UnreadRefreshBus.Listener unreadRefreshListener = context -> {
-        if (isResumed()) refreshUnreadBadges();
+    private final UnreadRefreshBus.Listener unreadRefreshListener = (context, notificationUnread) -> {
+        if (!isResumed()) return;
+        if (notificationUnread >= 0) setNotificationUnreadCount(notificationUnread);
+        else refreshUnreadBadges();
     };
     private final Runnable dispatchSearch = () -> {
         if (binding != null) currentPageSearch(queries[binding.pager.getCurrentItem()]);

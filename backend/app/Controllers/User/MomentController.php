@@ -280,7 +280,10 @@ final class MomentController
                 [(int) $user['admin_id'], (int) $user['app_id'], (int) $moment['id'], (int) $user['id']]
             );
             $liked = true;
-            self::notifyOwner($moment, $user, 'moment_like', '动态收到点赞', self::displayName($user) . '赞了你的动态');
+            self::notifyOwner($moment, $user, 'moment_like', '动态收到点赞', self::displayName($user) . '赞了你的动态', [
+                'focus' => 'likes',
+                'location_hint' => '将打开这条动态并定位到点赞区域',
+            ]);
         }
         $presentation = self::likePresentation($moment, $user, 12, 0);
         return Response::success([
@@ -322,19 +325,25 @@ final class MomentController
         )['total'] ?? 0);
         $items = Database::all(
             "SELECT c.*, u.uid, u.account, p.nickname, p.avatar,
-                    pu.uid AS parent_uid, pu.account AS parent_account, pp.nickname AS parent_nickname
+                    pu.uid AS parent_uid, pu.account AS parent_account, pp.nickname AS parent_nickname,
+                    pc.content AS parent_content,
+                    s.name AS sticker_name, s.image_url AS sticker_url, s.thumbnail_url AS sticker_thumbnail_url,
+                    (SELECT COUNT(*) FROM moment_comment_likes cl WHERE cl.comment_id = c.id) AS like_count,
+                    EXISTS(SELECT 1 FROM moment_comment_likes viewer_like WHERE viewer_like.comment_id = c.id AND viewer_like.user_id = ?) AS is_liked
              FROM moment_comments c
              INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
              LEFT JOIN moment_comments pc ON pc.id = c.parent_id
              LEFT JOIN users pu ON pu.id = pc.user_id
              LEFT JOIN user_profiles pp ON pp.user_id = pc.user_id
+             LEFT JOIN stickers s ON s.id = c.sticker_id AND s.status = 1
              WHERE c.moment_id = ? AND c.status = 1
              ORDER BY c.id ASC LIMIT {$limit} OFFSET {$offset}",
-            [(int) $moment['id']]
+            [(int) $user['id'], (int) $moment['id']]
         );
         foreach ($items as &$item) self::decorateComment($item, $moment, (int) $user['id']);
         unset($item);
+        $items = MessageMediaService::hydrate($items, 'moment_comment', (int) $user['app_id']);
         return Response::success(Pagination::data($items, $total, $page, $limit));
     }
 
@@ -343,29 +352,134 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         $content = trim((string) $request->input('content', ''));
-        if ($content === '' || mb_strlen($content) > 2000) throw new HttpException('评论内容应为 1 到 2000 个字符', 0, 422);
+        $stickerId = max(0, (int) $request->input('sticker_id', 0));
+        $rawAttachments = $request->input('attachments', []);
+        if (is_string($rawAttachments)) $rawAttachments = json_decode($rawAttachments, true);
+        if (!is_array($rawAttachments)) throw new HttpException('语音评论格式错误', 0, 422);
+        if (count($rawAttachments) > 1) throw new HttpException('每条动态评论最多发送一段语音', 0, 422);
+        $mediaPayload = null;
+        if ($rawAttachments !== []) {
+            $mediaPayload = MessageMediaService::userPayload($user, [
+                'content' => $content,
+                'attachments' => $rawAttachments,
+            ]);
+            $attachment = $mediaPayload['attachments'][0] ?? null;
+            if (!is_array($attachment) || (string) ($attachment['media_type'] ?? '') !== 'audio') {
+                throw new HttpException('动态评论只支持录制语音附件', 0, 422);
+            }
+            $durationMs = (int) ($attachment['duration_ms'] ?? 0);
+            if ($durationMs < 650 || $durationMs > 60000) {
+                throw new HttpException('语音评论时长应在 1 至 60 秒之间', 0, 422);
+            }
+            $mediaPayload['attachments'][0]['metadata']['audio_kind'] = 'voice';
+        }
+        if (($content === '' && $stickerId <= 0 && $mediaPayload === null) || mb_strlen($content) > 2000) {
+            throw new HttpException('请输入评论内容、选择表情包或录制语音，文字最多 2000 个字符', 0, 422);
+        }
+        $sticker = null;
+        if ($stickerId > 0) {
+            $sticker = Database::one(
+                'SELECT id, name, image_url FROM stickers WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1',
+                [$stickerId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
+            );
+            if ($sticker === null) throw new HttpException('选择的表情包不存在或无权使用', 0, 422);
+        }
         $parentId = max(0, (int) $request->input('parent_id', 0));
         $parent = null;
         if ($parentId > 0) {
             $parent = Database::one('SELECT * FROM moment_comments WHERE id = ? AND moment_id = ? AND status = 1', [$parentId, (int) $moment['id']]);
             if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
         }
-        $commentId = Database::insert(
-            'INSERT INTO moment_comments (admin_id, app_id, moment_id, user_id, parent_id, content, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-            [(int) $user['admin_id'], (int) $user['app_id'], (int) $moment['id'], (int) $user['id'], $parentId > 0 ? $parentId : null, $content]
-        );
-        self::notifyOwner($moment, $user, 'moment_comment', '动态收到评论', self::displayName($user) . '评论了你的动态');
+        $commentId = Database::transaction(static function () use (
+            $user, $moment, $parentId, $stickerId, $content, $mediaPayload
+        ): int {
+            $id = Database::insert(
+                'INSERT INTO moment_comments (admin_id, app_id, moment_id, user_id, parent_id, sticker_id, content, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                [(int) $user['admin_id'], (int) $user['app_id'], (int) $moment['id'], (int) $user['id'], $parentId > 0 ? $parentId : null, $stickerId > 0 ? $stickerId : null, $content]
+            );
+            if ($mediaPayload !== null) MessageMediaService::save('moment_comment', $id, $mediaPayload);
+            return $id;
+        });
+        $visibleComment = $content !== '' ? $content : ($stickerId > 0 ? '[表情包]' : '[语音]');
+        $notificationData = [
+            'focus' => 'comments',
+            'comment_id' => $commentId,
+            'comment_content' => mb_substr($visibleComment, 0, 160),
+            'location_hint' => '将打开这条动态并定位到对应评论',
+        ];
+        self::notifyOwner($moment, $user, 'moment_comment', '动态收到评论', self::displayName($user) . '评论了你的动态', $notificationData);
         if ($parent !== null && (int) $parent['user_id'] !== (int) $moment['user_id'] && (int) $parent['user_id'] !== (int) $user['id']) {
-            self::notifyUser((int) $parent['user_id'], $user, (int) $moment['id'], 'moment_reply', '评论收到回复', self::displayName($user) . '回复了你的评论');
+            self::notifyUser((int) $parent['user_id'], $user, $moment, 'moment_reply', '评论收到回复', self::displayName($user) . '回复了你的评论', array_merge($notificationData, [
+                'reply_content' => mb_substr($visibleComment, 0, 160),
+                'parent_comment_id' => (int) $parent['id'],
+                'parent_comment_content' => mb_substr((string) ($parent['content'] ?? ''), 0, 160),
+            ]));
         }
         $item = Database::one(
-            'SELECT c.*, u.uid, u.account, p.nickname, p.avatar FROM moment_comments c
-             INNER JOIN users u ON u.id = c.user_id LEFT JOIN user_profiles p ON p.user_id = c.user_id WHERE c.id = ?',
+            'SELECT c.*, u.uid, u.account, p.nickname, p.avatar,
+                    pu.uid AS parent_uid, pu.account AS parent_account, pp.nickname AS parent_nickname,
+                    pc.content AS parent_content,
+                    s.name AS sticker_name, s.image_url AS sticker_url, s.thumbnail_url AS sticker_thumbnail_url,
+                    0 AS like_count, 0 AS is_liked
+             FROM moment_comments c
+             INNER JOIN users u ON u.id = c.user_id
+             LEFT JOIN user_profiles p ON p.user_id = c.user_id
+             LEFT JOIN moment_comments pc ON pc.id = c.parent_id
+             LEFT JOIN users pu ON pu.id = pc.user_id
+             LEFT JOIN user_profiles pp ON pp.user_id = pc.user_id
+             LEFT JOIN stickers s ON s.id = c.sticker_id AND s.status = 1
+             WHERE c.id = ?',
             [$commentId]
         );
         self::decorateComment($item, $moment, (int) $user['id']);
+        $item = MessageMediaService::hydrate([$item], 'moment_comment', (int) $user['app_id'])[0];
         return Response::success(['comment' => $item], '评论成功', 201);
+    }
+
+    public static function toggleCommentLike(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = AuthService::user($request);
+        $moment = self::find($user, (int) $params['moment_id'], false);
+        $commentId = (int) $params['comment_id'];
+        $comment = Database::one(
+            'SELECT c.*, u.account, p.nickname FROM moment_comments c
+             INNER JOIN users u ON u.id = c.user_id
+             LEFT JOIN user_profiles p ON p.user_id = c.user_id
+             WHERE c.id = ? AND c.moment_id = ? AND c.status = 1',
+            [$commentId, (int) $moment['id']]
+        );
+        if ($comment === null) throw new HttpException('评论不存在', 404, 404);
+        $existing = Database::one(
+            'SELECT id FROM moment_comment_likes WHERE comment_id = ? AND user_id = ?',
+            [$commentId, (int) $user['id']]
+        );
+        if ($existing !== null) {
+            Database::execute('DELETE FROM moment_comment_likes WHERE id = ?', [(int) $existing['id']]);
+            $liked = false;
+        } else {
+            Database::execute(
+                'INSERT IGNORE INTO moment_comment_likes (admin_id, app_id, comment_id, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
+                [(int) $user['admin_id'], (int) $user['app_id'], $commentId, (int) $user['id']]
+            );
+            $liked = true;
+            if ((int) $comment['user_id'] !== (int) $user['id']) {
+                self::notifyUser((int) $comment['user_id'], $user, $moment, 'moment_comment_like', '评论收到点赞', self::displayName($user) . '赞了你的评论', [
+                    'focus' => 'comments',
+                    'comment_id' => $commentId,
+                    'comment_content' => mb_substr((string) ($comment['content'] ?? '[表情包]'), 0, 160),
+                    'location_hint' => '将打开这条动态并定位到被点赞的评论',
+                ]);
+            }
+        }
+        $count = (int) (Database::one(
+            'SELECT COUNT(*) AS total FROM moment_comment_likes WHERE comment_id = ?', [$commentId]
+        )['total'] ?? 0);
+        return Response::success([
+            'comment_id' => $commentId,
+            'liked' => $liked,
+            'like_count' => $count,
+        ], $liked ? '已点赞评论' : '已取消点赞');
     }
 
     public static function deleteComment(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -798,6 +912,9 @@ final class MomentController
     {
         foreach (['id', 'admin_id', 'app_id', 'moment_id', 'user_id'] as $key) $item[$key] = (int) $item[$key];
         $item['parent_id'] = $item['parent_id'] === null ? null : (int) $item['parent_id'];
+        $item['sticker_id'] = ($item['sticker_id'] ?? null) === null ? null : (int) $item['sticker_id'];
+        $item['like_count'] = (int) ($item['like_count'] ?? 0);
+        $item['is_liked'] = (bool) ($item['is_liked'] ?? false);
         $item['display_name'] = trim((string) ($item['nickname'] ?? '')) !== '' ? (string) $item['nickname'] : (string) $item['account'];
         $item['parent_display_name'] = trim((string) ($item['parent_nickname'] ?? '')) !== ''
             ? (string) $item['parent_nickname']
@@ -812,21 +929,34 @@ final class MomentController
         return (int) (Database::one("SELECT COUNT(*) AS total FROM {$table} WHERE moment_id = ?{$extra}", [$momentId])['total'] ?? 0);
     }
 
-    private static function notifyOwner(array $moment, array $actor, string $type, string $title, string $content): void
+    private static function notifyOwner(array $moment, array $actor, string $type, string $title, string $content, array $extra = []): void
     {
         if ((int) $moment['user_id'] === (int) $actor['id']) return;
-        self::notifyUser((int) $moment['user_id'], $actor, (int) $moment['id'], $type, $title, $content);
+        self::notifyUser((int) $moment['user_id'], $actor, $moment, $type, $title, $content, $extra);
     }
 
-    private static function notifyUser(int $userId, array $actor, int $momentId, string $type, string $title, string $content): void
+    private static function notifyUser(int $userId, array $actor, array $moment, string $type, string $title, string $content, array $extra = []): void
     {
         $receiver = NotificationService::user((int) $actor['admin_id'], (int) $actor['app_id'], $userId);
         if ($receiver === null) return;
-        NotificationService::send($receiver, $type, $title, $content, [
-            'moment_id' => $momentId,
+        $profile = Database::one('SELECT nickname, avatar FROM user_profiles WHERE user_id = ?', [(int) $actor['id']]);
+        $payload = array_merge([
+            'moment_id' => (int) $moment['id'],
             'actor_user_id' => (int) $actor['id'],
+            'actor_name' => self::displayName($actor),
+            'actor_avatar' => (string) ($profile['avatar'] ?? ''),
+            'target_type' => 'moment',
+            'moment_excerpt' => self::momentExcerpt($moment),
             'route' => 'moment_detail',
-        ]);
+        ], $extra);
+        NotificationService::send($receiver, $type, $title, $content, $payload);
+    }
+
+    private static function momentExcerpt(array $moment): string
+    {
+        $content = trim((string) ($moment['content'] ?? ''));
+        if ($content !== '') return mb_substr($content, 0, 160);
+        return ((int) ($moment['media_count'] ?? 0)) > 0 ? '[媒体动态]' : '这条动态';
     }
 
     private static function displayName(array $user): string

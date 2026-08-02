@@ -100,7 +100,9 @@ def upload_release(
 ) -> None:
     """Upload in reconnectable chunks so a reset never restarts a large APK."""
     # Raw SSH streaming avoids the request/response overhead of SFTP writes on
-    # older OpenSSH servers while retaining resumable boundaries.
+    # older OpenSSH servers while retaining resumable boundaries. Each retry
+    # writes at an explicit aligned offset instead of appending: a disconnected
+    # remote process can then only overwrite the same range, never duplicate it.
     session_limit = 64 * 1024 * 1024
     block_size = 1024 * 1024
     offset = 0
@@ -118,7 +120,14 @@ def upload_release(
                 if remote_size > release.size_bytes:
                     sftp.remove(remote_stage)
                     remote_size = 0
-                offset = remote_size
+                aligned_size = remote_size - (remote_size % block_size)
+                if aligned_size != remote_size:
+                    run(
+                        client,
+                        f"truncate -s {aligned_size} {quote(remote_stage)}",
+                        f"truncate-partial-{release.edition}",
+                    )
+                offset = aligned_size
                 if offset >= release.size_bytes:
                     break
 
@@ -133,7 +142,12 @@ def upload_release(
                     window_size=64 * 1024 * 1024,
                     max_packet_size=1024 * 1024,
                 )
-                channel.exec_command(f"cat >> {quote(remote_stage)}")
+                seek_blocks = offset // block_size
+                channel.exec_command(
+                    "dd "
+                    f"of={quote(remote_stage)} bs={block_size} seek={seek_blocks} "
+                    "conv=notrunc status=none"
+                )
                 with open(release.local_path, "rb") as source:
                     source.seek(offset)
                     remaining = min(session_limit, release.size_bytes - offset)

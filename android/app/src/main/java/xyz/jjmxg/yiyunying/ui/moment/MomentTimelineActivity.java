@@ -23,9 +23,14 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -60,14 +65,17 @@ import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityMomentTimelineBinding;
+import xyz.jjmxg.yiyunying.databinding.ItemMomentCommentBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemMomentMediaBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemMomentTimelineBinding;
 import xyz.jjmxg.yiyunying.databinding.SheetMomentCommentsBinding;
 import xyz.jjmxg.yiyunying.databinding.SheetMomentComposerBinding;
 import xyz.jjmxg.yiyunying.databinding.SheetMomentLikesBinding;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
+import xyz.jjmxg.yiyunying.ui.common.CommentVoiceRecorder;
 import xyz.jjmxg.yiyunying.ui.common.GlassBottomSheet;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.MediaViewRenderer;
 import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.location.LocationPickerActivity;
@@ -84,6 +92,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private static final String EXTRA_USER_ID = "user_id";
     private static final String EXTRA_USER_TITLE = "user_title";
     private static final String EXTRA_MOMENT_ID = "moment_id";
+    private static final String EXTRA_OPEN_COMMENTS = "open_comments";
+    private static final String EXTRA_COMMENT_ID = "comment_id";
     private static final String EXTRA_PROFILE_TIMELINE = "profile_timeline";
     private static final String EXTRA_MINE = "mine";
     private static final int MAX_MEDIA = 9;
@@ -107,10 +117,14 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private RequestHandle actionRequest;
     private RequestHandle uploadRequest;
     private RequestHandle commentRequest;
+    private RequestHandle commentLikeRequest;
+    private RequestHandle commentStickerRequest;
+    private RequestHandle commentVoiceUploadRequest;
     private RequestHandle likesRequest;
     private BottomSheetDialog composerDialog;
     private SheetMomentComposerBinding composerBinding;
     private BottomSheetDialog commentsDialog;
+    private BottomSheetDialog commentStickerDialog;
     private SheetMomentCommentsBinding commentsBinding;
     private BottomSheetDialog likesDialog;
     private SheetMomentLikesBinding likesBinding;
@@ -120,6 +134,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private JsonObject likesMoment;
     private JsonObject pendingForwardMoment;
     private long replyingCommentId;
+    private long targetCommentId;
+    private boolean openCommentsAfterLoad;
+    private boolean commentsOpenedFromIntent;
     private long targetUserId;
     private long targetMomentId;
     private boolean profileTimeline;
@@ -127,6 +144,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
     private Integer composerVisibleDays;
+    private CommentVoiceRecorder commentVoiceRecorder;
+    private CommentVoiceRecorder.Result pendingCommentVoice;
     private String locationName = "";
     private String locationAddress = "";
     private Double latitude;
@@ -203,6 +222,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             else message("需要定位权限才能添加附近位置");
         });
 
+    private final ActivityResultLauncher<String> commentVoicePermission = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(), granted -> {
+            if (!isUiActive() || commentsBinding == null) return;
+            if (Boolean.TRUE.equals(granted)) startCommentVoiceRecording();
+            else message("需要麦克风权限才能录制语音评论");
+        });
+
     private final ActivityResultLauncher<Intent> locationPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             if (!isUiActive() || composerBinding == null
@@ -254,6 +280,17 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             .putExtra(EXTRA_USER_TITLE, title == null ? "" : title));
     }
 
+    public static void openMomentComments(Context context, long momentId, long userId,
+                                          String title, long commentId) {
+        if (momentId <= 0) return;
+        context.startActivity(new Intent(context, MomentTimelineActivity.class)
+            .putExtra(EXTRA_MOMENT_ID, momentId)
+            .putExtra(EXTRA_USER_ID, Math.max(0L, userId))
+            .putExtra(EXTRA_USER_TITLE, title == null ? "" : title)
+            .putExtra(EXTRA_OPEN_COMMENTS, true)
+            .putExtra(EXTRA_COMMENT_ID, Math.max(0L, commentId)));
+    }
+
     private boolean isUiActive() {
         return binding != null && !isFinishing() && !isDestroyed();
     }
@@ -262,6 +299,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         super.onCreate(state);
         targetUserId = getIntent().getLongExtra(EXTRA_USER_ID, 0L);
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
+        targetCommentId = getIntent().getLongExtra(EXTRA_COMMENT_ID, 0L);
+        openCommentsAfterLoad = getIntent().getBooleanExtra(EXTRA_OPEN_COMMENTS, false);
         profileTimeline = targetMomentId <= 0 && (getIntent().getBooleanExtra(EXTRA_PROFILE_TIMELINE, false)
             || targetUserId > 0L);
         long actorId = AppAccess.from(this).session().actorId();
@@ -393,6 +432,12 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             if (!isUiActive() || adapter == null || generation != listGeneration) return;
             adapter.submit(snapshot);
             binding.emptyText.setVisibility(snapshot.isEmpty() ? View.VISIBLE : View.GONE);
+            if (openCommentsAfterLoad && !commentsOpenedFromIntent && !snapshot.isEmpty()) {
+                commentsOpenedFromIntent = true;
+                binding.recycler.post(() -> {
+                    if (isUiActive()) showComments(snapshot.get(0));
+                });
+            }
         };
         if (binding.recycler.isComputingLayout()) binding.recycler.post(render);
         else render.run();
@@ -1159,6 +1204,11 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         commentsDialog = dialog;
         commentsBinding = sheetBinding;
         dialog.setContentView(sheetBinding.getRoot());
+        configureCommentEmojiPanel();
+        commentsBinding.emojiButton.setOnClickListener(view -> toggleCommentEmojiPanel());
+        commentsBinding.stickerButton.setOnClickListener(view -> loadCommentStickers());
+        commentsBinding.voiceButton.setOnClickListener(view -> toggleCommentVoiceRecording());
+        commentsBinding.voiceClearButton.setOnClickListener(view -> clearPendingCommentVoice());
         commentsBinding.sendButton.setOnClickListener(view -> submitComment());
         commentsBinding.commentInput.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId != EditorInfo.IME_ACTION_SEND) return false;
@@ -1169,7 +1219,18 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         dialog.setOnDismissListener(ignored -> {
             if (commentsDialog != dialog) return;
             if (commentRequest != null) commentRequest.cancel();
+            if (commentLikeRequest != null) commentLikeRequest.cancel();
+            if (commentStickerRequest != null) commentStickerRequest.cancel();
+            if (commentVoiceUploadRequest != null) commentVoiceUploadRequest.cancel();
             commentRequest = null;
+            commentLikeRequest = null;
+            commentStickerRequest = null;
+            commentVoiceUploadRequest = null;
+            if (commentVoiceRecorder != null) commentVoiceRecorder.cancel();
+            deletePendingCommentVoice();
+            BottomSheetDialog stickerDialog = commentStickerDialog;
+            commentStickerDialog = null;
+            if (stickerDialog != null) stickerDialog.dismiss();
             commentsBinding = null;
             commentsDialog = null;
             commentsMoment = null;
@@ -1177,6 +1238,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         });
         GlassBottomSheet.prepare(dialog, this, 0.90f, false);
         dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
         loadComments();
     }
 
@@ -1220,42 +1285,246 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void addCommentView(JsonObject comment) {
         if (commentsBinding == null) return;
-        MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(dp(8));
-        card.setCardElevation(0f);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(12), dp(10), dp(12), dp(10));
+        ItemMomentCommentBinding row = ItemMomentCommentBinding.inflate(
+            getLayoutInflater(), commentsBinding.commentsContainer, false);
         String author = Jsons.string(comment, "display_name");
+        if (author.isEmpty()) author = Jsons.string(comment, "account");
+        if (author.isEmpty()) author = "用户";
         String parent = Jsons.string(comment, "parent_display_name");
-        TextView name = new TextView(this);
-        name.setText(parent.isEmpty()
-            ? author
-            : author + " " + RuntimeLanguage.translate(this, "回复") + " " + parent);
-        name.setTextSize(13f);
-        TextView content = new TextView(this);
-        RuntimeLanguage.setDynamicText(content, Jsons.string(comment, "content"));
-        content.setTextSize(15f);
-        content.setPadding(0, dp(4), 0, 0);
-        body.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        body.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        card.addView(body);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(7));
-        commentsBinding.commentsContainer.addView(card, params);
-        card.setOnClickListener(view -> {
-            replyingCommentId = Jsons.longValue(comment, "id");
-            RuntimeLanguage.setDynamicText(commentsBinding.replyHint,
-                RuntimeLanguage.translate(this, "正在回复 ") + author
-                    + RuntimeLanguage.translate(this, " · 点击取消"));
-            commentsBinding.replyHint.setVisibility(View.VISIBLE);
-            commentsBinding.commentInput.requestFocus();
+        RuntimeLanguage.setDynamicText(row.author, parent.isEmpty()
+            ? author : author + " " + RuntimeLanguage.translate(this, "回复") + " " + parent);
+        row.time.setText(commentTime(Jsons.string(comment, "created_at")));
+
+        String parentContent = Jsons.string(comment, "parent_content");
+        if (parent.isEmpty()) {
+            row.replyContext.setVisibility(View.GONE);
+        } else {
+            row.replyContext.setVisibility(View.VISIBLE);
+            RuntimeLanguage.setDynamicText(row.replyContext,
+                "回复 @" + parent + (parentContent.isEmpty() ? "" : " · " + parentContent));
+        }
+
+        String content = Jsons.string(comment, "content");
+        row.content.setVisibility(content.isEmpty() ? View.GONE : View.VISIBLE);
+        if (!content.isEmpty()) RuntimeLanguage.setDynamicText(row.content, content);
+
+        String stickerUrl = Jsons.string(comment, "sticker_url");
+        if (stickerUrl.isEmpty()) stickerUrl = Jsons.string(comment, "sticker_thumbnail_url");
+        row.sticker.setVisibility(stickerUrl.isEmpty() ? View.GONE : View.VISIBLE);
+        if (!stickerUrl.isEmpty()) {
+            ImageLoader.get().load(ImageLoader.get().absoluteUrl(this, stickerUrl),
+                row.sticker, R.drawable.ic_emoji);
+        }
+        MediaViewRenderer.render(this, row.mediaContainer, Jsons.array(comment, "attachments"));
+
+        long userId = Jsons.longValue(comment, "user_id");
+        String avatarUrl = ImageLoader.get().absoluteUrl(this, Jsons.string(comment, "avatar"));
+        ImageLoader.get().load(avatarUrl, row.avatar, R.drawable.ic_person);
+        row.avatar.setOnClickListener(view -> {
+            if (userId > 0) UserProfileActivity.open(this, userId);
         });
-        card.setOnLongClickListener(view -> {
+
+        renderCommentLike(row, comment);
+        row.likeButton.setOnClickListener(view -> toggleCommentLike(row, comment));
+        String finalAuthor = author;
+        row.replyButton.setOnClickListener(view -> focusCommentReply(comment, finalAuthor));
+        row.commentCard.setOnLongClickListener(view -> {
             if (!flag(comment, "can_delete")) return false;
             confirmDeleteComment(comment);
             return true;
         });
+        commentsBinding.commentsContainer.addView(row.getRoot());
+
+        long commentId = Jsons.longValue(comment, "id");
+        if (targetCommentId > 0 && targetCommentId == commentId) {
+            row.commentCard.setStrokeWidth(dp(2));
+            row.commentCard.setStrokeColor(
+                xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(this));
+            commentsBinding.commentsScroll.post(() -> {
+                if (commentsBinding != null) {
+                    commentsBinding.commentsScroll.smoothScrollTo(0, Math.max(0, row.getRoot().getTop() - dp(8)));
+                }
+            });
+        }
+    }
+
+    private void focusCommentReply(JsonObject comment, String author) {
+        if (commentsBinding == null) return;
+        replyingCommentId = Jsons.longValue(comment, "id");
+        RuntimeLanguage.setDynamicText(commentsBinding.replyHint,
+            RuntimeLanguage.translate(this, "正在回复 ") + author
+                + RuntimeLanguage.translate(this, " · 点击取消"));
+        commentsBinding.replyHint.setVisibility(View.VISIBLE);
+        commentsBinding.emojiPanel.setVisibility(View.GONE);
+        commentsBinding.emojiButton.setSelected(false);
+        commentsBinding.commentInput.requestFocus();
+        commentsBinding.commentInput.post(() -> {
+            InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (manager != null && commentsBinding != null) {
+                manager.showSoftInput(commentsBinding.commentInput, InputMethodManager.SHOW_IMPLICIT);
+            }
+        });
+    }
+
+    private static String commentTime(String value) {
+        String normalized = value == null ? "" : value.trim().replace('T', ' ');
+        return normalized.length() > 16 ? normalized.substring(0, 16) : normalized;
+    }
+
+    private void renderCommentLike(ItemMomentCommentBinding row, JsonObject comment) {
+        int likeCount = Math.max(0, Jsons.intValue(comment, "like_count", 0));
+        boolean liked = flag(comment, "is_liked");
+        row.likeButton.setSelected(liked);
+        row.likeButton.setText((liked ? "已赞" : "赞") + (likeCount > 0 ? " " + likeCount : ""));
+    }
+
+    private void toggleCommentLike(ItemMomentCommentBinding row, JsonObject comment) {
+        if (commentsMoment == null || commentLikeRequest != null) return;
+        long momentId = Jsons.longValue(commentsMoment, "id");
+        long commentId = Jsons.longValue(comment, "id");
+        if (momentId <= 0 || commentId <= 0) return;
+        row.likeButton.setEnabled(false);
+        commentLikeRequest = AppAccess.from(this).repository().post(
+            "/api/user/moments/" + momentId + "/comments/" + commentId + "/like",
+            new JsonObject(), result -> {
+                commentLikeRequest = null;
+                if (commentsBinding == null || isFinishing() || isDestroyed()) return;
+                row.likeButton.setEnabled(true);
+                if (!result.isSuccessful()) {
+                    message(result.message().isEmpty() ? "评论点赞失败" : result.message());
+                    return;
+                }
+                comment.addProperty("is_liked", flag(result.dataObject(), "liked"));
+                comment.addProperty("like_count", Jsons.intValue(result.dataObject(), "like_count", 0));
+                renderCommentLike(row, comment);
+            });
+    }
+
+    private void configureCommentEmojiPanel() {
+        if (commentsBinding == null) return;
+        commentsBinding.emojiGrid.removeAllViews();
+        for (String emoji : xyz.jjmxg.yiyunying.ui.common.EmojiCatalog.values()) {
+            TextView item = new TextView(this);
+            item.setText(emoji);
+            item.setTextSize(22f);
+            item.setGravity(Gravity.CENTER);
+            item.setContentDescription("插入 " + emoji);
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            params.width = dp(42);
+            params.height = dp(42);
+            params.setMargins(dp(2), dp(2), dp(2), dp(2));
+            item.setLayoutParams(params);
+            item.setOnClickListener(view -> {
+                if (commentsBinding == null || commentsBinding.commentInput.getText() == null) return;
+                int start = Math.max(0, commentsBinding.commentInput.getSelectionStart());
+                commentsBinding.commentInput.getText().insert(start, emoji);
+            });
+            commentsBinding.emojiGrid.addView(item);
+        }
+        commentsBinding.commentInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (hasFocus && commentsBinding != null) {
+                commentsBinding.emojiPanel.setVisibility(View.GONE);
+                commentsBinding.emojiButton.setSelected(false);
+            }
+        });
+    }
+
+    private void toggleCommentEmojiPanel() {
+        if (commentsBinding == null) return;
+        boolean show = commentsBinding.emojiPanel.getVisibility() != View.VISIBLE;
+        commentsBinding.emojiPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        commentsBinding.emojiButton.setSelected(show);
+        if (show) {
+            commentsBinding.commentInput.clearFocus();
+            InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (manager != null) manager.hideSoftInputFromWindow(commentsBinding.commentInput.getWindowToken(), 0);
+        }
+    }
+
+    private void loadCommentStickers() {
+        if (commentsBinding == null || commentStickerRequest != null) return;
+        commentsBinding.stickerButton.setEnabled(false);
+        commentStickerRequest = AppAccess.from(this).repository().get(
+            "/api/user/sticker-packs", new LinkedHashMap<>(), result -> {
+                commentStickerRequest = null;
+                if (commentsBinding == null || isFinishing() || isDestroyed()) return;
+                commentsBinding.stickerButton.setEnabled(true);
+                if (!result.isSuccessful()) {
+                    message(result.message().isEmpty() ? "表情包加载失败" : result.message());
+                    return;
+                }
+                showCommentStickerPicker(result.items());
+            });
+    }
+
+    private void showCommentStickerPicker(JsonArray packs) {
+        if (commentsBinding == null) return;
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(14), dp(18), dp(18));
+        TextView title = new TextView(this);
+        title.setText("选择表情包");
+        title.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge);
+        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        ScrollView scroll = new ScrollView(this);
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(4);
+        grid.setPadding(0, dp(10), 0, dp(10));
+        int count = 0;
+        for (JsonElement packElement : packs) {
+            if (!packElement.isJsonObject()) continue;
+            for (JsonElement stickerElement : Jsons.array(packElement.getAsJsonObject(), "stickers")) {
+                if (!stickerElement.isJsonObject()) continue;
+                JsonObject sticker = stickerElement.getAsJsonObject();
+                long stickerId = Jsons.longValue(sticker, "id");
+                if (stickerId <= 0) continue;
+                MaterialCardView card = new MaterialCardView(this);
+                GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+                params.width = dp(76);
+                params.height = dp(88);
+                params.setMargins(dp(4), dp(4), dp(4), dp(4));
+                card.setLayoutParams(params);
+                card.setRadius(dp(6));
+                card.setCardElevation(0f);
+                LinearLayout tile = new LinearLayout(this);
+                tile.setGravity(Gravity.CENTER);
+                tile.setOrientation(LinearLayout.VERTICAL);
+                ImageView preview = new ImageView(this);
+                preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                tile.addView(preview, new LinearLayout.LayoutParams(dp(58), dp(58)));
+                TextView name = new TextView(this);
+                String stickerName = Jsons.string(sticker, "name");
+                name.setText(stickerName.isEmpty() ? "表情" : stickerName);
+                name.setGravity(Gravity.CENTER);
+                name.setSingleLine(true);
+                tile.addView(name, new LinearLayout.LayoutParams(-1, dp(24)));
+                card.addView(tile);
+                String imageUrl = Jsons.string(sticker, "image_url");
+                ImageLoader.get().load(ImageLoader.get().absoluteUrl(this, imageUrl), preview, R.drawable.ic_emoji);
+                card.setOnClickListener(view -> {
+                    dialog.dismiss();
+                    submitComment(stickerId);
+                });
+                grid.addView(card);
+                count++;
+            }
+        }
+        if (count == 0) {
+            TextView empty = new TextView(this);
+            empty.setText("还没有可用表情包，可先在聊天表情管理中添加");
+            empty.setPadding(dp(12), dp(28), dp(12), dp(28));
+            grid.addView(empty);
+        }
+        scroll.addView(grid, new ScrollView.LayoutParams(-1, -2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(300)));
+        dialog.setContentView(root);
+        dialog.setOnDismissListener(ignored -> {
+            if (commentStickerDialog == dialog) commentStickerDialog = null;
+        });
+        commentStickerDialog = dialog;
+        GlassBottomSheet.prepare(dialog, this, 0.65f, false);
+        dialog.show();
     }
 
     private void clearReply() {
@@ -1264,24 +1533,184 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     }
 
     private void submitComment() {
-        if (commentsBinding == null || commentsMoment == null || commentRequest != null) return;
+        submitComment(0L);
+    }
+
+    private void submitComment(long stickerId) {
+        if (commentsBinding == null || commentsMoment == null || commentRequest != null
+            || commentVoiceUploadRequest != null) return;
+        if (commentVoiceRecorder != null && commentVoiceRecorder.isRecording()) {
+            finishCommentVoiceRecording(false);
+            message("录音已完成，再点发送即可发表");
+            return;
+        }
         String content = text(commentsBinding.commentInput);
-        if (content.isEmpty()) { message("请输入评论内容"); return; }
+        if (content.isEmpty() && stickerId <= 0 && pendingCommentVoice == null) {
+            message("请输入评论内容，或添加表情包、语音");
+            return;
+        }
         JsonObject body = new JsonObject();
         body.addProperty("content", content);
+        if (stickerId > 0) body.addProperty("sticker_id", stickerId);
         if (replyingCommentId > 0) body.addProperty("parent_id", replyingCommentId);
-        commentsBinding.sendButton.setEnabled(false);
+        setCommentComposerEnabled(false);
+        CommentVoiceRecorder.Result voice = pendingCommentVoice;
+        if (voice != null) {
+            uploadCommentVoice(body, voice);
+            return;
+        }
+        postCommentBody(body, null);
+    }
+
+    private void uploadCommentVoice(JsonObject commentBody, CommentVoiceRecorder.Result voice) {
+        ContentUriRequestBody requestBody = new ContentUriRequestBody(
+            getContentResolver(), voice.uri, "audio/mp4", voice.sizeBytes);
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("scene", "动态评论语音");
+        commentVoiceUploadRequest = AppAccess.from(this).repository().upload(
+            "/api/user/uploads", voice.file.getName(), "audio/mp4", requestBody, fields, result -> {
+                commentVoiceUploadRequest = null;
+                if (commentsBinding == null || isFinishing() || isDestroyed()) return;
+                if (result.isAuthenticationFailure()) { setCommentComposerEnabled(true); login(); return; }
+                if (!result.isSuccessful()) {
+                    setCommentComposerEnabled(true);
+                    message(result.message().isEmpty() ? "语音评论上传失败，可重试" : result.message());
+                    return;
+                }
+                JsonObject attachment = new JsonObject();
+                attachment.addProperty("media_type", "audio");
+                attachment.addProperty("upload_id", Jsons.longValue(result.dataObject(), "upload_id"));
+                attachment.addProperty("file_name", voice.file.getName());
+                attachment.addProperty("mime_type", "audio/mp4");
+                attachment.addProperty("size_bytes", voice.sizeBytes);
+                attachment.addProperty("duration_ms", voice.durationMs);
+                JsonObject metadata = new JsonObject();
+                metadata.addProperty("audio_kind", "voice");
+                JsonArray waveform = new JsonArray();
+                for (Integer sample : voice.waveform) waveform.add(sample == null ? 0 : sample);
+                metadata.add("waveform", waveform);
+                attachment.add("metadata", metadata);
+                JsonArray attachments = new JsonArray();
+                attachments.add(attachment);
+                commentBody.add("attachments", attachments);
+                postCommentBody(commentBody, voice);
+            });
+    }
+
+    private void postCommentBody(JsonObject body, CommentVoiceRecorder.Result sentVoice) {
         long momentId = Jsons.longValue(commentsMoment, "id");
         commentRequest = AppAccess.from(this).repository().post("/api/user/moments/" + momentId + "/comments", body, result -> {
             commentRequest = null;
             if (commentsBinding == null || isFinishing() || isDestroyed()) return;
-            commentsBinding.sendButton.setEnabled(true);
+            setCommentComposerEnabled(true);
             if (result.isAuthenticationFailure()) { login(); return; }
             if (!result.isSuccessful()) { message(result.message().isEmpty() ? "评论失败" : result.message()); return; }
+            if (sentVoice != null && pendingCommentVoice == sentVoice) {
+                deletePendingCommentVoice();
+                resetCommentVoiceUi();
+            }
             commentsBinding.commentInput.setText("");
             clearReply();
             loadComments();
         });
+    }
+
+    private void toggleCommentVoiceRecording() {
+        if (commentsBinding == null || commentRequest != null || commentVoiceUploadRequest != null) return;
+        if (commentVoiceRecorder != null && commentVoiceRecorder.isRecording()) {
+            finishCommentVoiceRecording(false);
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            commentVoicePermission.launch(Manifest.permission.RECORD_AUDIO);
+            return;
+        }
+        startCommentVoiceRecording();
+    }
+
+    private void startCommentVoiceRecording() {
+        if (commentsBinding == null) return;
+        if (commentVoiceRecorder == null) commentVoiceRecorder = new CommentVoiceRecorder(this);
+        deletePendingCommentVoice();
+        commentsBinding.emojiPanel.setVisibility(View.GONE);
+        commentsBinding.emojiButton.setSelected(false);
+        try {
+            commentVoiceRecorder.start(new CommentVoiceRecorder.Listener() {
+                @Override public void onTick(long elapsedMs) {
+                    if (commentsBinding == null) return;
+                    commentsBinding.voiceStatus.setText("录音中 " + voiceDuration(elapsedMs) + "，再点麦克风完成");
+                }
+                @Override public void onLimitReached() {
+                    finishCommentVoiceRecording(true);
+                }
+            });
+        } catch (Exception exception) {
+            resetCommentVoiceUi();
+            message("无法开始录音，请检查麦克风是否被其他应用占用");
+            return;
+        }
+        commentsBinding.voiceStatusRow.setVisibility(View.VISIBLE);
+        commentsBinding.voiceStatus.setText("录音中 00:00，再点麦克风完成");
+        commentsBinding.voiceClearButton.setVisibility(View.VISIBLE);
+        commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic_off);
+        commentsBinding.voiceButton.setSelected(true);
+    }
+
+    private void finishCommentVoiceRecording(boolean limitReached) {
+        if (commentVoiceRecorder == null || !commentVoiceRecorder.isRecording()) return;
+        CommentVoiceRecorder.Result result = commentVoiceRecorder.stop();
+        if (result == null) {
+            resetCommentVoiceUi();
+            message("录音时间太短，请至少录制 1 秒");
+            return;
+        }
+        pendingCommentVoice = result;
+        if (commentsBinding != null) {
+            commentsBinding.voiceStatusRow.setVisibility(View.VISIBLE);
+            commentsBinding.voiceStatus.setText("语音 " + voiceDuration(result.durationMs)
+                + (limitReached ? " · 已到 60 秒上限" : " · 等待发送"));
+            commentsBinding.voiceClearButton.setVisibility(View.VISIBLE);
+            commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic);
+            commentsBinding.voiceButton.setSelected(false);
+        }
+    }
+
+    private void clearPendingCommentVoice() {
+        if (commentVoiceRecorder != null && commentVoiceRecorder.isRecording()) {
+            commentVoiceRecorder.cancel();
+        }
+        deletePendingCommentVoice();
+        resetCommentVoiceUi();
+    }
+
+    private void deletePendingCommentVoice() {
+        CommentVoiceRecorder.Result voice = pendingCommentVoice;
+        pendingCommentVoice = null;
+        if (voice != null) voice.delete();
+    }
+
+    private void resetCommentVoiceUi() {
+        if (commentsBinding == null) return;
+        commentsBinding.voiceStatusRow.setVisibility(View.GONE);
+        commentsBinding.voiceClearButton.setVisibility(View.GONE);
+        commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic);
+        commentsBinding.voiceButton.setSelected(false);
+    }
+
+    private void setCommentComposerEnabled(boolean enabled) {
+        if (commentsBinding == null) return;
+        commentsBinding.commentInput.setEnabled(enabled);
+        commentsBinding.emojiButton.setEnabled(enabled);
+        commentsBinding.stickerButton.setEnabled(enabled);
+        commentsBinding.voiceButton.setEnabled(enabled);
+        commentsBinding.voiceClearButton.setEnabled(enabled);
+        commentsBinding.sendButton.setEnabled(enabled);
+    }
+
+    private static String voiceDuration(long durationMs) {
+        long seconds = Math.max(0L, durationMs / 1000L);
+        return String.format(Locale.CHINA, "%02d:%02d", seconds / 60L, seconds % 60L);
     }
 
     private void confirmDeleteComment(JsonObject comment) {
@@ -1495,12 +1924,20 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (actionRequest != null) actionRequest.cancel();
         if (uploadRequest != null) uploadRequest.cancel();
         if (commentRequest != null) commentRequest.cancel();
+        if (commentLikeRequest != null) commentLikeRequest.cancel();
+        if (commentStickerRequest != null) commentStickerRequest.cancel();
+        if (commentVoiceUploadRequest != null) commentVoiceUploadRequest.cancel();
         if (likesRequest != null) likesRequest.cancel();
+        if (commentVoiceRecorder != null) commentVoiceRecorder.release();
+        commentVoiceRecorder = null;
+        deletePendingCommentVoice();
         BottomSheetDialog composer = composerDialog;
         BottomSheetDialog comments = commentsDialog;
+        BottomSheetDialog commentStickers = commentStickerDialog;
         BottomSheetDialog likes = likesDialog;
         composerDialog = null;
         commentsDialog = null;
+        commentStickerDialog = null;
         likesDialog = null;
         composerBinding = null;
         commentsBinding = null;
@@ -1516,6 +1953,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (comments != null) {
             comments.setOnDismissListener(null);
             comments.dismiss();
+        }
+        if (commentStickers != null) {
+            commentStickers.setOnDismissListener(null);
+            commentStickers.dismiss();
         }
         if (likes != null) {
             likes.setOnDismissListener(null);

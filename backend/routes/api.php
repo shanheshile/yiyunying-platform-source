@@ -602,6 +602,7 @@ $router->post('/api/user/moments/{moment_id}/like', [UserMoment::class, 'toggleL
 $router->get('/api/user/moments/{moment_id}/likes', [UserMoment::class, 'likes']);
 $router->get('/api/user/moments/{moment_id}/comments', [UserMoment::class, 'comments']);
 $router->post('/api/user/moments/{moment_id}/comments', [UserMoment::class, 'createComment']);
+$router->post('/api/user/moments/{moment_id}/comments/{comment_id}/like', [UserMoment::class, 'toggleCommentLike']);
 $router->delete('/api/user/moments/{moment_id}/comments/{comment_id}', [UserMoment::class, 'deleteComment']);
 $router->post('/api/user/moments/{moment_id}/favorite', [UserMoment::class, 'toggleFavorite']);
 $router->post('/api/user/moments/{moment_id}/forward', [UserMoment::class, 'forward']);

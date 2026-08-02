@@ -70,4 +70,22 @@ public final class NotificationDetailDialogUiTest {
         controller.pause().stop().destroy();
         assertNull(NotificationDetailDialog.show(activity, notification, null, null));
     }
+
+    @Test public void commentPayloadExposesExactBusinessLocation() {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("post_id", 73L);
+        payload.addProperty("comment_id", 91L);
+        payload.addProperty("comment_content", "这是一条语音评论");
+        payload.addProperty("location_hint", "《测试帖子》评论区 · 这条评论");
+        JsonObject notification = new JsonObject();
+        notification.add("data", payload);
+
+        JsonObject normalized = NotificationDetailDialog.payload(notification);
+
+        assertEquals(73L, normalized.get("post_id").getAsLong());
+        assertEquals(91L, normalized.get("comment_id").getAsLong());
+        assertEquals("这是一条语音评论", normalized.get("comment_content").getAsString());
+        assertEquals("《测试帖子》评论区 · 这条评论",
+            NotificationDetailDialog.destinationText(normalized, "查看评论"));
+    }
 }
