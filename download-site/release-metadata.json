@@ -4,7 +4,7 @@
     "versionCode":  56,
     "releaseDate":  "2026-08-02",
     "generatedAt":  "2026-08-02T17:02:56.0557159+08:00",
-    "downloadRootBase":  "https://appht.jjmxg.xyz/downloads",
+    "downloadRootBase":  "/downloads",
     "releaseNotes":  [
                          "动态与帖子评论支持 1 至 60 秒语音录制、上传、波形元数据和类型化播放",
                          "动态评论补齐头像资料卡、时间、点赞、回复、Emoji、表情包与输入法安全区",
