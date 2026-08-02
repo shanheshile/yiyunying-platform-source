@@ -140,22 +140,20 @@
             android:text="可见时间：跟随全局" />
     </LinearLayout>
 
-    <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/visibilityUsersLayout"
-        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/visibilityUsersButton"
+        style="@style/Widget.Material3.Button.OutlinedButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:hint="UID 或账号，可用逗号分隔"
-        android:visibility="gone">
-
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/visibilityUsersInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:maxLines="3" />
-    </com.google.android.material.textfield.TextInputLayout>
+        android:gravity="start|center_vertical"
+        android:minHeight="52dp"
+        android:text="从好友列表选择"
+        android:textAlignment="viewStart"
+        android:visibility="gone"
+        app:icon="@drawable/ic_users"
+        app:iconGravity="textStart"
+        app:iconPadding="10dp" />
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progress"

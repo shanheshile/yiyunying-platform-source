@@ -85,6 +85,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private static final String EXTRA_USER_TITLE = "user_title";
     private static final String EXTRA_MOMENT_ID = "moment_id";
     private static final String EXTRA_PROFILE_TIMELINE = "profile_timeline";
+    private static final String EXTRA_MINE = "mine";
     private static final int MAX_MEDIA = 9;
     private static final String[] VISIBILITY_VALUES = {
         "inherit", "public", "friends", "followers", "selected", "exclude", "private"
@@ -122,6 +123,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private long targetUserId;
     private long targetMomentId;
     private boolean profileTimeline;
+    private boolean ownProfileTimeline;
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
     private Integer composerVisibleDays;
@@ -230,15 +232,18 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     public static void openForUser(Context context, long userId, String title) {
         if (userId <= 0) return;
+        long actorId = AppAccess.from(context).session().actorId();
         context.startActivity(new Intent(context, MomentTimelineActivity.class)
             .putExtra(EXTRA_USER_ID, userId)
             .putExtra(EXTRA_PROFILE_TIMELINE, true)
+            .putExtra(EXTRA_MINE, userId == actorId)
             .putExtra(EXTRA_USER_TITLE, title == null ? "" : title));
     }
 
     public static void openMine(Context context) {
         context.startActivity(new Intent(context, MomentTimelineActivity.class)
-            .putExtra(EXTRA_PROFILE_TIMELINE, true));
+            .putExtra(EXTRA_PROFILE_TIMELINE, true)
+            .putExtra(EXTRA_MINE, true));
     }
 
     public static void openMoment(Context context, long momentId, long userId, String title) {
@@ -259,9 +264,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
         profileTimeline = targetMomentId <= 0 && (getIntent().getBooleanExtra(EXTRA_PROFILE_TIMELINE, false)
             || targetUserId > 0L);
-        if (profileTimeline && targetUserId <= 0L) {
-            targetUserId = AppAccess.from(this).session().actorId();
-        }
+        long actorId = AppAccess.from(this).session().actorId();
+        ownProfileTimeline = MomentDisplayPolicy.usesMineQuery(
+            profileTimeline,
+            getIntent().getBooleanExtra(EXTRA_MINE, false),
+            targetUserId,
+            actorId);
+        if (ownProfileTimeline) targetUserId = actorId;
         targetUserTitle = getIntent().getStringExtra(EXTRA_USER_TITLE);
         if (targetUserTitle == null) targetUserTitle = "";
         binding = ActivityMomentTimelineBinding.inflate(getLayoutInflater());
@@ -272,13 +281,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         adapter = new MomentAdapter();
         binding.recycler.setLayoutManager(new LinearLayoutManager(this));
-        binding.recycler.setHasFixedSize(true);
+        binding.recycler.setHasFixedSize(false);
         binding.recycler.setItemViewCacheSize(8);
         binding.recycler.setItemAnimator(null);
         binding.recycler.setAdapter(adapter);
         binding.swipeRefresh.setOnRefreshListener(this::load);
         binding.createButton.setOnClickListener(view -> showComposer(null));
-        boolean ownTimeline = targetUserId <= 0 || targetUserId == AppAccess.from(this).session().actorId();
+        boolean ownTimeline = ownProfileTimeline || targetUserId <= 0 || targetUserId == actorId;
         binding.createButton.setVisibility(targetMomentId <= 0 && ownTimeline ? View.VISIBLE : View.GONE);
         binding.emptyText.setText(ownTimeline ? "还没有发布动态" : "暂无你可以查看的动态");
         binding.searchLayout.setVisibility(targetMomentId > 0 ? View.GONE : View.VISIBLE);
@@ -318,7 +327,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("page", "1");
         query.put("limit", "50");
-        if (targetUserId > 0) query.put("user_id", String.valueOf(targetUserId));
+        if (ownProfileTimeline) query.put("mine", "1");
+        else if (targetUserId > 0) query.put("user_id", String.valueOf(targetUserId));
         String keyword = text(binding.searchInput);
         if (!keyword.isEmpty()) query.put("keyword", keyword);
         binding.progress.setVisibility(View.VISIBLE);
@@ -448,13 +458,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         });
         composerBinding.visibilityModeButton.setOnClickListener(view -> chooseVisibilityMode());
         composerBinding.visibleDaysButton.setOnClickListener(view -> chooseVisibleDays());
-        composerBinding.visibilityUsersInput.setFocusable(false);
-        composerBinding.visibilityUsersInput.setClickable(true);
-        composerBinding.visibilityUsersInput.setOnClickListener(view -> openVisibilityFriendPicker());
-        composerBinding.visibilityUsersLayout.setEndIconMode(
-            com.google.android.material.textfield.TextInputLayout.END_ICON_CUSTOM);
-        composerBinding.visibilityUsersLayout.setEndIconDrawable(R.drawable.ic_chevron_right);
-        composerBinding.visibilityUsersLayout.setEndIconOnClickListener(view -> openVisibilityFriendPicker());
+        composerBinding.visibilityUsersButton.setOnClickListener(view -> openVisibilityFriendPicker());
         composerBinding.cancelButton.setOnClickListener(view -> dialog.dismiss());
         composerBinding.publishButton.setOnClickListener(view -> submitMoment());
         renderComposerMedia();
@@ -621,6 +625,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 composerVisibilityMode = VISIBILITY_VALUES[which];
                 renderVisibility();
                 dialog.dismiss();
+                if (MomentDisplayPolicy.requiresFriendSelection(composerVisibilityMode)
+                    && composerVisibilityUserIds.isEmpty() && composerBinding != null) {
+                    composerBinding.getRoot().post(this::openVisibilityFriendPicker);
+                }
             })
             .setNegativeButton("取消", null)
             .show();
@@ -657,15 +665,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         }
         composerBinding.visibilityModeButton.setText("谁可以看 · " + VISIBILITY_LABELS[modeIndex]);
         composerBinding.visibleDaysButton.setText("可见时间 · " + VISIBLE_DAY_LABELS[dayIndex]);
-        boolean selected = "selected".equals(composerVisibilityMode);
+        boolean needsSelection = MomentDisplayPolicy.requiresFriendSelection(composerVisibilityMode);
+        composerBinding.visibilityUsersButton.setVisibility(needsSelection ? View.VISIBLE : View.GONE);
         boolean excluded = "exclude".equals(composerVisibilityMode);
-        composerBinding.visibilityUsersLayout.setVisibility(selected || excluded ? View.VISIBLE : View.GONE);
-        composerBinding.visibilityUsersLayout.setHint(selected
-            ? "允许查看的好友"
-            : "不允许查看的好友");
-        composerBinding.visibilityUsersInput.setText(composerVisibilityUserIds.isEmpty()
-            ? "点击从好友列表选择"
-            : "已选择 " + composerVisibilityUserIds.size() + " 位好友");
+        String prefix = excluded ? "不让谁看" : "只让谁看";
+        composerBinding.visibilityUsersButton.setText(composerVisibilityUserIds.isEmpty()
+            ? prefix + " · 从好友列表选择"
+            : prefix + " · 已选择 " + composerVisibilityUserIds.size() + " 位好友");
     }
 
     private void openVisibilityFriendPicker() {
@@ -840,7 +846,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         composerBinding.locationClearButton.setEnabled(enabled);
         composerBinding.visibilityModeButton.setEnabled(enabled);
         composerBinding.visibleDaysButton.setEnabled(enabled);
-        composerBinding.visibilityUsersInput.setEnabled(enabled);
+        composerBinding.visibilityUsersButton.setEnabled(enabled);
         composerBinding.contentInput.setEnabled(enabled);
     }
 
@@ -1631,14 +1637,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     : null);
                 boolean showProfileSections = MomentDisplayPolicy.showsProfileSections(targetMomentId, profileTimeline);
                 row.pinBadge.setVisibility(showProfileSections && flag(item, "is_pinned") ? View.VISIBLE : View.GONE);
-                boolean lastPinned = showProfileSections && flag(item, "is_pinned");
-                if (lastPinned) {
-                    int currentPosition = getBindingAdapterPosition();
-                    int next = currentPosition == RecyclerView.NO_POSITION ? items.size() : currentPosition + 1;
-                    boolean nextIsPinned = next < items.size() && flag(items.get(next), "is_pinned");
-                    lastPinned = !nextIsPinned;
-                }
-                row.pinDivider.setVisibility(lastPinned ? View.VISIBLE : View.GONE);
+                int currentPosition = getBindingAdapterPosition();
+                int next = currentPosition == RecyclerView.NO_POSITION ? items.size() : currentPosition + 1;
+                boolean hasNext = next < items.size();
+                boolean nextIsPinned = hasNext && flag(items.get(next), "is_pinned");
+                boolean showPinnedDivider = MomentDisplayPolicy.showsPinnedDivider(
+                    showProfileSections,
+                    flag(item, "is_pinned"),
+                    hasNext,
+                    nextIsPinned);
+                row.pinDivider.setVisibility(showPinnedDivider ? View.VISIBLE : View.GONE);
                 boolean immersive = targetMomentId > 0;
                 row.dayText.setVisibility(immersive ? View.GONE : View.VISIBLE);
                 row.monthText.setVisibility(immersive ? View.GONE : View.VISIBLE);
@@ -1681,6 +1689,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 row.moreButton.setOnClickListener(view -> showMomentMenu(item.deepCopy()));
                 List<JsonObject> media = new ArrayList<>();
                 for (JsonElement value : Jsons.array(item, "attachments")) if (value.isJsonObject()) media.add(value.getAsJsonObject());
+                row.mediaGrid.setAdapter(null);
                 row.mediaGrid.setVisibility(media.isEmpty() ? View.GONE : View.VISIBLE);
                 if (!media.isEmpty()) {
                     int columns = media.size() == 1 ? 1 : media.size() == 2 || media.size() == 4 ? 2 : 3;

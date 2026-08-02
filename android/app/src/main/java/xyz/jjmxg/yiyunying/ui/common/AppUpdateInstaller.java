@@ -26,6 +26,7 @@ import androidx.core.content.FileProvider;
 import com.google.gson.JsonObject;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,6 +53,51 @@ public final class AppUpdateInstaller {
     private AppUpdateInstaller() { }
 
     public static void install(Activity activity, JsonObject update, boolean forced, Runnable onContinue) {
+        if (!usable(activity)) return;
+        JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
+        File directory = new File(activity.getCacheDir(), "updates");
+        if (!directory.exists() && !directory.mkdirs()) {
+            showFailure(activity, snapshot, forced, onContinue, "无法创建更新缓存目录。");
+            return;
+        }
+        File temporary = new File(directory, "update.part.apk");
+        File apk = new File(directory, "update.apk");
+        String expectedHash = Jsons.string(snapshot, "sha256").trim().toLowerCase(Locale.ROOT);
+        String expectedPackage = Jsons.string(snapshot, "package_name").trim();
+        if (expectedPackage.isEmpty()) expectedPackage = activity.getPackageName();
+        long expectedVersionCode = Jsons.longValue(snapshot, "version_code");
+        long expectedSize = Jsons.longValue(snapshot, "size_bytes");
+
+        if (apk.isFile()) {
+            String requiredPackage = expectedPackage;
+            Thread verifier = new Thread(() -> {
+                boolean reusable = cachedPackageMatches(activity, apk, requiredPackage, expectedVersionCode,
+                    expectedSize, expectedHash);
+                activity.runOnUiThread(() -> {
+                    if (!usable(activity)) return;
+                    if (reusable) {
+                        notifyReady(activity, apk);
+                        requestInstall(activity, apk, forced, onContinue);
+                        return;
+                    }
+                    deleteQuietly(apk);
+                    deleteQuietly(temporary);
+                    downloadAndInstall(activity, snapshot, forced, onContinue);
+                });
+            }, "update-cache-verifier");
+            verifier.start();
+            return;
+        }
+        deleteQuietly(temporary);
+        downloadAndInstall(activity, snapshot, forced, onContinue);
+    }
+
+    private static void downloadAndInstall(
+        Activity activity,
+        JsonObject update,
+        boolean forced,
+        Runnable onContinue
+    ) {
         if (!usable(activity)) return;
         JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
         String rawUrl = Jsons.string(snapshot, "download_url");
@@ -105,6 +151,7 @@ public final class AppUpdateInstaller {
         File apk = new File(directory, "update.apk");
         String expectedHash = Jsons.string(snapshot, "sha256").trim().toLowerCase(Locale.ROOT);
         String expectedPackage = Jsons.string(snapshot, "package_name").trim();
+        long expectedVersionCode = Jsons.longValue(snapshot, "version_code");
         long expectedSize = Jsons.longValue(snapshot, "size_bytes");
 
         OkHttpClient client = ApiClient.defaultHttpClient(activity).newBuilder()
@@ -135,7 +182,7 @@ public final class AppUpdateInstaller {
                         ResponseBody body = safeResponse.body();
                         if (body == null) failure = "下载服务器没有返回安装包内容。";
                         else failure = saveAndVerify(activity, body, temporary, apk, expectedSize, expectedHash,
-                            expectedPackage, (downloaded, totalBytes) -> {
+                            expectedPackage, expectedVersionCode, (downloaded, totalBytes) -> {
                                 notifyProgress(activity, downloaded, totalBytes);
                                 activity.runOnUiThread(() -> {
                                     if (activity.isFinishing() || activity.isDestroyed()) return;
@@ -176,6 +223,7 @@ public final class AppUpdateInstaller {
         long expectedSize,
         String expectedHash,
         String expectedPackage,
+        long expectedVersionCode,
         ProgressCallback progress
     ) throws IOException {
         MessageDigest digest;
@@ -212,7 +260,9 @@ public final class AppUpdateInstaller {
             temporary.delete();
             return "安装包完整性校验失败，已阻止安装。";
         }
-        String archivePackage = archivePackage(activity, temporary);
+        PackageInfo archiveInfo = archiveInfo(activity, temporary);
+        String archivePackage = archiveInfo == null || archiveInfo.packageName == null
+            ? "" : archiveInfo.packageName;
         if (archivePackage.isEmpty()) {
             temporary.delete();
             return "下载内容不是有效的 Android 安装包。";
@@ -222,21 +272,79 @@ public final class AppUpdateInstaller {
             temporary.delete();
             return "安装包应用标识不匹配，已阻止安装。";
         }
+        if (expectedVersionCode > 0L && archiveVersionCode(archiveInfo) != expectedVersionCode) {
+            temporary.delete();
+            return "安装包版本与更新信息不匹配，已阻止安装。";
+        }
         if (apk.exists() && !apk.delete()) return "无法替换旧的更新缓存。";
         if (!temporary.renameTo(apk)) return "无法提交已校验的安装包。";
         return null;
     }
 
-    private static String archivePackage(Activity activity, File apk) {
+    private static PackageInfo archiveInfo(Activity activity, File apk) {
         PackageManager manager = activity.getPackageManager();
-        PackageInfo info;
         if (Build.VERSION.SDK_INT >= 33) {
-            info = manager.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.PackageInfoFlags.of(0));
+            return manager.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.PackageInfoFlags.of(0));
         } else {
             //noinspection deprecation
-            info = manager.getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+            return manager.getPackageArchiveInfo(apk.getAbsolutePath(), 0);
         }
-        return info == null || info.packageName == null ? "" : info.packageName;
+    }
+
+    private static long archiveVersionCode(PackageInfo info) {
+        if (info == null) return 0L;
+        if (Build.VERSION.SDK_INT >= 28) return info.getLongVersionCode();
+        //noinspection deprecation
+        return info.versionCode;
+    }
+
+    private static boolean cachedPackageMatches(
+        Activity activity,
+        File apk,
+        String expectedPackage,
+        long expectedVersionCode,
+        long expectedSize,
+        String expectedHash
+    ) {
+        if (activity == null || apk == null || !apk.isFile()) return false;
+        try {
+            PackageInfo info = archiveInfo(activity, apk);
+            String actualPackage = info == null ? "" : info.packageName;
+            return UpdatePackagePolicy.matches(
+                expectedPackage,
+                expectedVersionCode,
+                expectedSize,
+                expectedHash,
+                actualPackage,
+                archiveVersionCode(info),
+                apk.length(),
+                sha256(apk)
+            );
+        } catch (IOException | RuntimeException exception) {
+            CrashReporter.record("校验已下载更新", exception);
+            return false;
+        }
+    }
+
+    private static String sha256(File file) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 unavailable", exception);
+        }
+        byte[] buffer = new byte[64 * 1024];
+        try (InputStream input = new FileInputStream(file)) {
+            int read;
+            while ((read = input.read(buffer)) != -1) digest.update(buffer, 0, read);
+        }
+        return hex(digest.digest());
+    }
+
+    private static void deleteQuietly(File file) {
+        if (file != null && file.exists() && !file.delete()) {
+            CrashReporter.record("清理失效更新缓存", new IOException(file.getAbsolutePath()));
+        }
     }
 
     private static void requestInstall(Activity activity, File apk, boolean forced, Runnable onContinue) {

@@ -84,6 +84,7 @@ public final class FriendPickerActivity extends SystemInsetActivity {
             setResult(Activity.RESULT_OK, data);
             finish();
         });
+        updateCount();
         load();
     }
 
@@ -124,7 +125,8 @@ public final class FriendPickerActivity extends SystemInsetActivity {
         shown.clear();
         for (JsonObject item : friends.values()) {
             if (key.isEmpty()) { shown.add(item); continue; }
-            String name = Jsons.string(item, "display_name").toLowerCase(Locale.ROOT);
+            String name = firstText(item, "remark", "nickname", "display_name")
+                .toLowerCase(Locale.ROOT);
             String account = Jsons.string(item, "account").toLowerCase(Locale.ROOT);
             String uid = Jsons.string(item, "uid").toLowerCase(Locale.ROOT);
             if (name.contains(key) || account.contains(key) || uid.contains(key)) shown.add(item);
@@ -144,10 +146,23 @@ public final class FriendPickerActivity extends SystemInsetActivity {
             long id = Jsons.longValue(item, "user_id");
             if (id <= 0) id = Jsons.longValue(item, "id");
             final long selectedId = id;
-            holder.name.setText(Jsons.string(item, "display_name"));
-            String title = Jsons.string(item, "user_title");
-            holder.title.setVisibility(title.isEmpty() ? View.GONE : View.VISIBLE);
-            holder.title.setText(title);
+            String name = firstText(item, "remark", "nickname", "account", "uid");
+            holder.name.setText(name.isEmpty() ? "未命名好友" : name);
+            String account = Jsons.string(item, "account");
+            String group = Jsons.string(item, "group_name");
+            String title = Jsons.string(item, "title");
+            StringBuilder detail = new StringBuilder();
+            if (!group.isEmpty()) detail.append(group);
+            if (!account.isEmpty() && !account.equals(name)) {
+                if (detail.length() > 0) detail.append(" · ");
+                detail.append(account);
+            }
+            if (!title.isEmpty()) {
+                if (detail.length() > 0) detail.append(" · ");
+                detail.append(title);
+            }
+            holder.title.setVisibility(detail.length() == 0 ? View.GONE : View.VISIBLE);
+            holder.title.setText(detail.toString());
             ImageLoader.get().loadThumbnail(
                 ImageLoader.get().absoluteUrl(FriendPickerActivity.this, Jsons.string(item, "avatar")),
                 holder.avatar, R.drawable.ic_person);
@@ -179,6 +194,15 @@ public final class FriendPickerActivity extends SystemInsetActivity {
 
     private void updateCount() {
         binding.confirmButton.setText(RuntimeLanguage.translate(this, "确定") + "（" + selected.size() + "）");
+    }
+
+    private static String firstText(JsonObject item, String... keys) {
+        if (item == null || keys == null) return "";
+        for (String key : keys) {
+            String value = Jsons.string(item, key).trim();
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     private static long[] toLongArray(List<Long> values) {

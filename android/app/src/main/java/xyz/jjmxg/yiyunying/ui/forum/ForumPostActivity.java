@@ -2,7 +2,10 @@ package xyz.jjmxg.yiyunying.ui.forum;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Rect;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -366,7 +369,10 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             MaterialCardView card = new MaterialCardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cardParams.bottomMargin = dp(6);
-            if (parentCommentId > 0) cardParams.leftMargin = dp(30);
+            if (parentCommentId > 0) {
+                cardParams.leftMargin = dp(18);
+                cardParams.rightMargin = dp(4);
+            }
             card.setLayoutParams(cardParams);
             card.setRadius(dp(6));
             card.setCardElevation(0);
@@ -476,7 +482,9 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         final LinearLayout rootContainer;
         final LinearLayout previewContainer;
         final LinearLayout repliesContainer;
-        final MaterialButton toggle;
+        final LinearLayout toggle;
+        final TextView toggleText;
+        final ImageView toggleIcon;
         int replyCount;
 
         CommentThreadView(long rootId) {
@@ -493,15 +501,36 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             rootContainer.setOrientation(LinearLayout.VERTICAL);
             previewContainer = new LinearLayout(ForumPostActivity.this);
             previewContainer.setOrientation(LinearLayout.VERTICAL);
+            previewContainer.setPadding(dp(8), dp(5), dp(8), dp(5));
+            previewContainer.setBackground(commentThreadBackground(
+                R.color.surface_container_high,
+                R.color.outline_variant,
+                8));
             repliesContainer = new LinearLayout(ForumPostActivity.this);
             repliesContainer.setOrientation(LinearLayout.VERTICAL);
-            toggle = new MaterialButton(ForumPostActivity.this);
-            toggle.setMinWidth(0);
-            toggle.setMinHeight(dp(40));
-            toggle.setInsetTop(0);
-            toggle.setInsetBottom(0);
-            toggle.setTextSize(13);
-            toggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            toggle = new LinearLayout(ForumPostActivity.this);
+            toggle.setOrientation(LinearLayout.HORIZONTAL);
+            toggle.setGravity(Gravity.CENTER);
+            toggle.setClickable(true);
+            toggle.setFocusable(true);
+            toggle.setPadding(dp(12), 0, dp(12), 0);
+            toggle.setBackground(commentThreadBackground(
+                R.color.surface_container_high,
+                R.color.outline_variant,
+                8));
+            toggleText = new TextView(ForumPostActivity.this);
+            toggleText.setTextSize(13);
+            toggleText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            toggleText.setTextColor(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this));
+            toggleIcon = new ImageView(ForumPostActivity.this);
+            toggleIcon.setImageResource(R.drawable.ic_chevron_right);
+            toggleIcon.setImageTintList(ColorStateList.valueOf(
+                xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this)));
+            toggle.addView(toggleText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+            iconParams.leftMargin = dp(4);
+            toggle.addView(toggleIcon, iconParams);
             toggle.setOnClickListener(view -> {
                 if (expandedCommentThreads.contains(rootId)) expandedCommentThreads.remove(rootId);
                 else expandedCommentThreads.add(rootId);
@@ -512,12 +541,14 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            previewParams.leftMargin = dp(42);
+            previewParams.leftMargin = dp(62);
             previewParams.rightMargin = dp(12);
             wrapper.addView(previewContainer, previewParams);
             LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
-            toggleParams.leftMargin = dp(32);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+            toggleParams.leftMargin = dp(62);
+            toggleParams.rightMargin = dp(12);
+            toggleParams.topMargin = dp(6);
             wrapper.addView(toggle, toggleParams);
             wrapper.addView(repliesContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -526,25 +557,40 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
 
         void addReply(MaterialCardView card, JsonObject comment) {
             repliesContainer.addView(card);
-            replyCount++;
-            if (replyCount > 2) return;
+            int replyIndex = replyCount++;
+            if (!ForumCommentPreviewPolicy.includesPreview(replyIndex)) return;
+            if (previewContainer.getChildCount() > 0) {
+                View divider = new View(ForumPostActivity.this);
+                divider.setBackgroundColor(getColor(R.color.outline_variant));
+                previewContainer.addView(divider, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            }
             TextView preview = new TextView(ForumPostActivity.this);
             String author = Jsons.string(comment, "nickname");
             if (author.isEmpty()) author = "用户 " + Jsons.longValue(comment, "user_id");
-            String content = Jsons.string(comment, "content").trim();
-            if (content.isEmpty() && !Jsons.array(comment, "attachments").isEmpty()) content = "[附件]";
-            preview.setText(author + "：" + content);
+            String target = Jsons.string(comment, "reply_to_name");
+            String prefix = author + (target.isEmpty() ? "" : " 回复 " + target) + "：";
+            android.text.SpannableStringBuilder summary = new android.text.SpannableStringBuilder(
+                prefix + commentPreviewContent(comment));
+            summary.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), 0, author.length(),
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            summary.setSpan(new android.text.style.ForegroundColorSpan(
+                    xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this)),
+                0, author.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            preview.setText(summary);
             preview.setTextColor(getColor(R.color.on_surface_variant));
             preview.setTextSize(13);
             preview.setSingleLine(true);
             preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            preview.setPadding(dp(8), dp(4), dp(8), dp(4));
+            preview.setGravity(Gravity.CENTER_VERTICAL);
+            preview.setPadding(dp(4), dp(3), dp(4), dp(3));
             preview.setOnClickListener(view -> {
                 expandedCommentThreads.add(rootId);
                 refresh();
+                repliesContainer.post(() -> focusCommentCard(card, "已展开并定位到这条回复"));
             });
             previewContainer.addView(preview, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
         }
 
         void refresh() {
@@ -552,8 +598,32 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             previewContainer.setVisibility(replyCount > 0 && !expanded ? View.VISIBLE : View.GONE);
             repliesContainer.setVisibility(replyCount > 0 && expanded ? View.VISIBLE : View.GONE);
             toggle.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
-            toggle.setText(expanded ? "收起回复" : "展开 " + replyCount + " 条回复");
+            toggleText.setText(ForumCommentPreviewPolicy.toggleLabel(expanded, replyCount));
+            toggleIcon.setRotation(expanded ? -90f : 90f);
+            toggle.setContentDescription(toggleText.getText());
         }
+    }
+
+    private String commentPreviewContent(JsonObject comment) {
+        String content = Jsons.string(comment, "content").trim().replace('\n', ' ');
+        if (!content.isEmpty()) return content;
+        JsonArray attachments = Jsons.array(comment, "attachments");
+        if (attachments.isEmpty()) return "[空回复]";
+        JsonObject first = attachments.get(0).isJsonObject()
+            ? attachments.get(0).getAsJsonObject() : new JsonObject();
+        String label = ForumCommentPreviewPolicy.attachmentLabel(
+            Jsons.string(first, "media_type"), Jsons.string(first, "mime_type"));
+        return attachments.size() > 1
+            ? "[" + label + "等 " + attachments.size() + " 项]"
+            : "[" + label + "]";
+    }
+
+    private GradientDrawable commentThreadBackground(int fillColor, int strokeColor, int radiusDp) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(getColor(fillColor));
+        background.setCornerRadius(dp(radiusDp));
+        background.setStroke(dp(1), getColor(strokeColor));
+        return background;
     }
 
     private void focusCommentCard(View card, String message) {
