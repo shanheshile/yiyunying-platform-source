@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.graphics.Rect;
 import android.location.Address;
 import android.location.Geocoder;
 import android.location.Location;
@@ -23,6 +24,7 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
@@ -134,6 +136,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private JsonObject likesMoment;
     private JsonObject pendingForwardMoment;
     private long replyingCommentId;
+    private ViewTreeObserver.OnGlobalLayoutListener commentsLayoutListener;
+    private int commentsViewportHeight = -1;
+    private boolean commentsViewportResizePosted;
     private long targetCommentId;
     private boolean openCommentsAfterLoad;
     private boolean commentsOpenedFromIntent;
@@ -1199,6 +1204,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (commentsDialog != null && commentsDialog.isShowing()) return;
         commentsMoment = item;
         replyingCommentId = 0L;
+        commentsViewportHeight = -1;
+        commentsViewportResizePosted = false;
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         SheetMomentCommentsBinding sheetBinding = SheetMomentCommentsBinding.inflate(getLayoutInflater());
         commentsDialog = dialog;
@@ -1215,9 +1222,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             submitComment();
             return true;
         });
+        commentsBinding.commentInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (hasFocus) revealCommentComposer();
+        });
         commentsBinding.replyHint.setOnClickListener(view -> clearReply());
         dialog.setOnDismissListener(ignored -> {
             if (commentsDialog != dialog) return;
+            detachCommentsLayoutListener(sheetBinding);
             if (commentRequest != null) commentRequest.cancel();
             if (commentLikeRequest != null) commentLikeRequest.cancel();
             if (commentStickerRequest != null) commentStickerRequest.cancel();
@@ -1237,11 +1248,17 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             replyingCommentId = 0L;
         });
         GlassBottomSheet.prepare(dialog, this, 0.90f, false);
-        dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+            window.setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                    | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         }
+        dialog.show();
+        commentsLayoutListener = this::scheduleCommentsViewportResize;
+        sheetBinding.getRoot().getViewTreeObserver().addOnGlobalLayoutListener(commentsLayoutListener);
+        scheduleCommentsViewportResize();
         loadComments();
     }
 
@@ -1249,7 +1266,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (commentsBinding == null || commentsMoment == null) return;
         if (commentRequest != null) commentRequest.cancel();
         commentsBinding.progress.setVisibility(View.VISIBLE);
+        commentsBinding.titleText.setText("评论");
+        commentsBinding.commentCountText.setText("加载中");
         commentsBinding.commentsContainer.removeAllViews();
+        scheduleCommentsViewportResize();
         Map<String, String> query = new LinkedHashMap<>();
         query.put("page", "1");
         query.put("limit", "100");
@@ -1260,15 +1280,18 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             commentsBinding.progress.setVisibility(View.INVISIBLE);
             if (result.isAuthenticationFailure()) { login(); return; }
             if (!result.isSuccessful()) {
+                commentsBinding.commentCountText.setText("加载失败");
                 renderCommentsError(result.message().isEmpty() ? "评论加载失败" : result.message());
                 return;
             }
             List<JsonObject> comments = result.objectItems();
             commentsMoment.addProperty("comment_count", comments.size());
             adapter.notifyById(momentId);
-            commentsBinding.titleText.setText("评论 " + comments.size());
+            commentsBinding.titleText.setText("评论");
+            commentsBinding.commentCountText.setText(comments.size() + " 条");
             if (comments.isEmpty()) renderCommentsError("还没有评论，来说两句吧");
             else for (JsonObject comment : comments) addCommentView(comment);
+            scheduleCommentsViewportResize();
         });
     }
 
@@ -1281,6 +1304,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         empty.setTextSize(14f);
         commentsBinding.commentsContainer.addView(empty,
             new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        scheduleCommentsViewportResize();
     }
 
     private void addCommentView(JsonObject comment) {
@@ -1363,7 +1387,89 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             if (manager != null && commentsBinding != null) {
                 manager.showSoftInput(commentsBinding.commentInput, InputMethodManager.SHOW_IMPLICIT);
             }
+            revealCommentComposer();
         });
+    }
+
+    private void revealCommentComposer() {
+        SheetMomentCommentsBinding sheet = commentsBinding;
+        if (sheet == null) return;
+        scheduleCommentsViewportResize();
+        sheet.getRoot().postDelayed(() -> {
+            if (commentsBinding != sheet || isFinishing() || isDestroyed()) return;
+            scheduleCommentsViewportResize();
+            Rect inputBounds = new Rect();
+            sheet.commentInput.getDrawingRect(inputBounds);
+            sheet.commentInput.requestRectangleOnScreen(inputBounds, true);
+        }, 160L);
+    }
+
+    private void scheduleCommentsViewportResize() {
+        SheetMomentCommentsBinding sheet = commentsBinding;
+        if (sheet == null || commentsViewportResizePosted) return;
+        commentsViewportResizePosted = true;
+        sheet.getRoot().post(() -> {
+            commentsViewportResizePosted = false;
+            if (commentsBinding != sheet || isFinishing() || isDestroyed()) return;
+            resizeCommentsViewport(sheet);
+        });
+    }
+
+    private void resizeCommentsViewport(SheetMomentCommentsBinding sheet) {
+        int width = sheet.commentsScroll.getWidth();
+        if (width <= 0) width = sheet.getRoot().getWidth();
+        if (width <= 0) return;
+
+        int contentWidth = Math.max(1, width
+            - sheet.commentsScroll.getPaddingLeft() - sheet.commentsScroll.getPaddingRight());
+        sheet.commentsContainer.measure(
+            View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int contentHeight = Math.max(dp(56), sheet.commentsContainer.getMeasuredHeight());
+
+        int chromeHeight = sheet.getRoot().getPaddingTop() + sheet.getRoot().getPaddingBottom();
+        int scrollMargins = 0;
+        for (int index = 0; index < sheet.getRoot().getChildCount(); index++) {
+            View child = sheet.getRoot().getChildAt(index);
+            ViewGroup.LayoutParams raw = child.getLayoutParams();
+            int verticalMargins = 0;
+            if (raw instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) raw;
+                verticalMargins = margins.topMargin + margins.bottomMargin;
+            }
+            if (child == sheet.commentsScroll) {
+                scrollMargins = verticalMargins;
+            } else if (child.getVisibility() != View.GONE) {
+                chromeHeight += child.getMeasuredHeight() + verticalMargins;
+            }
+        }
+
+        Rect visibleFrame = new Rect();
+        sheet.getRoot().getWindowVisibleDisplayFrame(visibleFrame);
+        int displayHeight = getResources().getDisplayMetrics().heightPixels;
+        int visibleHeight = visibleFrame.height() > 0 ? visibleFrame.height() : displayHeight;
+        int panelLimit = Math.min(visibleHeight - dp(16), Math.round(displayHeight * 0.90f));
+        int availableForComments = Math.max(dp(56),
+            panelLimit - chromeHeight - scrollMargins - dp(20));
+        int targetHeight = Math.min(contentHeight, Math.min(dp(320), availableForComments));
+        if (targetHeight == commentsViewportHeight
+            && sheet.commentsScroll.getLayoutParams().height == targetHeight) return;
+
+        commentsViewportHeight = targetHeight;
+        ViewGroup.LayoutParams params = sheet.commentsScroll.getLayoutParams();
+        params.height = targetHeight;
+        sheet.commentsScroll.setLayoutParams(params);
+        GlassBottomSheet.refresh(commentsDialog, this, 0.90f, false);
+    }
+
+    private void detachCommentsLayoutListener(SheetMomentCommentsBinding sheet) {
+        ViewTreeObserver.OnGlobalLayoutListener listener = commentsLayoutListener;
+        commentsLayoutListener = null;
+        commentsViewportHeight = -1;
+        commentsViewportResizePosted = false;
+        if (sheet == null || listener == null) return;
+        ViewTreeObserver observer = sheet.getRoot().getViewTreeObserver();
+        if (observer.isAlive()) observer.removeOnGlobalLayoutListener(listener);
     }
 
     private static String commentTime(String value) {
@@ -1375,7 +1481,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         int likeCount = Math.max(0, Jsons.intValue(comment, "like_count", 0));
         boolean liked = flag(comment, "is_liked");
         row.likeButton.setSelected(liked);
-        row.likeButton.setText((liked ? "已赞" : "赞") + (likeCount > 0 ? " " + likeCount : ""));
+        row.likeButton.setText(actionLabel(liked ? "已赞" : "赞", likeCount));
     }
 
     private void toggleCommentLike(ItemMomentCommentBinding row, JsonObject comment) {
@@ -1635,11 +1741,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         deletePendingCommentVoice();
         commentsBinding.emojiPanel.setVisibility(View.GONE);
         commentsBinding.emojiButton.setSelected(false);
+        commentsBinding.commentInput.clearFocus();
+        InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (manager != null) {
+            manager.hideSoftInputFromWindow(commentsBinding.commentInput.getWindowToken(), 0);
+        }
         try {
             commentVoiceRecorder.start(new CommentVoiceRecorder.Listener() {
                 @Override public void onTick(long elapsedMs) {
                     if (commentsBinding == null) return;
-                    commentsBinding.voiceStatus.setText("录音中 " + voiceDuration(elapsedMs) + "，再点麦克风完成");
+                    commentsBinding.voiceStatus.setText(voiceDuration(elapsedMs) + " · 点击麦克风完成");
                 }
                 @Override public void onLimitReached() {
                     finishCommentVoiceRecording(true);
@@ -1651,10 +1762,14 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             return;
         }
         commentsBinding.voiceStatusRow.setVisibility(View.VISIBLE);
-        commentsBinding.voiceStatus.setText("录音中 00:00，再点麦克风完成");
+        commentsBinding.voiceStatusTitle.setText("正在录音");
+        commentsBinding.voiceStatus.setText("00:00 · 点击麦克风完成");
+        commentsBinding.voiceStatusIcon.setImageResource(R.drawable.ic_mic_off);
+        commentsBinding.voiceClearButton.setContentDescription("取消录音");
         commentsBinding.voiceClearButton.setVisibility(View.VISIBLE);
         commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic_off);
         commentsBinding.voiceButton.setSelected(true);
+        scheduleCommentsViewportResize();
     }
 
     private void finishCommentVoiceRecording(boolean limitReached) {
@@ -1668,11 +1783,15 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         pendingCommentVoice = result;
         if (commentsBinding != null) {
             commentsBinding.voiceStatusRow.setVisibility(View.VISIBLE);
-            commentsBinding.voiceStatus.setText("语音 " + voiceDuration(result.durationMs)
-                + (limitReached ? " · 已到 60 秒上限" : " · 等待发送"));
+            commentsBinding.voiceStatusTitle.setText("语音待发送");
+            commentsBinding.voiceStatus.setText(voiceDuration(result.durationMs)
+                + (limitReached ? " · 已到 60 秒上限，点击发送发表" : " · 点击发送发表"));
+            commentsBinding.voiceStatusIcon.setImageResource(R.drawable.ic_mic);
+            commentsBinding.voiceClearButton.setContentDescription("删除待发送语音");
             commentsBinding.voiceClearButton.setVisibility(View.VISIBLE);
             commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic);
             commentsBinding.voiceButton.setSelected(false);
+            scheduleCommentsViewportResize();
         }
     }
 
@@ -1696,6 +1815,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         commentsBinding.voiceClearButton.setVisibility(View.GONE);
         commentsBinding.voiceButton.setIconResource(R.drawable.ic_mic);
         commentsBinding.voiceButton.setSelected(false);
+        scheduleCommentsViewportResize();
     }
 
     private void setCommentComposerEnabled(boolean enabled) {
@@ -1863,6 +1983,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         catch (RuntimeException ignored) { return null; }
     }
 
+    private static String actionLabel(String label, int count) {
+        if (count <= 0) return label;
+        String compact;
+        if (count <= 999) compact = String.valueOf(count);
+        else if (count < 10_000) compact = "999+";
+        else if (count < 1_000_000) compact = (count / 10_000) + "万+";
+        else compact = "99万+";
+        return label + '\u00A0' + compact;
+    }
+
     private static ArrayList<JsonObject> copyMoments(List<JsonObject> values) {
         ArrayList<JsonObject> copied = new ArrayList<>();
         if (values == null) return copied;
@@ -1935,6 +2065,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         BottomSheetDialog comments = commentsDialog;
         BottomSheetDialog commentStickers = commentStickerDialog;
         BottomSheetDialog likes = likesDialog;
+        detachCommentsLayoutListener(commentsBinding);
         composerDialog = null;
         commentsDialog = null;
         commentStickerDialog = null;
@@ -2150,10 +2281,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 int favoriteCount = Jsons.intValue(item, "favorite_count", 0);
                 int forwardCount = Jsons.intValue(item, "forward_count", 0);
                 renderLikeSummary(row, item, likeCount);
-                row.momentLikeButton.setText((flag(item, "is_liked") ? "已赞" : "点赞") + (likeCount > 0 ? " " + likeCount : ""));
-                row.momentCommentButton.setText("评论" + (commentCount > 0 ? " " + commentCount : ""));
-                row.momentFavoriteButton.setText((flag(item, "is_favorited") ? "已收藏" : "收藏") + (favoriteCount > 0 ? " " + favoriteCount : ""));
-                row.momentForwardButton.setText("转发" + (forwardCount > 0 ? " " + forwardCount : ""));
+                row.momentLikeButton.setText(actionLabel(flag(item, "is_liked") ? "已赞" : "点赞", likeCount));
+                row.momentCommentButton.setText(actionLabel("评论", commentCount));
+                row.momentFavoriteButton.setText(actionLabel(flag(item, "is_favorited") ? "已收藏" : "收藏", favoriteCount));
+                row.momentForwardButton.setText(actionLabel("转发", forwardCount));
                 row.momentLikeButton.setOnClickListener(view -> toggleLike(item));
                 row.momentCommentButton.setOnClickListener(view -> showComments(item));
                 row.momentFavoriteButton.setOnClickListener(view -> toggleFavorite(item));

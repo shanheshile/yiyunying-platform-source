@@ -146,6 +146,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentAttachButton.setOnClickListener(view -> showCommentAttachmentMenu());
         binding.commentEmojiButton.setOnClickListener(view -> showEmojiPicker());
         binding.commentVoiceButton.setOnClickListener(view -> toggleCommentVoiceRecording());
+        binding.commentVoiceCancelButton.setOnClickListener(view -> cancelCommentVoiceRecording());
         binding.sendCommentButton.setOnClickListener(view -> sendInlineComment());
         configureCommentEmojiPanel();
         boolean managementView = role != Role.USER;
@@ -933,11 +934,15 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
 
     private void updateCommentVoiceUi(boolean recording, long elapsedMs) {
         if (!isUiActive()) return;
-        binding.commentVoiceStatus.setVisibility(recording ? View.VISIBLE : View.GONE);
+        binding.commentVoiceStatusCard.setVisibility(recording ? View.VISIBLE : View.GONE);
+        binding.commentVoiceStatusTitle.setText(recording ? "正在录音" : "");
         binding.commentVoiceStatus.setText(recording
-            ? "录音中 " + formatVoiceDuration(elapsedMs) + "，再点麦克风完成"
+            ? formatVoiceDuration(elapsedMs) + " · 点击麦克风完成"
             : "");
+        binding.commentVoiceStatusIcon.setImageResource(recording ? R.drawable.ic_mic_off : R.drawable.ic_mic);
         binding.commentVoiceIcon.setImageResource(recording ? R.drawable.ic_mic_off : R.drawable.ic_mic);
+        binding.commentVoiceButton.setSelected(recording);
+        binding.commentVoiceCancelButton.setEnabled(recording);
         binding.commentVoiceButton.setContentDescription(recording ? "结束语音录制" : "录制语音评论");
     }
 
@@ -1169,6 +1174,8 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentAttachButton.setEnabled(enabled);
         binding.commentEmojiButton.setEnabled(enabled);
         binding.commentVoiceButton.setEnabled(enabled);
+        binding.commentVoiceCancelButton.setEnabled(enabled && commentVoiceRecorder != null
+            && commentVoiceRecorder.isRecording());
         binding.sendCommentButton.setEnabled(enabled);
     }
 

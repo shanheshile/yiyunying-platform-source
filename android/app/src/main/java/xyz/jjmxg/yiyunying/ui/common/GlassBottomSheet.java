@@ -49,6 +49,17 @@ public final class GlassBottomSheet {
         prepareInternal(dialog, context, maxHeightRatio, alwaysExpanded, true);
     }
 
+    /** Re-measures an already visible sheet after its adaptive content or IME viewport changes. */
+    public static void refresh(BottomSheetDialog dialog, Context context, float maxHeightRatio,
+                               boolean alwaysExpanded) {
+        if (dialog == null || context == null) return;
+        FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (sheet == null) return;
+        BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
+        sheet.post(() -> sizeToContent(
+            sheet, behavior, context, maxHeightRatio, alwaysExpanded));
+    }
+
     private static void prepareInternal(BottomSheetDialog dialog, Context context, float maxHeightRatio,
                                         boolean alwaysExpanded, boolean floating) {
         Window window = dialog.getWindow();
