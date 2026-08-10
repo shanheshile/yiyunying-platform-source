@@ -35,13 +35,13 @@
             android:paddingEnd="22dp"
             android:paddingBottom="32dp">
 
-            <ImageView
+            <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/avatar"
                 android:layout_width="88dp"
                 android:layout_height="88dp"
-                android:background="@drawable/bg_avatar"
                 android:contentDescription="用户头像"
-                android:scaleType="centerCrop" />
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
 
             <TextView
                 android:id="@+id/name"
@@ -93,6 +93,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="72dp"
                 android:layout_marginTop="20dp"
+                android:background="@drawable/bg_profile_settings_card"
                 android:gravity="center"
                 android:orientation="horizontal">
 

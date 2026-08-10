@@ -68,6 +68,7 @@ $dialogBuilderSource = Get-Content -LiteralPath (Join-Path $root 'android/app/sr
 $momentTimelineSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/moment/MomentTimelineActivity.java') -Raw -Encoding UTF8
 $momentDisplayPolicySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/moment/MomentDisplayPolicy.java') -Raw -Encoding UTF8
 $forumPostSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumPostActivity.java') -Raw -Encoding UTF8
+$forumCommentPreviewPolicySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumCommentPreviewPolicy.java') -Raw -Encoding UTF8
 $inlineMediaPreviewSource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/chat/InlineMediaPreviewDialog.java') -Raw -Encoding UTF8
 $imageGallerySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/upload/ImageGalleryActivity.java') -Raw -Encoding UTF8
 $socialDirectorySource = Get-Content -LiteralPath (Join-Path $root 'android/app/src/main/java/xyz/jjmxg/yiyunying/ui/social/SocialDirectoryActivity.java') -Raw -Encoding UTF8
@@ -150,9 +151,12 @@ foreach ($sourceNeedle in @(
 )) {
     if ($sourceNeedle.Source.IndexOf($sourceNeedle.Needle, [StringComparison]::Ordinal) -lt 0) { throw "$momentActionError Missing: $($sourceNeedle.Needle)" }
 }
-$forumCollapseError = 'Forum reply threads must be collapsed by default with an explicit expand control.'
-foreach ($needle in @('expandedCommentThreads', 'repliesContainer.setVisibility(replyCount > 0 && expanded ? View.VISIBLE : View.GONE)', 'toggle.setOnClickListener', 'replyCount')) {
+$forumCollapseError = 'Forum replies must stay nested under their root, preview a bounded count, and expose an explicit expand control.'
+foreach ($needle in @('expandedCommentThreads', 'repliesContainer.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE)', 'ForumCommentPreviewPolicy.isReplyVisible', 'toggle.setOnClickListener', 'replyCount')) {
     if ($forumPostSource.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) { throw $forumCollapseError }
+}
+foreach ($needle in @('PREVIEW_LIMIT = 2', 'return expanded ||', 'return replyCount > PREVIEW_LIMIT')) {
+    if ($forumCommentPreviewPolicySource.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) { throw $forumCollapseError }
 }
 $imagePreviewError = 'Image previews must expose original-image and animated-image controls backed by original media metadata.'
 foreach ($sourceNeedle in @(

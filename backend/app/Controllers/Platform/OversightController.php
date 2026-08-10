@@ -111,7 +111,7 @@ final class OversightController
         $post['comments'] = ContentTagService::hydrate($post['comments']);
         $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', (int) $app['id']);
         $post['paid_rule'] = Database::one(
-            'SELECT price_integral AS price_balance, preview_content, status, created_at, updated_at FROM forum_paid_contents WHERE post_id = ?',
+            'SELECT price_integral AS price_balance, asset_type, preview_content, status, created_at, updated_at FROM forum_paid_contents WHERE post_id = ?',
             [(int) $post['id']]
         );
         PlatformService::log($request, $actor, 'forum', 'post_detail', 'post', (int) $post['id'], null, ['app_id' => (int) $app['id']]);

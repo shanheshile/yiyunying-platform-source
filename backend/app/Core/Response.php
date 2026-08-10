@@ -53,9 +53,72 @@ final class Response
         );
     }
 
+    public static function file(string $path, string $mimeType = 'application/octet-stream'): ApiResponse
+    {
+        $size = is_file($path) ? filesize($path) : false;
+        if ($size === false) throw new HttpException('媒体文件不存在', 404, 404);
+        $offset = 0;
+        $length = (int) $size;
+        $status = 200;
+        $range = trim((string) ($_SERVER['HTTP_RANGE'] ?? ''));
+        if ($range !== '' && preg_match('/^bytes=(\d*)-(\d*)$/', $range, $matches) === 1) {
+            if ($matches[1] === '' && $matches[2] === '') throw new HttpException('媒体范围无效', 416, 416);
+            if ($matches[1] === '') {
+                $suffix = max(1, (int) $matches[2]);
+                $offset = max(0, (int) $size - $suffix);
+                $end = (int) $size - 1;
+            } else {
+                $offset = (int) $matches[1];
+                $end = $matches[2] === '' ? (int) $size - 1 : min((int) $matches[2], (int) $size - 1);
+            }
+            if ($offset < 0 || $offset >= (int) $size || $end < $offset) {
+                throw new HttpException('媒体范围超出文件大小', 416, 416);
+            }
+            $length = $end - $offset + 1;
+            $status = 206;
+        }
+        $safeMime = preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+$#i', $mimeType) === 1
+            ? $mimeType : 'application/octet-stream';
+        $response = new ApiResponse([], $status);
+        $response->filePath = $path;
+        $response->fileOffset = $offset;
+        $response->fileLength = $length;
+        $response->headers = [
+            'Content-Type' => $safeMime,
+            'Content-Length' => (string) $length,
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'private, max-age=300, no-transform',
+            'Content-Disposition' => 'inline',
+            'Referrer-Policy' => 'no-referrer',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
+        if ($status === 206) {
+            $response->headers['Content-Range'] = 'bytes ' . $offset . '-' . ($offset + $length - 1) . '/' . $size;
+        }
+        return $response;
+    }
+
     public static function emit(ApiResponse $response): void
     {
         http_response_code($response->httpStatus);
+        if ($response->filePath !== null) {
+            foreach ($response->headers as $name => $value) header($name . ': ' . $value);
+            $stream = fopen($response->filePath, 'rb');
+            if ($stream === false) return;
+            try {
+                if ($response->fileOffset > 0) fseek($stream, $response->fileOffset);
+                $remaining = $response->fileLength;
+                while ($remaining > 0 && !feof($stream)) {
+                    $chunk = fread($stream, min(1048576, $remaining));
+                    if ($chunk === false || $chunk === '') break;
+                    echo $chunk;
+                    $remaining -= strlen($chunk);
+                }
+            } finally {
+                fclose($stream);
+            }
+            return;
+        }
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode(
             $response->body,

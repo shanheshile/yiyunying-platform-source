@@ -24,6 +24,8 @@
     <color name="warning">#9B5B00</color>
     <color name="white">#FFFFFF</color>
     <color name="transparent">#00000000</color>
+    <!-- Transparent home-toolbar buttons must use a surface foreground, not on-primary white. -->
+    <color name="home_header_action_tint">#5B687A</color>
     <color name="accent_blue">#1769E0</color>
     <color name="accent_blue_container">#E8F1FF</color>
     <color name="on_accent_blue_container">#123A72</color>
@@ -33,4 +35,8 @@
     <color name="accent_rose">#A83968</color>
     <color name="accent_rose_container">#FFE8F0</color>
     <color name="on_accent_rose_container">#66113A</color>
+    <color name="forum_draft_container">#FFF0C2</color>
+    <color name="on_forum_draft_container">#573B00</color>
+    <color name="forum_chapter_container">#EADFFF</color>
+    <color name="on_forum_chapter_container">#44216A</color>
 </resources>

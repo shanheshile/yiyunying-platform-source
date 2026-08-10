@@ -9,6 +9,8 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -41,11 +43,14 @@ import com.google.gson.JsonObject;
 
 import java.util.LinkedHashMap;
 import java.util.ArrayList;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.TimeZone;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
@@ -54,6 +59,8 @@ import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityForumPostBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
+import xyz.jjmxg.yiyunying.domain.forum.ForumPrivateMediaPolicy;
+import xyz.jjmxg.yiyunying.domain.forum.ForumUnlockPolicy;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.browser.LinkNavigator;
@@ -73,6 +80,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private static final String EXTRA_POST_ID = "post_id";
     private static final String EXTRA_APP_ID = "app_id";
     private static final String EXTRA_COMMENT_ID = "comment_id";
+    private static final long PRIVATE_MEDIA_REFRESH_DEBOUNCE_MS = 1_500L;
 
     private ActivityForumPostBinding binding;
     private RequestHandle request;
@@ -86,6 +94,15 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private Role role;
     private long replyToCommentId;
     private JsonObject post = new JsonObject();
+    private final Handler privateMediaHandler = new Handler(Looper.getMainLooper());
+    private final Runnable privateMediaRefresh = () -> refreshPrivateMedia(false);
+    private long loadGeneration;
+    private long networkAppliedGeneration;
+    private long lastPrivateMediaRefreshStartedAt;
+    private long lastAutomaticPrivateMediaExpiry = Long.MIN_VALUE;
+    private boolean privateMediaRefreshInFlight;
+    private boolean privateMediaAutoRefreshSuppressed;
+    private boolean resumed;
     private final List<CommentAttachment> commentAttachments = new ArrayList<>();
     private final Set<Long> commentMentionIds = new LinkedHashSet<>();
     private final Set<Long> expandedCommentThreads = new LinkedHashSet<>();
@@ -137,6 +154,8 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         setContentView(binding.getRoot());
         SecureMediaClipboard.attachPaste(binding.commentInput, uris -> selectedCommentFiles("file", uris));
         binding.toolbar.setNavigationOnClickListener(view -> finish());
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            binding.toolbar, binding.scroll);
         binding.authorRow.setOnClickListener(view -> openAuthor(post));
         binding.likeButton.setOnClickListener(view -> toggle("like"));
         binding.favoriteButton.setOnClickListener(view -> toggle("favorite"));
@@ -173,32 +192,68 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     }
 
     private void load() {
+        load(false, false);
+    }
+
+    private void load(boolean refreshingPrivateMedia, boolean requestedByUser) {
         if (!isUiActive()) return;
         if (request != null) request.cancel();
-        binding.progress.setVisibility(View.VISIBLE);
-        String path = role == Role.USER ? "/api/user/forum-posts/" + postId
-            : "/api/" + role.wireName() + "/apps/" + appId + "/forum-posts/" + postId;
+        request = null;
+        privateMediaRefreshInFlight = refreshingPrivateMedia;
+        if (!refreshingPrivateMedia) privateMediaAutoRefreshSuppressed = false;
+        long generation = ++loadGeneration;
+        if (!refreshingPrivateMedia || requestedByUser) binding.progress.setVisibility(View.VISIBLE);
+        String path = postPath();
         LinkedHashMap<String, String> query = new LinkedHashMap<>();
-        AppAccess.from(this).repository().getCached(path, query, cached -> {
-            if (binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
-            JsonObject cachedPost = Jsons.object(cached.dataObject(), "post");
-            if (cachedPost.size() == 0) return;
-            post = cachedPost;
-            render();
-            binding.progress.setVisibility(View.INVISIBLE);
-        });
+        if (refreshingPrivateMedia) {
+            query.put("_media_refresh", Long.toString(System.currentTimeMillis()));
+        }
+        if (!refreshingPrivateMedia) {
+            AppAccess.from(this).repository().getCached(path, query, cached -> {
+                if (generation != loadGeneration || networkAppliedGeneration >= generation
+                    || binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
+                JsonObject cachedPost = Jsons.object(cached.dataObject(), "post");
+                if (cachedPost.size() == 0) return;
+                post = cachedPost;
+                render();
+                binding.progress.setVisibility(View.INVISIBLE);
+            });
+        }
         request = AppAccess.from(this).repository().get(path, query, result -> {
+            if (generation != loadGeneration) return;
             request = null;
+            privateMediaRefreshInFlight = false;
             if (!isUiActive()) return;
-            binding.progress.setVisibility(View.INVISIBLE);
+            if (!refreshingPrivateMedia || requestedByUser) binding.progress.setVisibility(View.INVISIBLE);
             if (result.isAuthenticationFailure()) { login(); return; }
             if (!result.isSuccessful()) {
-                Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "帖子加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
+                if (!refreshingPrivateMedia || requestedByUser) {
+                    Snackbar.make(binding.getRoot(), result.message().isEmpty()
+                        ? (refreshingPrivateMedia ? "媒体访问地址刷新失败，请稍后重试" : "帖子加载失败")
+                        : result.message(), Snackbar.LENGTH_LONG).show();
+                }
                 return;
             }
-            post = Jsons.object(result.dataObject(), "post");
+            boolean offlineFallback = "offline-cache".equals(result.traceId());
+            if (refreshingPrivateMedia && offlineFallback) {
+                privateMediaAutoRefreshSuppressed = true;
+                if (requestedByUser) {
+                    Snackbar.make(binding.getRoot(), "网络不可用，无法刷新媒体访问地址", Snackbar.LENGTH_LONG).show();
+                }
+                return;
+            }
+            JsonObject freshPost = Jsons.object(result.dataObject(), "post");
+            if (freshPost.size() == 0) return;
+            networkAppliedGeneration = generation;
+            privateMediaAutoRefreshSuppressed = offlineFallback;
+            post = freshPost;
             render();
         });
+    }
+
+    private String postPath() {
+        return role == Role.USER ? "/api/user/forum-posts/" + postId
+            : "/api/" + role.wireName() + "/apps/" + appId + "/forum-posts/" + postId;
     }
 
     private void render() {
@@ -219,7 +274,8 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             + (hotLabel.isEmpty() ? "" : " · 热度 " + hotLabel));
         String avatar = ImageLoader.get().absoluteUrl(this, Jsons.string(post, "avatar"));
         ImageLoader.get().load(avatar, binding.authorAvatar, R.drawable.ic_person);
-        MediaViewRenderer.render(this, binding.mediaContainer, Jsons.array(post, "attachments"));
+        MediaViewRenderer.render(this, binding.mediaContainer, Jsons.array(post, "attachments"),
+            this::refreshPrivateMediaForClick);
         renderSections(Jsons.array(post, "sections"));
         binding.likeButton.setText(bool(post, "liked") ? "已点赞 " + Jsons.longValue(post, "like_count") : "点赞 " + Jsons.longValue(post, "like_count"));
         binding.favoriteButton.setText(bool(post, "favorited") ? "已收藏" : "收藏");
@@ -239,6 +295,63 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             binding.tagContainer.addView(chip);
         }
         renderComments(Jsons.array(post, "comments"));
+        schedulePrivateMediaRefresh();
+    }
+
+    private ForumPrivateMediaPolicy.Snapshot privateMediaSnapshot() {
+        return ForumPrivateMediaPolicy.inspect(post, System.currentTimeMillis());
+    }
+
+    private void refreshPrivateMediaForClick(long attachmentId) {
+        ForumPrivateMediaPolicy.Snapshot snapshot = privateMediaSnapshot();
+        if (!snapshot.hasPrivateMedia()
+            || (attachmentId > 0L && !snapshot.contains(attachmentId))) return;
+        if (request != null || privateMediaRefreshInFlight) {
+            Snackbar.make(binding.getRoot(), "正在刷新媒体访问地址，请稍候", Snackbar.LENGTH_SHORT).show();
+            return;
+        }
+        Snackbar.make(binding.getRoot(), "正在刷新媒体访问地址，请稍候", Snackbar.LENGTH_SHORT).show();
+        refreshPrivateMedia(true);
+    }
+
+    private void refreshPrivateMedia(boolean requestedByUser) {
+        if (!isUiActive() || request != null || privateMediaRefreshInFlight) return;
+        ForumPrivateMediaPolicy.Snapshot snapshot = privateMediaSnapshot();
+        if (!snapshot.hasPrivateMedia() || !snapshot.refreshRequired()) {
+            schedulePrivateMediaRefresh();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastPrivateMediaRefreshStartedAt;
+        if (elapsed < PRIVATE_MEDIA_REFRESH_DEBOUNCE_MS) {
+            privateMediaHandler.removeCallbacks(privateMediaRefresh);
+            privateMediaHandler.postDelayed(privateMediaRefresh,
+                Math.max(1L, PRIVATE_MEDIA_REFRESH_DEBOUNCE_MS - elapsed));
+            return;
+        }
+        lastPrivateMediaRefreshStartedAt = now;
+        if (!requestedByUser) lastAutomaticPrivateMediaExpiry = refreshToken(snapshot);
+        privateMediaHandler.removeCallbacks(privateMediaRefresh);
+        load(true, requestedByUser);
+    }
+
+    private void schedulePrivateMediaRefresh() {
+        privateMediaHandler.removeCallbacks(privateMediaRefresh);
+        if (!resumed || !isUiActive() || request != null || privateMediaRefreshInFlight
+            || privateMediaAutoRefreshSuppressed) return;
+        ForumPrivateMediaPolicy.Snapshot snapshot = privateMediaSnapshot();
+        if (!snapshot.hasPrivateMedia()) return;
+        long token = refreshToken(snapshot);
+        long delay = snapshot.earliestExpiryMs() == Long.MAX_VALUE
+            ? 0L
+            : Math.max(0L, snapshot.earliestExpiryMs() - System.currentTimeMillis()
+                - ForumPrivateMediaPolicy.REFRESH_AHEAD_MS);
+        if (delay == 0L && token == lastAutomaticPrivateMediaExpiry) return;
+        privateMediaHandler.postDelayed(privateMediaRefresh, delay);
+    }
+
+    private long refreshToken(ForumPrivateMediaPolicy.Snapshot snapshot) {
+        return snapshot.earliestExpiryMs() == Long.MAX_VALUE ? 0L : snapshot.earliestExpiryMs();
     }
 
     private void renderSections(JsonArray sections) {
@@ -269,31 +382,37 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             body.setPadding(dp(14), dp(12), dp(14), dp(14));
             String title = Jsons.string(section, "title");
             boolean locked = bool(section, "locked");
-            boolean paid = "paid".equals(Jsons.string(section, "section_type"));
+            String unlockType = Jsons.string(section, "section_type");
+            boolean protectedContent = !"free".equals(unlockType);
             TextView heading = new TextView(this);
             heading.setText("第 " + number + " 节" + (title.isEmpty() ? "" : " · " + title)
-                + (paid ? (locked ? "  付费内容" : "  已解锁") : "  免费"));
+                + (protectedContent ? (locked ? "  待解锁" : "  已解锁") : "  公开"));
             heading.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium);
-            heading.setTextColor(paid ? xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(this)
+            heading.setTextColor(protectedContent ? xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(this)
                 : getColor(R.color.on_surface));
             body.addView(heading);
             if (locked) {
                 TextView hint = new TextView(this);
-                hint.setText("本节正文、标签和附件已隐藏，支付 " + money(decimal(section, "price_balance")) + " 余额后仅当前账号可查看。");
+                String preview = Jsons.string(section, "preview_content");
+                String rule = sectionUnlockRule(section);
+                hint.setText((preview.isEmpty() ? "本节正文、标签和附件暂时隐藏。" : preview)
+                    + (rule.isEmpty() ? "" : "\n" + rule));
                 hint.setTextColor(getColor(R.color.on_surface_variant));
                 hint.setTextSize(14);
                 LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 hintParams.topMargin = dp(8);
                 body.addView(hint, hintParams);
-                MaterialButton unlock = new MaterialButton(this);
-                unlock.setText("支付并查看 · " + money(decimal(section, "price_balance")));
-                long sectionId = Jsons.longValue(section, "id");
-                unlock.setOnClickListener(view -> confirmPurchase(
-                    "/api/user/forum-posts/" + postId + "/sections/" + sectionId + "/buy",
-                    money(decimal(section, "price_balance"))));
-                LinearLayout.LayoutParams unlockParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
-                unlockParams.topMargin = dp(8);
-                body.addView(unlock, unlockParams);
+                if (bool(section, "can_buy")) {
+                    MaterialButton unlock = new MaterialButton(this);
+                    unlock.setText("提前支付并查看 · " + money(decimal(section, "price_balance")));
+                    long sectionId = Jsons.longValue(section, "id");
+                    unlock.setOnClickListener(view -> confirmPurchase(
+                        "/api/user/forum-posts/" + postId + "/sections/" + sectionId + "/buy",
+                        money(decimal(section, "price_balance"))));
+                    LinearLayout.LayoutParams unlockParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+                    unlockParams.topMargin = dp(8);
+                    body.addView(unlock, unlockParams);
+                }
             } else {
                 TextView content = new TextView(this);
                 LinkNavigator.setTextWithLinks(content, Jsons.string(section, "content"));
@@ -313,10 +432,30 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 LinearLayout media = new LinearLayout(this);
                 media.setOrientation(LinearLayout.VERTICAL);
                 body.addView(media, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                MediaViewRenderer.render(this, media, Jsons.array(section, "attachments"));
+                MediaViewRenderer.render(this, media, Jsons.array(section, "attachments"),
+                    this::refreshPrivateMediaForClick);
             }
             card.addView(body);
             binding.sectionsContainer.addView(card);
+        }
+    }
+
+    private String sectionUnlockRule(JsonObject section) {
+        String type = Jsons.string(section, "section_type");
+        String localTime = localUnlockAt(Jsons.string(section, "unlock_at_iso"));
+        return ForumUnlockPolicy.label(type, decimal(section, "price_balance"), localTime);
+    }
+
+    private String localUnlockAt(String iso) {
+        if (iso == null || iso.trim().isEmpty()) return "";
+        try {
+            SimpleDateFormat source = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
+            source.setLenient(false);
+            source.setTimeZone(TimeZone.getTimeZone("UTC"));
+            Date value = source.parse(iso.trim());
+            return value == null ? "" : new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(value);
+        } catch (java.text.ParseException ignored) {
+            return "";
         }
     }
 
@@ -383,13 +522,14 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cardParams.bottomMargin = dp(6);
             if (parentCommentId > 0) {
-                cardParams.leftMargin = dp(18);
-                cardParams.rightMargin = dp(4);
+                cardParams.leftMargin = dp(2);
+                cardParams.rightMargin = dp(2);
             }
             card.setLayoutParams(cardParams);
             card.setRadius(dp(6));
             card.setCardElevation(0);
-            card.setCardBackgroundColor(getColor(R.color.surface_container));
+            card.setCardBackgroundColor(getColor(parentCommentId > 0
+                ? R.color.surface_container_high : R.color.surface_container));
 
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
@@ -477,7 +617,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 card.setOnLongClickListener(view -> { detail.onClick(view); return true; });
             }
             if (parentCommentId > 0L) {
-                thread.addReply(card, comment);
+                thread.addReply(card);
             } else {
                 thread.rootContainer.addView(card);
             }
@@ -493,6 +633,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private final class CommentThreadView {
         final long rootId;
         final LinearLayout rootContainer;
+        final LinearLayout nestedContainer;
         final LinearLayout previewContainer;
         final LinearLayout repliesContainer;
         final LinearLayout toggle;
@@ -502,23 +643,32 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
 
         CommentThreadView(long rootId) {
             this.rootId = rootId;
-            LinearLayout wrapper = new LinearLayout(ForumPostActivity.this);
-            wrapper.setOrientation(LinearLayout.VERTICAL);
+            MaterialCardView wrapper = new MaterialCardView(ForumPostActivity.this);
             LinearLayout.LayoutParams wrapperParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
             wrapperParams.bottomMargin = dp(12);
             wrapper.setLayoutParams(wrapperParams);
+            wrapper.setRadius(dp(8));
+            wrapper.setCardElevation(0);
+            wrapper.setStrokeWidth(dp(1));
+            wrapper.setStrokeColor(getColor(R.color.outline_variant));
+            wrapper.setCardBackgroundColor(getColor(R.color.surface_container));
+
+            LinearLayout threadBody = new LinearLayout(ForumPostActivity.this);
+            threadBody.setOrientation(LinearLayout.VERTICAL);
 
             rootContainer = new LinearLayout(ForumPostActivity.this);
             rootContainer.setOrientation(LinearLayout.VERTICAL);
-            previewContainer = new LinearLayout(ForumPostActivity.this);
-            previewContainer.setOrientation(LinearLayout.VERTICAL);
-            previewContainer.setPadding(dp(8), dp(5), dp(8), dp(5));
-            previewContainer.setBackground(commentThreadBackground(
+            nestedContainer = new LinearLayout(ForumPostActivity.this);
+            nestedContainer.setOrientation(LinearLayout.VERTICAL);
+            nestedContainer.setPadding(dp(8), dp(7), dp(8), dp(7));
+            nestedContainer.setBackground(commentThreadBackground(
                 R.color.surface_container_high,
                 R.color.outline_variant,
                 8));
+            previewContainer = new LinearLayout(ForumPostActivity.this);
+            previewContainer.setOrientation(LinearLayout.VERTICAL);
             repliesContainer = new LinearLayout(ForumPostActivity.this);
             repliesContainer.setOrientation(LinearLayout.VERTICAL);
             toggle = new LinearLayout(ForumPostActivity.this);
@@ -526,13 +676,13 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             toggle.setGravity(Gravity.CENTER);
             toggle.setClickable(true);
             toggle.setFocusable(true);
-            toggle.setPadding(dp(12), 0, dp(12), 0);
+            toggle.setPadding(dp(8), 0, dp(8), 0);
             toggle.setBackground(commentThreadBackground(
                 R.color.surface_container_high,
                 R.color.outline_variant,
-                8));
+                16));
             toggleText = new TextView(ForumPostActivity.this);
-            toggleText.setTextSize(13);
+            toggleText.setTextSize(12);
             toggleText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             toggleText.setTextColor(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this));
             toggleIcon = new ImageView(ForumPostActivity.this);
@@ -541,8 +691,8 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this)));
             toggle.addView(toggleText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
-            iconParams.leftMargin = dp(4);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(14), dp(14));
+            iconParams.leftMargin = dp(3);
             toggle.addView(toggleIcon, iconParams);
             toggle.setOnClickListener(view -> {
                 if (expandedCommentThreads.contains(rootId)) expandedCommentThreads.remove(rootId);
@@ -550,85 +700,47 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 refresh();
             });
 
-            wrapper.addView(rootContainer, new LinearLayout.LayoutParams(
+            threadBody.addView(rootContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            previewParams.leftMargin = dp(62);
-            previewParams.rightMargin = dp(12);
-            wrapper.addView(previewContainer, previewParams);
+            nestedContainer.addView(previewContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            nestedContainer.addView(repliesContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-            toggleParams.leftMargin = dp(62);
-            toggleParams.rightMargin = dp(12);
-            toggleParams.topMargin = dp(6);
-            wrapper.addView(toggle, toggleParams);
-            wrapper.addView(repliesContainer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
+            toggleParams.topMargin = dp(4);
+            nestedContainer.addView(toggle, toggleParams);
+            LinearLayout.LayoutParams nestedParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            nestedParams.leftMargin = dp(62);
+            nestedParams.rightMargin = dp(12);
+            nestedParams.bottomMargin = dp(10);
+            threadBody.addView(nestedContainer, nestedParams);
+            wrapper.addView(threadBody);
             binding.commentsContainer.addView(wrapper);
         }
 
-        void addReply(MaterialCardView card, JsonObject comment) {
+        void addReply(MaterialCardView card) {
             repliesContainer.addView(card);
-            int replyIndex = replyCount++;
-            if (!ForumCommentPreviewPolicy.includesPreview(replyIndex)) return;
-            if (previewContainer.getChildCount() > 0) {
-                View divider = new View(ForumPostActivity.this);
-                divider.setBackgroundColor(getColor(R.color.outline_variant));
-                previewContainer.addView(divider, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
-            }
-            TextView preview = new TextView(ForumPostActivity.this);
-            String author = Jsons.string(comment, "nickname");
-            if (author.isEmpty()) author = "用户 " + Jsons.longValue(comment, "user_id");
-            String target = Jsons.string(comment, "reply_to_name");
-            String prefix = author + (target.isEmpty() ? "" : " 回复 " + target) + "：";
-            android.text.SpannableStringBuilder summary = new android.text.SpannableStringBuilder(
-                prefix + commentPreviewContent(comment));
-            summary.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), 0, author.length(),
-                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            summary.setSpan(new android.text.style.ForegroundColorSpan(
-                    xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(ForumPostActivity.this)),
-                0, author.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            preview.setText(summary);
-            preview.setTextColor(getColor(R.color.on_surface_variant));
-            preview.setTextSize(13);
-            preview.setSingleLine(true);
-            preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            preview.setGravity(Gravity.CENTER_VERTICAL);
-            preview.setPadding(dp(4), dp(3), dp(4), dp(3));
-            preview.setOnClickListener(view -> {
-                expandedCommentThreads.add(rootId);
-                refresh();
-                repliesContainer.post(() -> focusCommentCard(card, "已展开并定位到这条回复"));
-            });
-            previewContainer.addView(preview, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
+            replyCount++;
         }
 
         void refresh() {
             boolean expanded = expandedCommentThreads.contains(rootId);
-            previewContainer.setVisibility(replyCount > 0 && !expanded ? View.VISIBLE : View.GONE);
-            repliesContainer.setVisibility(replyCount > 0 && expanded ? View.VISIBLE : View.GONE);
-            toggle.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
+            previewContainer.setVisibility(View.GONE);
+            repliesContainer.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
+            for (int index = 0; index < repliesContainer.getChildCount(); index++) {
+                repliesContainer.getChildAt(index).setVisibility(
+                    ForumCommentPreviewPolicy.isReplyVisible(expanded, index)
+                        ? View.VISIBLE : View.GONE);
+            }
+            nestedContainer.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
+            toggle.setVisibility(ForumCommentPreviewPolicy.showsToggle(replyCount)
+                ? View.VISIBLE : View.GONE);
             toggleText.setText(ForumCommentPreviewPolicy.toggleLabel(expanded, replyCount));
             toggleIcon.setRotation(expanded ? -90f : 90f);
             toggle.setContentDescription(toggleText.getText());
         }
-    }
-
-    private String commentPreviewContent(JsonObject comment) {
-        String content = Jsons.string(comment, "content").trim().replace('\n', ' ');
-        if (!content.isEmpty()) return content;
-        JsonArray attachments = Jsons.array(comment, "attachments");
-        if (attachments.isEmpty()) return "[空回复]";
-        JsonObject first = attachments.get(0).isJsonObject()
-            ? attachments.get(0).getAsJsonObject() : new JsonObject();
-        String label = ForumCommentPreviewPolicy.attachmentLabel(
-            Jsons.string(first, "media_type"), Jsons.string(first, "mime_type"));
-        return attachments.size() > 1
-            ? "[" + label + "等 " + attachments.size() + " 项]"
-            : "[" + label + "]";
     }
 
     private GradientDrawable commentThreadBackground(int fillColor, int strokeColor, int radiusDp) {
@@ -1218,7 +1330,23 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         finish();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        resumed = true;
+        lastAutomaticPrivateMediaExpiry = Long.MIN_VALUE;
+        ForumPrivateMediaPolicy.Snapshot snapshot = privateMediaSnapshot();
+        if (snapshot.refreshRequired()) refreshPrivateMedia(false);
+        else schedulePrivateMediaRefresh();
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        privateMediaHandler.removeCallbacks(privateMediaRefresh);
+        super.onPause();
+    }
+
     @Override protected void onDestroy() {
+        privateMediaHandler.removeCallbacksAndMessages(null);
         if (request != null) request.cancel();
         if (actionRequest != null) actionRequest.cancel();
         if (commentRequest != null) commentRequest.cancel();

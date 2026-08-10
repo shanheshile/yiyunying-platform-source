@@ -85,6 +85,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private RequestHandle actionRequest;
     private RequestHandle uploadRequest;
     private RequestHandle voteOptionUploadRequest;
+    private RequestHandle avatarUploadRequest;
+    private RequestHandle avatarPolicyRequest;
     private long roomId;
     private String roomKind = "group";
     private String section = "members";
@@ -95,6 +97,13 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private String groupNumber = "";
     private String groupCreatedAt = "";
     private String currentRole = "member";
+    private String roomIcon = "";
+    private String roomName = "";
+    private String roomDescription = "";
+    private String roomAnnouncement = "";
+    private boolean roomProfilesEnabled = true;
+    private boolean groupAvatarUploadEnabled = true;
+    private boolean chatroomAvatarUploadEnabled = true;
     private final ArrayDeque<JsonObject> invitationQueue = new ArrayDeque<>();
     private int invitationTotal;
     private int invitationSucceeded;
@@ -107,6 +116,14 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private int uploadTotal;
     private int uploadCompleted;
     private VoteOptionDraft pendingVoteOptionImage;
+    private final ActivityResultLauncher<Intent> avatarPicker = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+            ArrayList<Uri> selected = result.getData()
+                .getParcelableArrayListExtra(MediaPickerActivity.EXTRA_SELECTED_URIS);
+            if (selected == null || selected.isEmpty()) return;
+            uploadRoomAvatar(selected.get(0));
+        });
     private final ActivityResultLauncher<Intent> mediaPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
@@ -177,6 +194,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             @Override public void handleOnBackPressed() { navigateBack(); }
         });
         binding.groupName.setText(getIntent().getStringExtra(EXTRA_TITLE));
+        binding.groupAvatar.setImageResource(R.drawable.ic_group);
+        binding.groupAvatarButton.setOnClickListener(view ->
+            avatarPicker.launch(MediaPickerActivity.imageIntent(this, 1)));
+        binding.groupEditButton.setOnClickListener(view -> showRoomProfileEditor());
         binding.groupQrButton.setOnClickListener(view -> showGroupQr());
         adapter = new SpaceAdapter();
         binding.recycler.setLayoutManager(new LinearLayoutManager(this));
@@ -204,6 +225,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         });
         binding.actionButton.setOnClickListener(view -> createForSection());
         updateActionLabel();
+        loadAvatarPolicy();
         loadRoom();
         load();
     }
@@ -229,24 +251,174 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             binding.tabVotes.setText(spacePrefix() + "投票");
             binding.tabSolitaires.setText(spacePrefix() + "接龙");
             String roomName = Jsons.string(room, "name");
+            this.roomName = roomName;
+            roomDescription = Jsons.string(room, "description");
+            roomAnnouncement = Jsons.string(room, "announcement");
             if (!roomName.isEmpty()) binding.groupName.setText(roomName);
             currentRole = Jsons.string(room, "current_role");
             if (currentRole.isEmpty()) currentRole = "member";
+            String nextIcon = Jsons.string(room, "icon");
+            ImageLoader.get().invalidate(ImageLoader.get().absoluteUrl(this, roomIcon));
+            roomIcon = nextIcon;
+            ImageLoader.get().load(
+                ImageLoader.get().absoluteUrl(this, roomIcon),
+                binding.groupAvatar,
+                R.drawable.ic_group
+            );
             groupNumber = String.valueOf(20000000000L + Jsons.longValue(room, "id"));
             groupCreatedAt = Jsons.string(room, "created_at");
             String created = groupCreatedAt.isEmpty() ? "未记录" : groupCreatedAt;
             binding.groupMeta.setText(entityNumberLabel() + " " + groupNumber
                 + " · " + memberLabel() + " " + Jsons.longValue(room, "member_count") + " 人"
                 + " · 创建时间 " + created);
-            String announcement = Jsons.string(room, "announcement");
-            binding.announcement.setText(announcement.isEmpty()
+            binding.announcement.setText(roomAnnouncement.isEmpty()
                 ? "暂无" + entityLabel() + "公告"
-                : entityLabel() + "公告：" + announcement);
+                : entityLabel() + "公告：" + roomAnnouncement);
             if (currentFolderId == 0) currentFolderName = fileRootName();
+            renderAvatarAction();
             updateActionLabel();
             updateFolderNavigation();
             if (adapter != null) adapter.notifyDataSetChanged();
         });
+    }
+
+    private void loadAvatarPolicy() {
+        if (avatarPolicyRequest != null) avatarPolicyRequest.cancel();
+        avatarPolicyRequest = AppAccess.from(this).repository().getPublic(
+            "/api/public/bootstrap", new LinkedHashMap<>(), result -> {
+                avatarPolicyRequest = null;
+                if (binding == null || isFinishing() || isDestroyed() || !result.isSuccessful()) return;
+                UploadPolicyStore.update(this, Jsons.object(result.dataObject(), "upload_limits"));
+                JsonObject features = Jsons.object(result.dataObject(), "features");
+                roomProfilesEnabled = featureEnabled(features, "chat_rooms", true);
+                groupAvatarUploadEnabled = featureEnabled(features, "group_avatar_upload", true);
+                chatroomAvatarUploadEnabled = featureEnabled(features, "chatroom_avatar_upload", true);
+                renderAvatarAction();
+            });
+    }
+
+    private void renderAvatarAction() {
+        if (binding == null) return;
+        boolean manager = "owner".equals(currentRole) || "admin".equals(currentRole);
+        boolean enabled = isChatRoom() ? chatroomAvatarUploadEnabled : groupAvatarUploadEnabled;
+        binding.groupAvatarButton.setText("更换" + entityLabel() + "头像");
+        binding.groupAvatarButton.setVisibility(manager && roomProfilesEnabled && enabled ? View.VISIBLE : View.GONE);
+        binding.groupEditButton.setText("编辑" + entityLabel() + "资料");
+        binding.groupEditButton.setVisibility(manager && roomProfilesEnabled ? View.VISIBLE : View.GONE);
+        binding.groupAvatar.setContentDescription(entityLabel() + "头像，点击可预览");
+        binding.groupAvatar.setOnClickListener(view -> {
+            if (roomIcon.isEmpty()) {
+                if (manager && roomProfilesEnabled && enabled) {
+                    avatarPicker.launch(MediaPickerActivity.imageIntent(this, 1));
+                }
+                return;
+            }
+            JsonObject image = new JsonObject();
+            image.addProperty("url", roomIcon);
+            image.addProperty("file_name", entityLabel() + "头像");
+            ImageGalleryActivity.open(this, java.util.Collections.singletonList(image), 0);
+        });
+    }
+
+    private void showRoomProfileEditor() {
+        if (binding == null || actionRequest != null) return;
+        LinearLayout content = form();
+        EditText name = input(entityLabel() + "名称");
+        name.setText(roomName);
+        name.setSingleLine(true);
+        EditText description = input(entityLabel() + "简介");
+        description.setText(roomDescription);
+        description.setMinLines(2);
+        description.setMaxLines(5);
+        EditText announcement = input(entityLabel() + "公告");
+        announcement.setText(roomAnnouncement);
+        announcement.setMinLines(2);
+        announcement.setMaxLines(6);
+        content.addView(name);
+        content.addView(description);
+        content.addView(announcement);
+        AlertDialog dialog = new YiyunyingDialogBuilder(this)
+            .setTitle("编辑" + entityLabel() + "资料")
+            .setView(content)
+            .setPositiveButton("保存", null)
+            .setNegativeButton("取消", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(view -> {
+                String nextName = name.getText().toString().trim();
+                if (nextName.isEmpty()) {
+                    name.setError(entityLabel() + "名称不能为空");
+                    return;
+                }
+                JsonObject body = new JsonObject();
+                body.addProperty("name", nextName);
+                body.addProperty("description", description.getText().toString().trim());
+                body.addProperty("announcement", announcement.getText().toString().trim());
+                dialog.dismiss();
+                binding.progress.setVisibility(View.VISIBLE);
+                actionRequest = AppAccess.from(this).repository().put(base(), body, result -> {
+                    actionRequest = null;
+                    if (binding == null || isFinishing() || isDestroyed()) return;
+                    binding.progress.setVisibility(View.INVISIBLE);
+                    if (!result.isSuccessful()) {
+                        toast(result.message().isEmpty() ? entityLabel() + "资料保存失败" : result.message());
+                        return;
+                    }
+                    toast(result.message().isEmpty() ? entityLabel() + "资料已保存" : result.message());
+                    loadRoom();
+                });
+            }));
+        dialog.show();
+    }
+
+    private void uploadRoomAvatar(Uri uri) {
+        if (uri == null || avatarUploadRequest != null || binding == null) return;
+        UriFile file = uriFile(uri);
+        if (!UploadPolicyStore.accepts(this, "image", file.size)) {
+            toast(UploadPolicyStore.rejectionMessage(this, "image", file.size));
+            return;
+        }
+        binding.progress.setVisibility(View.VISIBLE);
+        binding.groupAvatarButton.setEnabled(false);
+        avatarUploadRequest = AppAccess.from(this).repository().upload(
+            base() + "/avatar",
+            file.name,
+            file.mime,
+            new ContentUriRequestBody(getContentResolver(), uri, file.mime, file.size),
+            new LinkedHashMap<>(),
+            result -> {
+                avatarUploadRequest = null;
+                if (binding == null || isFinishing() || isDestroyed()) return;
+                binding.progress.setVisibility(View.INVISIBLE);
+                binding.groupAvatarButton.setEnabled(true);
+                if (!result.isSuccessful()) {
+                    toast(result.message().isEmpty() ? entityLabel() + "头像上传失败" : result.message());
+                    return;
+                }
+                ImageLoader.get().invalidate(ImageLoader.get().absoluteUrl(this, roomIcon));
+                roomIcon = Jsons.string(result.dataObject(), "icon");
+                if (roomIcon.isEmpty()) roomIcon = Jsons.string(result.dataObject(), "avatar");
+                ImageLoader.get().load(
+                    ImageLoader.get().absoluteUrl(this, roomIcon),
+                    binding.groupAvatar,
+                    R.drawable.ic_group
+                );
+                toast(result.message().isEmpty() ? entityLabel() + "头像已更新" : result.message());
+                loadRoom();
+            }
+        );
+    }
+
+    private static boolean featureEnabled(JsonObject features, String key, boolean fallback) {
+        if (features == null || !features.has(key) || features.get(key).isJsonNull()) return fallback;
+        try {
+            JsonElement value = features.get(key);
+            return value.isJsonObject()
+                ? value.getAsJsonObject().get("enabled").getAsBoolean()
+                : value.getAsBoolean();
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
     }
 
     private void updateActionLabel() {
@@ -1356,6 +1528,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         if (actionRequest != null) actionRequest.cancel();
         if (uploadRequest != null) uploadRequest.cancel();
         if (voteOptionUploadRequest != null) voteOptionUploadRequest.cancel();
+        if (avatarUploadRequest != null) avatarUploadRequest.cancel();
+        if (avatarPolicyRequest != null) avatarPolicyRequest.cancel();
         binding = null; super.onDestroy();
     }
 

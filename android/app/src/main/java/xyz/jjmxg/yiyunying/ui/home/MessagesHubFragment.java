@@ -55,6 +55,7 @@ public final class MessagesHubFragment extends BaseFragment implements UserTabPa
     private String serverItemsSnapshot = "";
     private String draftStateSnapshot = "";
     private String relationshipStateSnapshot = "";
+    private JsonObject featureFlags = new JsonObject();
     private final Runnable poll = () -> load(false);
 
     public static MessagesHubFragment newInstance() { return new MessagesHubFragment(); }
@@ -392,14 +393,33 @@ public final class MessagesHubFragment extends BaseFragment implements UserTabPa
         filter();
     }
 
+    @Override public void onFeatureFlags(JsonObject features) {
+        featureFlags = features == null ? new JsonObject() : features.deepCopy();
+    }
+
+    @Override public boolean isPrimaryActionAvailable() {
+        return HomeFeaturePolicy.anyActionEnabled(featureFlags,
+            "add_friend", "create_group", "create_chatroom");
+    }
+
     @Override public void onPrimaryAction() {
         List<GlassActionDialog.Action> actions = new ArrayList<>();
-        actions.add(new GlassActionDialog.Action("添加好友", R.drawable.ic_users,
-            () -> AddFriendActivity.open(requireContext())));
-        actions.add(new GlassActionDialog.Action("新建群聊", R.drawable.ic_users,
-            () -> SocialDirectoryActivity.openCreateGroup(requireContext())));
-        actions.add(new GlassActionDialog.Action("新建聊天室", R.drawable.ic_chat,
-            () -> SocialDirectoryActivity.openCreateChatroom(requireContext())));
+        if (HomeFeaturePolicy.actionEnabled(featureFlags, "add_friend")) {
+            actions.add(new GlassActionDialog.Action("添加好友", R.drawable.ic_users,
+                () -> AddFriendActivity.open(requireContext())));
+        }
+        if (HomeFeaturePolicy.actionEnabled(featureFlags, "create_group")) {
+            actions.add(new GlassActionDialog.Action("新建群聊", R.drawable.ic_users,
+                () -> SocialDirectoryActivity.openCreateGroup(requireContext())));
+        }
+        if (HomeFeaturePolicy.actionEnabled(featureFlags, "create_chatroom")) {
+            actions.add(new GlassActionDialog.Action("新建聊天室", R.drawable.ic_chat,
+                () -> SocialDirectoryActivity.openCreateChatroom(requireContext())));
+        }
+        if (actions.isEmpty()) {
+            if (binding != null) message(binding.getRoot(), "管理员已关闭新建会话功能");
+            return;
+        }
         GlassActionDialog.show(requireContext(), "新建会话", actions);
     }
 

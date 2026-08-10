@@ -16,6 +16,7 @@ import androidx.annotation.Nullable;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -26,6 +27,7 @@ import java.util.Map;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.databinding.FragmentSettingsBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
+import xyz.jjmxg.yiyunying.domain.chat.ChatFeatureFlags;
 import xyz.jjmxg.yiyunying.domain.module.ModuleSpec;
 import xyz.jjmxg.yiyunying.domain.module.PathResolver;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
@@ -41,6 +43,7 @@ public final class SettingsFragment extends BaseFragment {
     private final Map<String, View> settingViews = new LinkedHashMap<>();
     private final Map<String, JsonElement> settingTypes = new LinkedHashMap<>();
     private final Map<String, View> featureViews = new LinkedHashMap<>();
+    private final Map<String, JsonElement> featureConfigs = new LinkedHashMap<>();
 
     public static SettingsFragment newInstance(String moduleId) {
         SettingsFragment fragment = new SettingsFragment();
@@ -111,10 +114,15 @@ public final class SettingsFragment extends BaseFragment {
         headingParams.topMargin = dp(22);
         binding.fieldsContainer.addView(heading, headingParams);
         featureViews.clear();
+        featureConfigs.clear();
         for (Map.Entry<String, JsonElement> entry : features.entrySet()) {
             View field = createField(entry.getKey(), entry.getValue(), true, new JsonObject());
             binding.fieldsContainer.addView(field, params());
             featureViews.put(entry.getKey(), field);
+            JsonElement value = entry.getValue();
+            if (value != null && value.isJsonObject() && value.getAsJsonObject().has("config")) {
+                featureConfigs.put(entry.getKey(), value.getAsJsonObject().get("config").deepCopy());
+            }
         }
     }
 
@@ -128,7 +136,12 @@ public final class SettingsFragment extends BaseFragment {
             toggle.setText(label);
             if (!description.isEmpty()) toggle.setContentDescription(label + "。" + description);
             toggle.setMinHeight(dp(48));
-            try { toggle.setChecked(value.getAsBoolean()); } catch (RuntimeException ignored) { }
+            boolean forcedPrivacy = feature && "forum_media_filename_privacy".equals(key);
+            toggle.setChecked(forcedPrivacy || ChatFeatureFlags.enabled(value, false));
+            if (forcedPrivacy) {
+                toggle.setEnabled(false);
+                toggle.setContentDescription(label + "，安全强制开启，不可关闭");
+            }
             return toggle;
         }
         TextInputLayout layout = new TextInputLayout(requireContext(), null, com.google.android.material.R.attr.textInputOutlinedStyle);
@@ -183,9 +196,13 @@ public final class SettingsFragment extends BaseFragment {
     }
 
     private void saveFeatures() {
-        JsonObject features = new JsonObject();
+        JsonArray features = new JsonArray();
         for (Map.Entry<String, View> entry : featureViews.entrySet()) {
-            features.addProperty(entry.getKey(), ((MaterialSwitch) entry.getValue()).isChecked());
+            features.add(FeatureSavePayload.build(
+                entry.getKey(),
+                ((MaterialSwitch) entry.getValue()).isChecked(),
+                featureConfigs.get(entry.getKey())
+            ));
         }
         JsonObject body = new JsonObject();
         body.add("features", features);
@@ -232,6 +249,13 @@ public final class SettingsFragment extends BaseFragment {
         labels.put("forum", "论坛社区"); labels.put("messages", "消息好友"); labels.put("chat_rooms", "聊天室");
         labels.put("customer_service", "客服"); labels.put("cards", "卡密"); labels.put("commerce", "商城互动");
         labels.put("remote_files", "远程文件"); labels.put("feedback", "意见反馈");
+        labels.put("chat_camera", "聊天拍摄"); labels.put("chat_album", "聊天相册");
+        labels.put("chat_contact_card", "聊天名片"); labels.put("chat_call_record_label", "聊天记录显示通话标签");
+        labels.put("group_avatar_upload", "群聊头像上传"); labels.put("chatroom_avatar_upload", "聊天室头像上传");
+        labels.put("forum_plate_avatar_upload", "论坛板块头像上传");
+        labels.put("forum_chapters", "帖子分章节"); labels.put("forum_paid_unlock", "帖子余额解锁");
+        labels.put("forum_scheduled_unlock", "帖子定时解锁"); labels.put("forum_attachment_unlock", "帖子附件独立解锁");
+        labels.put("forum_media_filename_privacy", "帖子与评论媒体原文件名保护（安全强制）");
         return labels.getOrDefault(key, key.replace('_', ' '));
     }
 

@@ -102,6 +102,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityChatBinding;
 import xyz.jjmxg.yiyunying.databinding.BottomSheetCaptureBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
+import xyz.jjmxg.yiyunying.domain.chat.ChatFeatureFlags;
 import xyz.jjmxg.yiyunying.domain.chat.ContactCardIdentity;
 import xyz.jjmxg.yiyunying.domain.module.ActionSpec;
 import xyz.jjmxg.yiyunying.domain.module.FieldSpec;
@@ -135,6 +136,7 @@ import xyz.jjmxg.yiyunying.ui.location.LocationPickerActivity;
 import xyz.jjmxg.yiyunying.ui.main.MainActivity;
 import xyz.jjmxg.yiyunying.ui.moment.MomentTimelineActivity;
 import xyz.jjmxg.yiyunying.ui.resource.ResourceHallActivity;
+import xyz.jjmxg.yiyunying.domain.chat.ChatUploadScenePolicy;
 import xyz.jjmxg.yiyunying.ui.upload.FilePreviewActivity;
 import xyz.jjmxg.yiyunying.ui.upload.FilePickerActivity;
 import xyz.jjmxg.yiyunying.ui.voice.VoiceCallActivity;
@@ -272,6 +274,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private Uri lastCapturedMediaUri;
     private boolean pendingVideoCapture;
     private boolean optimizeCapturedMedia = true;
+    private boolean chatCameraEnabled = true;
+    private boolean chatAlbumEnabled = true;
+    private boolean chatContactCardEnabled = true;
+    private boolean chatCallRecordLabelVisible = true;
     private final List<String> pendingTags = new ArrayList<>();
     private final Set<Long> pendingMentionIds = new LinkedHashSet<>();
     private boolean suppressMentionPicker;
@@ -392,6 +398,17 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private final ActivityResultLauncher<Intent> mediaPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), this::handleMediaPickerResult);
+    private final ActivityResultLauncher<Intent> inAppCapture = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+            Uri uri = result.getData().getParcelableExtra(InAppCaptureActivity.EXTRA_CAPTURE_URI);
+            if (uri == null) uri = result.getData().getData();
+            if (uri == null) return;
+            boolean video = result.getData().getBooleanExtra(
+                InAppCaptureActivity.EXTRA_CAPTURE_VIDEO, false);
+            optimizeCapturedMedia = true;
+            handleCapturedMedia(uri, video);
+        });
     private final ActivityResultLauncher<Intent> stickerUploadPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
@@ -594,6 +611,8 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         binding.recycler.setHasFixedSize(true);
         binding.recycler.setItemViewCacheSize(12);
         binding.recycler.setItemAnimator(null);
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            binding.toolbar, binding.recycler);
         binding.recycler.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
                 int state = recyclerView.getScrollState();
@@ -1324,12 +1343,24 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private void configureMediaPanel() {
         bindAction(binding.albumAction, view -> showInlineAlbumPanel());
-        bindAction(binding.cameraAction, view -> showCaptureOptions());
+        bindLongAction(binding.albumAction, view -> {
+            openMediaPicker();
+            return true;
+        });
+        bindAction(binding.cameraAction, view -> inAppCapture.launch(InAppCaptureActivity.intent(this)));
+        bindLongAction(binding.cameraAction, view -> {
+            showCaptureOptions();
+            return true;
+        });
         bindAction(binding.fileAction, view -> openCommonDocumentPicker());
         bindAction(binding.favoriteAction, view -> openFavoritePicker());
         bindAction(binding.redPacketAction, view -> createChatRedPacket());
         bindAction(binding.transferAction, view -> createChatTransfer());
         bindAction(binding.contactCardAction, view -> chooseContactCard());
+        bindLongAction(binding.contactCardAction, view -> {
+            sendOwnContactCardImmediately();
+            return true;
+        });
         bindAction(binding.giftAction, view -> chooseChatGift());
         bindAction(binding.voiceCallAction, view -> startNetworkCall(false));
         bindAction(binding.videoCallAction, view -> startNetworkCall(true));
@@ -1780,6 +1811,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             uris.add(Uri.parse(value));
             JsonObject item = inlineAlbumSelectionMetadata.get(value);
             JsonObject metadata = item == null ? new JsonObject() : item.deepCopy();
+            metadata.addProperty("source", "album");
             if (!metadata.has("is_gif")) {
                 metadata.addProperty("is_gif", item != null && MediaKindDetector.isGif(
                     Jsons.string(item, "mime_type"), Jsons.string(item, "file_name")));
@@ -2008,10 +2040,6 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     }
 
     private void showFunctionPanel() {
-        if (binding.mediaPanel.getVisibility() == View.VISIBLE && binding.functionPane.getVisibility() == View.VISIBLE) {
-            hideMediaPanel();
-            return;
-        }
         if (binding.inlineAlbumPane.getVisibility() == View.VISIBLE) clearInlineAlbumSelection();
         showPanel(binding.functionPane);
         binding.functionPager.post(() -> configureFunctionPageWidths(true));
@@ -2105,6 +2133,12 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         bindChildClickTargets((ViewGroup) view, view);
     }
 
+    private void bindLongAction(View view, View.OnLongClickListener listener) {
+        view.setLongClickable(true);
+        view.setOnLongClickListener(target -> listener.onLongClick(view));
+        if (view instanceof ViewGroup) bindChildLongClickTargets((ViewGroup) view, view);
+    }
+
     private void bindChildClickTargets(ViewGroup group, View actionRoot) {
         for (int index = 0; index < group.getChildCount(); index++) {
             View child = group.getChildAt(index);
@@ -2113,6 +2147,15 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             child.setOnTouchListener(null);
             child.setOnClickListener(target -> actionRoot.performClick());
             if (child instanceof ViewGroup) bindChildClickTargets((ViewGroup) child, actionRoot);
+        }
+    }
+
+    private void bindChildLongClickTargets(ViewGroup group, View actionRoot) {
+        for (int index = 0; index < group.getChildCount(); index++) {
+            View child = group.getChildAt(index);
+            child.setLongClickable(true);
+            child.setOnLongClickListener(target -> actionRoot.performLongClick());
+            if (child instanceof ViewGroup) bindChildLongClickTargets((ViewGroup) child, actionRoot);
         }
     }
 
@@ -2150,7 +2193,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         lastCapturedMediaUri = captured;
         dismissRecentSuggestion();
         if (!optimizeCapturedMedia) {
-            selectedUris(video ? "video" : "image", java.util.Collections.singletonList(captured));
+            addCapturedUri(captured, video);
             return;
         }
         if (binding != null) {
@@ -2162,12 +2205,21 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             binding.progress.setVisibility(View.INVISIBLE);
             Uri output = result.uri == null || Uri.EMPTY.equals(result.uri) ? captured : result.uri;
             lastCapturedMediaUri = output;
-            selectedUris(video ? "video" : "image", java.util.Collections.singletonList(output));
+            addCapturedUri(output, video);
             String size = result.optimized
                 ? "（" + readableBytes(result.originalBytes) + " → " + readableBytes(result.outputBytes) + "）"
                 : "";
             Snackbar.make(binding.getRoot(), result.message + size, Snackbar.LENGTH_LONG).show();
         });
+    }
+
+    private void addCapturedUri(Uri uri, boolean video) {
+        if (uri == null) return;
+        JsonObject metadata = new JsonObject();
+        metadata.addProperty("source", "camera");
+        pendingPickerMetadata.put(uri.toString(), metadata);
+        selectedUris(video ? "video" : "image", java.util.Collections.singletonList(uri));
+        pendingPickerMetadata.remove(uri.toString());
     }
 
     private String readableBytes(long bytes) {
@@ -2273,6 +2325,14 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         Set<String> selectedValues = new LinkedHashSet<>();
         if (uris != null) for (Uri uri : uris) if (uri != null) selectedValues.add(uri.toString());
         Map<String, JsonObject> returnedMetadata = parsePickerMetadata(data);
+        for (String value : selectedValues) {
+            JsonObject metadata = returnedMetadata.get(value);
+            if (metadata == null) {
+                metadata = new JsonObject();
+                returnedMetadata.put(value, metadata);
+            }
+            metadata.addProperty("source", "album");
+        }
         syncInlineAlbumSelection(selectedValues, returnedMetadata);
         useOriginalMedia = data.getBooleanExtra(MediaPickerActivity.EXTRA_ORIGINAL, false);
         boolean confirmed = data.getBooleanExtra(MediaPickerActivity.EXTRA_SELECTION_CONFIRMED, true);
@@ -3221,6 +3281,14 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     }
 
     private void chooseContactCard() {
+        loadOwnContactCard(false);
+    }
+
+    private void sendOwnContactCardImmediately() {
+        loadOwnContactCard(true);
+    }
+
+    private void loadOwnContactCard(boolean sendImmediately) {
         if (messageActionRequest != null || binding == null) return;
         binding.progress.setVisibility(View.VISIBLE);
         messageActionRequest = AppAccess.from(this).repository().get(
@@ -3230,7 +3298,17 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 binding.progress.setVisibility(View.INVISIBLE);
                 JsonObject profile = Jsons.object(result.dataObject(), "user");
                 if (profile.size() == 0) profile = result.dataObject();
-                confirmOwnContactCard(profile);
+                if (sendImmediately) {
+                    JsonObject metadata = ContactCardIdentity.metadata(
+                        profile,
+                        AppAccess.from(this).session().actorId(),
+                        AppAccess.from(this).session().account(),
+                        true
+                    );
+                    sendOwnContactCard(metadata);
+                } else {
+                    confirmOwnContactCard(profile);
+                }
             });
     }
 
@@ -4126,11 +4204,24 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         policyRequest = AppAccess.from(this).repository().getPublic("/api/public/bootstrap", new LinkedHashMap<>(), result -> {
             if (!result.isSuccessful()) return;
             UploadPolicyStore.update(this, Jsons.object(result.dataObject(), "upload_limits"));
+            applyChatFeatureFlags(Jsons.object(result.dataObject(), "features"));
             JsonObject policy = Jsons.object(result.dataObject(), "chat_polling_policy");
             long configured = Jsons.longValue(policy, "effective_interval_ms");
             if (configured == 0) configured = Jsons.longValue(policy, "interval_ms");
             if (configured > 0) pollIntervalMs = Math.max(1000L, Math.min(60000L, configured));
         });
+    }
+
+    private void applyChatFeatureFlags(JsonObject features) {
+        chatCameraEnabled = ChatFeatureFlags.enabled(features, "chat_camera", true);
+        chatAlbumEnabled = ChatFeatureFlags.enabled(features, "chat_album", true);
+        chatContactCardEnabled = ChatFeatureFlags.enabled(features, "chat_contact_card", true);
+        chatCallRecordLabelVisible = ChatFeatureFlags.enabled(features, "chat_call_record_label", true);
+        if (adapter != null) adapter.setCallRecordLabelVisible(chatCallRecordLabelVisible);
+        if (binding == null) return;
+        binding.cameraAction.setVisibility(chatCameraEnabled ? View.VISIBLE : View.GONE);
+        binding.albumAction.setVisibility(chatAlbumEnabled ? View.VISIBLE : View.GONE);
+        binding.contactCardAction.setVisibility(chatContactCardEnabled ? View.VISIBLE : View.GONE);
     }
 
     private void loadMessages() {
@@ -4210,7 +4301,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                         focusPendingMention();
                     } else if (pendingScrollMessageId > 0L) {
                         scrollToPendingMessage();
-                    } else if (firstLoad || wasAtLatest) {
+                    } else if (ChatViewportPolicy.shouldFollowLatest(firstLoad, merged.changed, wasAtLatest)) {
                         scrollToLatestMessage(false);
                         markGroupRead();
                     } else if (merged.added > 0) {
@@ -4467,15 +4558,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private void updateLatestMessageState() {
         if (binding == null) return;
-        if (userHoldingHistory || !isAtLatestMessage()) {
-            renderNewMessageIndicator();
-            return;
-        }
-        if (pendingNewMessageCount > 0) {
-            pendingNewMessageCount = 0;
-        }
-        renderNewMessageIndicator();
-        markGroupRead();
+        boolean atLatest = !userHoldingHistory && isAtLatestMessage();
+        if (atLatest && pendingNewMessageCount > 0) pendingNewMessageCount = 0;
+        renderNewMessageIndicator(atLatest);
+        if (atLatest) markGroupRead();
     }
 
     private void scrollToLatestMessage(boolean smooth) {
@@ -4486,20 +4572,32 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (smooth) binding.recycler.smoothScrollToPosition(target);
         else binding.recycler.scrollToPosition(target);
         pendingNewMessageCount = 0;
-        renderNewMessageIndicator();
+        renderNewMessageIndicator(true);
         binding.recycler.post(this::markGroupRead);
     }
 
     private void renderNewMessageIndicator() {
         if (binding == null) return;
-        if (!userHoldingHistory && isAtLatestMessage()) {
-            binding.newMessageIndicator.setVisibility(View.GONE);
+        renderNewMessageIndicator(!userHoldingHistory && isAtLatestMessage());
+    }
+
+    private void renderNewMessageIndicator(boolean atLatest) {
+        if (binding == null) return;
+        if (atLatest) {
+            if (binding.newMessageIndicator.getVisibility() != View.GONE) {
+                binding.newMessageIndicator.setVisibility(View.GONE);
+            }
             return;
         }
-        binding.newMessageIndicator.setText(pendingNewMessageCount > 0
+        String label = pendingNewMessageCount > 0
             ? "新消息(" + pendingNewMessageCount + ") ↓"
-            : "回到底部 ↓");
-        binding.newMessageIndicator.setVisibility(View.VISIBLE);
+            : "回到底部 ↓";
+        if (!label.contentEquals(binding.newMessageIndicator.getText())) {
+            binding.newMessageIndicator.setText(label);
+        }
+        if (binding.newMessageIndicator.getVisibility() != View.VISIBLE) {
+            binding.newMessageIndicator.setVisibility(View.VISIBLE);
+        }
     }
 
     private String searchScope() {
@@ -4535,9 +4633,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private MessageMergeResult merge(JsonArray items) {
         boolean changed = false;
         boolean requiresNormalization = false;
+        Map<Long, JsonObject> previousFullSnapshot = null;
         if (MODE_SERVICE_ADMIN.equals(mode()) && lastId > 0 && !messages.isEmpty()) {
+            previousFullSnapshot = new LinkedHashMap<>(messages);
             messages.clear();
-            changed = true;
         }
         int added = 0;
         for (JsonElement element : items) {
@@ -4564,6 +4663,13 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             lastId = Math.max(lastId, rawId);
         }
         if (requiresNormalization) normalizeMessageOrder();
+        if (previousFullSnapshot != null) {
+            added = 0;
+            for (Long id : messages.keySet()) {
+                if (!previousFullSnapshot.containsKey(id)) added++;
+            }
+            changed = !previousFullSnapshot.equals(messages);
+        }
         return new MessageMergeResult(added, changed);
     }
 
@@ -4681,7 +4787,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         ContentUriRequestBody body = new ContentUriRequestBody(
             getContentResolver(), attachment.uri, attachment.mimeType, attachment.sizeBytes);
         Map<String, String> fields = new LinkedHashMap<>();
-        fields.put("scene", "message");
+        fields.put("scene", ChatUploadScenePolicy.from(Jsons.string(attachment.metadata, "source")));
         fields.put("original_upload", state.originalUpload ? "1" : "0");
         RequestHandle request = AppAccess.from(this).repository().upload(
             uploadPath(), attachment.name, attachment.mimeType, body, fields, result -> {
@@ -5013,6 +5119,8 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                     Jsons.longValue(picker, "duration_ms")
                 };
             JsonObject mediaMetadata = new JsonObject();
+            String source = picker == null ? "" : Jsons.string(picker, "source");
+            if (!source.isEmpty()) mediaMetadata.addProperty("source", source);
             if ("image".equals(mediaType)) {
                 boolean gif = MediaKindDetector.isGif(mime, name);
                 mediaMetadata.addProperty("is_gif", picker == null ? gif

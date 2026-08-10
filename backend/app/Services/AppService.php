@@ -361,6 +361,9 @@ final class AppService
             'relationship_request_valid_days_inherit' => true,
             'forum_reward_enabled' => true,
             'forum_paid_content_enabled' => true,
+            'forum_unlock_max_price_balance' => 1000000000.0,
+            'forum_unlock_max_future_days' => 3650,
+            'forum_paid_section_max_count' => 30,
             'user_poll_create_enabled' => true,
             'economy_primary_asset' => 'balance',
             'user_initial_balance' => 0,
@@ -382,6 +385,10 @@ final class AppService
             'lottery', 'votes', 'feedback', 'bot',
             'bounties', 'level_forum', 'social', 'notifications',
             'withdrawals', 'chat_extensions',
+            'chat_camera', 'chat_album', 'chat_contact_card', 'chat_call_record_label',
+            'group_avatar_upload', 'chatroom_avatar_upload', 'forum_plate_avatar_upload',
+            'forum_chapters', 'forum_paid_unlock', 'forum_scheduled_unlock',
+            'forum_attachment_unlock', 'forum_media_filename_privacy',
             'balance_document_purchase', 'balance_membership_purchase', 'hierarchical_activities',
         ] as $featureCode) {
             self::saveFeature($adminId, $appId, $featureCode, true, null);
@@ -411,9 +418,11 @@ final class AppService
         );
         $features = [];
         foreach ($rows as $row) {
+            $featureCode = (string) $row['feature_code'];
             $config = $row['config_json'] === null ? null : json_decode((string) $row['config_json'], true);
-            $features[$row['feature_code']] = [
-                'enabled' => (bool) $row['enabled'],
+            $features[$featureCode] = [
+                // Exposing original media names is a data-leak risk, not a product option.
+                'enabled' => $featureCode === 'forum_media_filename_privacy' ? true : (bool) $row['enabled'],
                 'config' => is_array($config) ? $config : null,
             ];
         }
@@ -422,6 +431,9 @@ final class AppService
 
     public static function featureEnabled(int $appId, string $featureCode, bool $default = true): bool
     {
+        if ($featureCode === 'forum_media_filename_privacy') {
+            return true;
+        }
         $row = Database::one(
             'SELECT enabled FROM app_feature_flags WHERE app_id = ? AND feature_code = ?',
             [$appId, $featureCode]
@@ -443,16 +455,23 @@ final class AppService
         int $appId,
         string $featureCode,
         bool $enabled,
-        ?array $config
+        ?array $config,
+        bool $updateConfig = true
     ): void {
         if (preg_match('/^[a-z][a-z0-9_.-]{1,63}$/', $featureCode) !== 1) {
             throw new HttpException('feature_code 格式错误', 0, 422);
         }
+        if ($featureCode === 'forum_media_filename_privacy') {
+            $enabled = true;
+        }
+        $updateClause = $updateConfig
+            ? 'enabled = VALUES(enabled), config_json = VALUES(config_json), updated_at = NOW()'
+            : 'enabled = VALUES(enabled), updated_at = NOW()';
         Database::execute(
             'INSERT INTO app_feature_flags
              (admin_id, app_id, feature_code, enabled, config_json, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-             ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), config_json = VALUES(config_json), updated_at = NOW()',
+             ON DUPLICATE KEY UPDATE ' . $updateClause,
             [
                 $adminId,
                 $appId,

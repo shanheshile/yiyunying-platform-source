@@ -163,6 +163,9 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
     private void bindViews() {
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
         toolbar.setNavigationOnClickListener(view -> finish());
+        toolbar.setTitle(isPrivate()
+            ? "好友与聊天设置"
+            : (isChatRoom() ? "聊天室设置" : "群聊设置"));
         progress = findViewById(R.id.progress);
         avatar = findViewById(R.id.avatar);
         profileTitle = findViewById(R.id.profile_title);

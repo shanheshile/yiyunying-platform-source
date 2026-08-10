@@ -12,4 +12,9 @@ final class ChatViewportPolicy {
         long total = (long) Math.max(0, current) + Math.max(0, added);
         return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
     }
+
+    /** Avoids a RecyclerView layout pass after a poll that returned no visual changes. */
+    static boolean shouldFollowLatest(boolean firstLoad, boolean messagesChanged, boolean wasAtLatest) {
+        return firstLoad || (messagesChanged && wasAtLatest);
+    }
 }

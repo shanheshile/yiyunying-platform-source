@@ -491,6 +491,7 @@ public 接口：app_key 必填
 | POST | `/api/admin/apps/{app_id}/store-apps` | 新增应用 | `name,package_name,version,icon_url,apk_url,images` |
 | GET | `/api/admin/apps/{app_id}/forum-plates` | 板块列表 | 无 |
 | POST | `/api/admin/apps/{app_id}/forum-plates` | 新增板块 | `name,icon,description,sort_order` |
+| POST | `/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar` | 上传并替换板块头像（受 `forum_plate_avatar_upload` 控制） | `multipart file` |
 | GET/POST | `/api/admin/apps/{app_id}/forum-categories` | 二级分类列表/新增分类 | `plate_id,name,slug,aliases,sort_order,status` |
 | PUT/DELETE | `/api/admin/apps/{app_id}/forum-categories/{category_id}` | 修改/删除二级分类 | 分类字段 |
 | GET/POST | `/api/admin/apps/{app_id}/forum-tags` | 规范标签列表/新增标签 | `plate_id,category_id,name,slug,aliases,color,sort_order,status` |
@@ -632,6 +633,7 @@ public 接口：app_key 必填
 | PUT/DELETE | `/api/user/chat-room-groups/{group_id}` | 修改/删除群聊分组 | `name,sort_order` / 无 |
 | GET/POST | `/api/user/chat-rooms` | 可见群列表/用户建群 | `keyword,page,limit` / `name,icon,description,join_mode,max_members,allow_member_invite,announcement` |
 | GET/PUT/DELETE | `/api/user/chat-rooms/{room_id}` | 群详情/群管理员修改/群主解散 | 群资料和规则字段 |
+| POST | `/api/user/chat-rooms/{room_id}/avatar` | 群主或管理员上传群聊/聊天室头像（分别受独立功能开关控制） | `multipart file` |
 | POST | `/api/user/chat-rooms/{room_id}/join` | 开放加入、提交审批或接受邀请 | `message` |
 | POST | `/api/user/chat-rooms/{room_id}/leave` | 退出群聊 | 无 |
 | PUT | `/api/user/chat-rooms/{room_id}/user-settings` | 修改当前用户的群备注与分组 | `remark,group_id` |
@@ -714,6 +716,7 @@ public 接口：app_key 必填
 | GET | `/api/public/forum-plates` | 公开板块 | `app_key` |
 | GET | `/api/public/forum-posts` | 公开帖子列表 | `app_key,plate_id,page,limit` |
 | GET | `/api/public/forum-posts/{post_id}` | 公开帖子详情 | `app_key` |
+| GET | `/api/public/forum-media/{attachment_id}` | 短期签名论坛媒体流（支持 Range） | `app_id,expires,signature` |
 | GET | `/api/public/remote-files/{file_id}` | 读取公开文件 | `app_key` |
 | POST | `/api/public/captcha` | 获取验证码 | `app_key,scene,account` |
 | POST | `/api/public/payment/callback/{channel}` | 支付回调 | 支付平台参数 |

@@ -18,4 +18,11 @@ public final class ChatViewportPolicyTest {
         assertEquals(5, ChatViewportPolicy.nextPendingCount(3, 2, false));
         assertEquals(0, ChatViewportPolicy.nextPendingCount(5, 2, true));
     }
+
+    @Test public void unchangedPollNeverRepositionsAnIdleRecyclerView() {
+        assertTrue(ChatViewportPolicy.shouldFollowLatest(true, false, true));
+        assertTrue(ChatViewportPolicy.shouldFollowLatest(false, true, true));
+        assertFalse(ChatViewportPolicy.shouldFollowLatest(false, false, true));
+        assertFalse(ChatViewportPolicy.shouldFollowLatest(false, true, false));
+    }
 }

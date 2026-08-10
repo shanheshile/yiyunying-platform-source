@@ -97,6 +97,7 @@ return [
         'user_refresh_token_ttl' => (int) $env('USER_REFRESH_TOKEN_TTL', 7776000),
         'password_min_length' => (int) $env('PASSWORD_MIN_LENGTH', 8),
         'qr_signing_key' => (string) $env('QR_SIGNING_KEY', 'local-development-only-change-me'),
+        'media_signing_key' => (string) $env('MEDIA_SIGNING_KEY', ''),
     ],
     'mail' => [
         'transport' => (string) $env('MAIL_TRANSPORT', 'native'),
@@ -176,4 +177,3 @@ return [
         'max_limit' => 100,
     ],
 ];
-

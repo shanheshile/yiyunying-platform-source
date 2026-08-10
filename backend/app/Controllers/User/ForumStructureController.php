@@ -32,10 +32,11 @@ final class ForumStructureController
                     COUNT(DISTINCT p.id) AS post_count, COUNT(DISTINCT t.id) AS tag_count
              FROM forum_categories c
              LEFT JOIN forum_posts p ON p.category_id = c.id AND p.status = 1 AND p.deleted_at IS NULL
+               AND (p.audit_status = \'approved\' OR p.user_id = ?)
              LEFT JOIN forum_tags t ON t.category_id = c.id AND t.status = 1
              WHERE ' . implode(' AND ', $where) . '
              GROUP BY c.id ORDER BY c.sort_order DESC, c.id ASC',
-            $query
+            array_merge([(int) $user['id']], $query)
         )]);
     }
 

@@ -395,9 +395,11 @@ public final class ModuleRegistry {
             .create(action("新增商店分类", "POST", "/api/admin/apps/{app_id}/store-categories",
                 req("name", "分类名"), field("description", "描述"), integer("sort_order", "排序"))).build());
         result.add(ModuleSpec.builder("forum_plates", "论坛板块", role).group("社区").requiresApp()
-            .path("/api/admin/apps/{app_id}/forum-plates").dataKey("items").primary("name", "id").secondary("sort_order", "status")
+            .path("/api/admin/apps/{app_id}/forum-plates").dataKey("items").primary("name", "id").secondary("icon", "sort_order", "status")
             .create(action("新建板块", "POST", "/api/admin/apps/{app_id}/forum-plates", req("name", "板块名"), field("description", "描述"), integer("sort_order", "排序")))
-            .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}/forum-plates/{plate_id}", field("name", "板块名"), field("description", "描述"), integer("sort_order", "排序"))).build());
+            .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}/forum-plates/{plate_id}", field("name", "板块名"), field("description", "描述"), integer("sort_order", "排序")))
+            .action(ActionSpec.builder("上传板块头像", "UPLOAD_IMAGE", "/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar").item().build())
+            .build());
         result.add(ModuleSpec.builder("forum_categories", "论坛二级分类", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-categories").dataKey("items")
             .primary("name", "plate_name", "id").secondary("post_count", "tag_count", "sort_order", "status")

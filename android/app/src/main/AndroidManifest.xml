@@ -118,6 +118,11 @@
             android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.chat.InAppCaptureActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Yiyunying" />
+        <activity
             android:name=".ui.location.LocationPickerActivity"
             android:exported="false"
             android:screenOrientation="portrait"

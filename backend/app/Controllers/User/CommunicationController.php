@@ -685,6 +685,7 @@ final class CommunicationController
             }
         }
         $payload = MessageMediaService::userPayload($user, $request->all());
+        MessageMediaService::assertChatFeatures((int) $user['app_id'], $payload);
         $tagsJson = ContentTagService::encode($request->input('tags', []));
         $replyRequestId = max(0, (int) $request->input('reply_to_message_id', 0));
         [$a, $b] = [(int) $user['id'], $toUserId];
@@ -1587,6 +1588,7 @@ final class CommunicationController
         AuthService::ensureNotBanned($user, ['all', 'message', 'chat']);
         $room = self::room($user, (int) $params['room_id']);
         $payload = MessageMediaService::userPayload($user, $request->all());
+        MessageMediaService::assertChatFeatures((int) $user['app_id'], $payload);
         $messageId = Database::transaction(static function () use ($user, $room, $payload): int {
             Database::execute(
                 'INSERT INTO chat_room_members
@@ -1685,6 +1687,7 @@ final class CommunicationController
         $user = self::user($request, 'service');
         AuthService::ensureNotBanned($user, ['all', 'message', 'service']);
         $payload = MessageMediaService::userPayload($user, $request->all());
+        MessageMediaService::assertChatFeatures((int) $user['app_id'], $payload);
         $subject = mb_substr(trim((string) $request->input('subject', '在线客服')), 0, 200);
         $replyRequestId = max(0, (int) $request->input('reply_to_message_id', 0));
         $result = Database::transaction(static function () use ($user, $payload, $subject, $replyRequestId): array {
@@ -1904,7 +1907,12 @@ final class CommunicationController
 
     private static function forwardToForum(array $user, int $postId, string $content): array
     {
-        $post = Database::one('SELECT id, is_locked FROM forum_posts WHERE id = ? AND admin_id = ? AND app_id = ? AND status = 1 AND deleted_at IS NULL', [$postId, (int) $user['admin_id'], (int) $user['app_id']]);
+        $post = Database::one(
+            "SELECT id, is_locked FROM forum_posts
+             WHERE id = ? AND admin_id = ? AND app_id = ? AND status = 1 AND deleted_at IS NULL
+               AND (audit_status = 'approved' OR user_id = ?)",
+            [$postId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
+        );
         if ($post === null) throw new HttpException('目标帖子不存在', 404, 404);
         if ((int) $post['is_locked'] === 1) throw new HttpException('目标帖子已锁定', 403, 403);
         $commentId = Database::insert(

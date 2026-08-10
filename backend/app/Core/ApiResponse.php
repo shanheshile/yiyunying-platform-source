@@ -7,6 +7,10 @@ final class ApiResponse
 {
     public array $body;
     public int $httpStatus;
+    public ?string $filePath = null;
+    public int $fileOffset = 0;
+    public int $fileLength = 0;
+    public array $headers = [];
 
     public function __construct(array $body, int $httpStatus = 200)
     {

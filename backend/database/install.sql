@@ -1540,6 +1540,7 @@ CREATE TABLE IF NOT EXISTS `forum_posts` (
   `plate_id` BIGINT UNSIGNED NOT NULL,
   `category_id` BIGINT UNSIGNED DEFAULT NULL,
   `user_id` BIGINT UNSIGNED NOT NULL,
+  `client_draft_id` CHAR(36) DEFAULT NULL,
   `title` VARCHAR(200) NOT NULL,
   `content` LONGTEXT NOT NULL,
   `images_json` LONGTEXT,
@@ -1564,6 +1565,7 @@ CREATE TABLE IF NOT EXISTS `forum_posts` (
   `deleted_at` DATETIME DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_forum_posts_id_app_admin` (`id`, `app_id`, `admin_id`),
+  UNIQUE KEY `uk_forum_posts_client_draft` (`app_id`, `user_id`, `client_draft_id`),
   KEY `idx_forum_posts_plate_order` (`app_id`, `plate_id`, `is_top`, `created_at`),
   KEY `idx_forum_posts_category_order` (`app_id`, `category_id`, `created_at`),
   KEY `idx_forum_posts_user` (`user_id`, `created_at`),
@@ -3490,6 +3492,7 @@ CREATE TABLE IF NOT EXISTS `forum_paid_contents` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `post_id` BIGINT UNSIGNED NOT NULL,
   `price_integral` BIGINT UNSIGNED NOT NULL,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
   `preview_content` TEXT NOT NULL,
   `status` TINYINT NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3505,6 +3508,7 @@ CREATE TABLE IF NOT EXISTS `forum_post_purchases` (
   `buyer_user_id` BIGINT UNSIGNED NOT NULL,
   `seller_user_id` BIGINT UNSIGNED NOT NULL,
   `price_integral` BIGINT UNSIGNED NOT NULL,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_forum_post_purchase` (`post_id`, `buyer_user_id`),
@@ -3542,6 +3546,9 @@ CREATE TABLE IF NOT EXISTS `forum_post_sections` (
   `content` LONGTEXT NOT NULL,
   `tags_json` LONGTEXT,
   `price_balance` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
+  `unlock_at` DATETIME DEFAULT NULL,
+  `preview_content` VARCHAR(1000) NOT NULL DEFAULT '',
   `sort_order` INT NOT NULL DEFAULT 0,
   `status` TINYINT NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3562,6 +3569,7 @@ CREATE TABLE IF NOT EXISTS `forum_section_purchases` (
   `buyer_user_id` BIGINT UNSIGNED NOT NULL,
   `seller_user_id` BIGINT UNSIGNED NOT NULL,
   `price_balance` DECIMAL(18,2) NOT NULL,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_forum_section_purchase` (`section_id`, `buyer_user_id`),
@@ -4553,6 +4561,8 @@ VALUES
   ,(@admin_id, @app_id, 'relationship_request_valid_days_inherit', '1', 'bool', NOW(), NOW())
   ,(@admin_id, @app_id, 'forum_reward_enabled', '1', 'bool', NOW(), NOW())
   ,(@admin_id, @app_id, 'forum_paid_content_enabled', '1', 'bool', NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_unlock_max_price_balance', '1000000000', 'float', NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_unlock_max_future_days', '3650', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'forum_hot_enabled', '1', 'bool', NOW(), NOW())
   ,(@admin_id, @app_id, 'forum_hot_score_threshold', '40', 'int', NOW(), NOW())
   ,(@admin_id, @app_id, 'forum_hot_window_days', '14', 'int', NOW(), NOW())
@@ -4628,6 +4638,18 @@ VALUES
   ,(@admin_id, @app_id, 'notifications', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'withdrawals', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'chat_extensions', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'chat_camera', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'chat_album', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'chat_contact_card', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'chat_call_record_label', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'group_avatar_upload', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'chatroom_avatar_upload', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_plate_avatar_upload', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_chapters', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_paid_unlock', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_scheduled_unlock', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_attachment_unlock', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'forum_media_filename_privacy', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'balance_document_purchase', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'balance_membership_purchase', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'hierarchical_activities', 1, NULL, NOW(), NOW())

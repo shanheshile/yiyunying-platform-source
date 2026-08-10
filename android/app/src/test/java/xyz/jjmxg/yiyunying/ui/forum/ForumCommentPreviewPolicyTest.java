@@ -7,22 +7,18 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public final class ForumCommentPreviewPolicyTest {
-    @Test public void collapsedThreadOnlyPreviewsTwoReplies() {
-        assertTrue(ForumCommentPreviewPolicy.includesPreview(0));
-        assertTrue(ForumCommentPreviewPolicy.includesPreview(1));
-        assertFalse(ForumCommentPreviewPolicy.includesPreview(2));
+    @Test public void collapsedThreadKeepsTwoFullRepliesInsideTheParent() {
+        assertTrue(ForumCommentPreviewPolicy.isReplyVisible(false, 0));
+        assertTrue(ForumCommentPreviewPolicy.isReplyVisible(false, 1));
+        assertFalse(ForumCommentPreviewPolicy.isReplyVisible(false, 2));
+        assertTrue(ForumCommentPreviewPolicy.isReplyVisible(true, 2));
+        assertFalse(ForumCommentPreviewPolicy.showsToggle(2));
+        assertTrue(ForumCommentPreviewPolicy.showsToggle(3));
     }
 
     @Test public void toggleAlwaysUsesTheRealReplyCount() {
         assertEquals("查看全部 7 条回复", ForumCommentPreviewPolicy.toggleLabel(false, 7));
         assertEquals("收起回复", ForumCommentPreviewPolicy.toggleLabel(true, 7));
         assertEquals("", ForumCommentPreviewPolicy.toggleLabel(false, 0));
-    }
-
-    @Test public void attachmentSummaryPreservesMediaMeaning() {
-        assertEquals("图片", ForumCommentPreviewPolicy.attachmentLabel("image", "image/gif"));
-        assertEquals("语音", ForumCommentPreviewPolicy.attachmentLabel("voice", "audio/aac"));
-        assertEquals("文档", ForumCommentPreviewPolicy.attachmentLabel("", "application/pdf"));
-        assertEquals("文件", ForumCommentPreviewPolicy.attachmentLabel("file", "application/zip"));
     }
 }

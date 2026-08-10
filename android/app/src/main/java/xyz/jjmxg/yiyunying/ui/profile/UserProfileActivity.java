@@ -73,6 +73,9 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         if (userId <= 0) { finish(); return; }
         binding = ActivityUserProfileBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        binding.toolbar.setTitle(userId == AppAccess.from(this).session().actorId()
+            ? "我的资料"
+            : "用户资料");
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         if (userId != AppAccess.from(this).session().actorId()) {
             MenuItem permission = binding.toolbar.getMenu().add(
@@ -153,6 +156,7 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         binding.likeCount.setText(Jsons.longValue(profile, "like_count") + "\n" + tr("获赞"));
         binding.followButton.setText(tr(bool(profile, "followed") ? "取消关注" : "关注"));
         boolean self = userId == AppAccess.from(this).session().actorId();
+        binding.toolbar.setTitle(self ? "我的资料" : (bool(profile, "is_friend") ? "好友资料" : "用户资料"));
         binding.actions.setVisibility(View.VISIBLE);
         if (self) {
             binding.followButton.setText(tr("编辑资料"));

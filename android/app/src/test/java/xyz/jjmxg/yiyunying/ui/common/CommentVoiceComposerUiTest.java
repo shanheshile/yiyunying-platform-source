@@ -1,8 +1,10 @@
 package xyz.jjmxg.yiyunying.ui.common;
 
 import android.app.Activity;
+import android.graphics.drawable.ColorDrawable;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.core.widget.NestedScrollView;
@@ -19,6 +21,7 @@ import xyz.jjmxg.yiyunying.R;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35)
@@ -34,6 +37,11 @@ public final class CommentVoiceComposerUiTest {
         assertNotNull(stickyHeader);
         assertNotNull(commentCount);
         assertEquals(root, stickyHeader.getParent());
+        assertTrue(((ViewGroup) root).getClipChildren());
+        assertTrue(((ViewGroup) root).getClipToPadding());
+        assertTrue(stickyHeader.getBackground() instanceof ColorDrawable);
+        int headerColor = ((ColorDrawable) stickyHeader.getBackground()).getColor();
+        assertEquals(0xFF, android.graphics.Color.alpha(headerColor));
         assertEquals("加载中", commentCount.getText().toString());
         assertNotNull(root.findViewById(R.id.emojiButton));
         assertNotNull(root.findViewById(R.id.stickerButton));
@@ -47,7 +55,14 @@ public final class CommentVoiceComposerUiTest {
         assertTouchSafeHeight(root.findViewById(R.id.voiceButton));
         assertTouchSafeHeight(root.findViewById(R.id.voiceClearButton));
         NestedScrollView comments = root.findViewById(R.id.commentsScroll);
+        FrameLayout viewport = root.findViewById(R.id.commentsViewport);
         assertNotNull(comments);
+        assertNotNull(viewport);
+        assertEquals(viewport, comments.getParent());
+        assertTrue(viewport.getClipChildren());
+        assertTrue(viewport.getClipToPadding());
+        assertTrue(comments.getClipChildren());
+        assertTrue(comments.getClipToPadding());
         assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, comments.getLayoutParams().height);
         assertFalse(comments.isFillViewport());
 
@@ -67,6 +82,13 @@ public final class CommentVoiceComposerUiTest {
             .inflate(R.layout.item_moment_comment, null, false);
         assertSingleLineAction(comment.findViewById(R.id.likeButton));
         assertSingleLineAction(comment.findViewById(R.id.replyButton));
+        assertNotNull(comment.findViewById(R.id.replyThreadContainer));
+        assertNotNull(comment.findViewById(R.id.nestedRepliesContainer));
+        View replyToggle = comment.findViewById(R.id.replyThreadToggle);
+        assertNotNull(replyToggle);
+        assertEquals(View.GONE, replyToggle.getVisibility());
+        assertEquals(Math.round(32f * replyToggle.getResources().getDisplayMetrics().density),
+            replyToggle.getLayoutParams().height);
 
         controller.pause().stop().destroy();
     }

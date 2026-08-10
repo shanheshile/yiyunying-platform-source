@@ -11,6 +11,8 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.gson.JsonObject;
+
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +38,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
     private int page;
     private String query = "";
     private int notificationUnreadCount;
+    private JsonObject featureFlags = new JsonObject();
 
     public static FeatureHubFragment newInstance(int page) {
         FeatureHubFragment fragment = new FeatureHubFragment();
@@ -67,6 +70,23 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
         filter();
     }
 
+    @Override public void onFeatureFlags(JsonObject features) {
+        featureFlags = features == null ? new JsonObject() : features.deepCopy();
+        filter();
+    }
+
+    @Override public boolean isPrimaryActionAvailable() {
+        if (page == 1) {
+            return HomeFeaturePolicy.anyActionEnabled(featureFlags,
+                "moments_compose", "forum_posts", "bounties", "resources", "polls");
+        }
+        if (page == 2) {
+            return HomeFeaturePolicy.anyActionEnabled(featureFlags,
+                "shop_goods", "red_packets", "lottery", "card_redeem");
+        }
+        return true;
+    }
+
     public void setNotificationUnreadCount(int count) {
         notificationUnreadCount = Math.max(0, count);
         filter();
@@ -89,6 +109,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
         String needle = query.trim().toLowerCase(Locale.ROOT);
         List<FeatureItem> visible = new ArrayList<>();
         for (FeatureItem item : items()) {
+            if (!HomeFeaturePolicy.actionEnabled(featureFlags, item.moduleId)) continue;
             if (needle.isEmpty() || (item.title + " " + item.subtitle).toLowerCase(Locale.ROOT).contains(needle)) {
                 visible.add(item);
             }
@@ -113,7 +134,12 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
         for (int i = 0; i < labels.length && i < modules.length; i++) {
             String label = labels[i];
             String module = modules[i];
+            if (!HomeFeaturePolicy.actionEnabled(featureFlags, module)) continue;
             actions.add(new GlassActionDialog.Action(label, actionIcon(module), () -> openQuickAction(module)));
+        }
+        if (actions.isEmpty()) {
+            if (binding != null) message(binding.getRoot(), "管理员已关闭本页的创建功能");
+            return;
         }
         GlassActionDialog.show(requireContext(), "选择操作", actions);
     }

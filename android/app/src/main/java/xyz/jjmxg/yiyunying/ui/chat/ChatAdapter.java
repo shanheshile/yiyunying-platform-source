@@ -25,6 +25,7 @@ import androidx.core.graphics.ColorUtils;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
 import com.google.android.material.card.MaterialCardView;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -64,6 +65,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     }
 
     private final List<JsonObject> items = new ArrayList<>();
+    private final Map<Long, JsonObject> itemsById = new HashMap<>();
+    private final Map<Long, Integer> positionsById = new HashMap<>();
     private final Set<Long> expandedImages = new HashSet<>();
     private final Set<Long> collapsedTranscripts = new HashSet<>();
     private final Set<Long> expandedTimelineLabels = new HashSet<>();
@@ -73,6 +76,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private final Role role;
     private final Listener listener;
     private boolean selectionMode;
+    private boolean callRecordLabelVisible = true;
     private long managedAppId;
 
     public ChatAdapter(long actorId, Role role, Listener listener) {
@@ -90,6 +94,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (changedPositions.isEmpty()) return;
             items.clear();
             items.addAll(next);
+            rebuildIndexes();
             if (changedPositions.size() > 24) {
                 notifyItemRangeChanged(0, items.size());
             } else {
@@ -100,12 +105,14 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         if (samePrefix(previous, next)) {
             int inserted = next.size() - previous.size();
             items.addAll(next.subList(previous.size(), next.size()));
+            rebuildIndexes();
             if (inserted > 0) notifyItemRangeInserted(previous.size(), inserted);
             return;
         }
         if (previous.size() + next.size() > 600) {
             items.clear();
             items.addAll(next);
+            rebuildIndexes();
             notifyDataSetChanged();
             return;
         }
@@ -121,7 +128,18 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         }, false);
         items.clear();
         items.addAll(next);
+        rebuildIndexes();
         diff.dispatchUpdatesTo(this);
+    }
+
+    private void rebuildIndexes() {
+        itemsById.clear();
+        positionsById.clear();
+        for (int index = 0; index < items.size(); index++) {
+            long id = itemId(items.get(index));
+            itemsById.put(id, items.get(index));
+            positionsById.put(id, index);
+        }
     }
 
     @Nullable
@@ -156,11 +174,17 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         managedAppId = Math.max(0, appId);
     }
 
+    public void setCallRecordLabelVisible(boolean visible) {
+        if (callRecordLabelVisible == visible) return;
+        callRecordLabelVisible = visible;
+        notifyDataSetChanged();
+    }
+
     public List<JsonObject> messages() { return new ArrayList<>(items); }
 
     public int positionOf(long messageId) {
-        for (int index = 0; index < items.size(); index++) if (itemId(items.get(index)) == messageId) return index;
-        return -1;
+        Integer position = positionsById.get(messageId);
+        return position == null ? -1 : position;
     }
 
     public void expandTranscript(long messageId) {
@@ -205,14 +229,23 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         boolean forwarded = Jsons.longValue(item, "forward_bundle_id") > 0 || !Jsons.object(item, "forward_bundle").entrySet().isEmpty();
         boolean hasReply = Jsons.longValue(item, "reply_to_message_id") > 0
             && !"recall".equals(Jsons.string(item, "content_type"));
-        boolean attachmentOnly = content.isEmpty() && !Jsons.array(item, "attachments").isEmpty() && !forwarded && !hasReply;
+        JsonArray attachments = Jsons.array(item, "attachments");
+        boolean attachmentOnly = content.isEmpty() && !attachments.isEmpty() && !forwarded && !hasReply;
         boolean borderless = attachmentOnly || system || recalled;
+        String contentType = Jsons.string(item, "content_type");
+        boolean compactTextBubble = !content.isEmpty()
+            && (contentType.isEmpty() || "text".equalsIgnoreCase(contentType))
+            && attachments.isEmpty()
+            && !forwarded
+            && !hasReply
+            && !call;
         holder.binding.bubble.setCardBackgroundColor(borderless ? Color.TRANSPARENT
             : (mine ? ThemeColors.primaryContainer(holder.itemView.getContext())
             : holder.itemView.getContext().getColor(system ? R.color.surface_container_high : R.color.surface_container)));
         int padding = borderless ? 0 : dp(holder.itemView.getContext(), 10);
         holder.binding.bubbleContent.setPadding(padding, padding, padding, padding);
-        holder.binding.bubbleContent.setMinimumWidth(borderless ? 0 : dp(holder.itemView.getContext(), 72));
+        holder.binding.bubbleContent.setMinimumWidth(borderless || compactTextBubble
+            ? 0 : dp(holder.itemView.getContext(), 72));
         LinearLayout.LayoutParams mediaParams = (LinearLayout.LayoutParams) holder.binding.mediaContainer.getLayoutParams();
         mediaParams.topMargin = borderless ? 0 : dp(holder.itemView.getContext(), 6);
         holder.binding.mediaContainer.setLayoutParams(mediaParams);
@@ -320,10 +353,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             holder.binding.replyBlock.setOnClickListener(null);
             return;
         }
-        JsonObject source = null;
-        for (JsonObject candidate : items) {
-            if (itemId(candidate) == replyId) { source = candidate; break; }
-        }
+        JsonObject source = itemsById.get(replyId);
         String sender = Jsons.string(item, "reply_sender_name");
         String summary = Jsons.string(item, "reply_content");
         if (source != null) {
@@ -356,6 +386,18 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         return "[附件]";
     }
 
+    private static void clearDynamicMediaResources(View view) {
+        if (view instanceof ImageView) {
+            ImageView image = (ImageView) view;
+            Glide.with(image.getContext().getApplicationContext()).clear(image);
+        }
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            clearDynamicMediaResources(group.getChildAt(index));
+        }
+    }
+
     private void renderMedia(Holder holder, JsonObject item) {
         JsonArray attachments = Jsons.array(item, "attachments");
         holder.binding.mediaContainer.animate().cancel();
@@ -364,6 +406,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.mediaContainer.setScaleY(1f);
         holder.binding.mediaContainer.setTranslationX(0f);
         holder.binding.mediaContainer.setTranslationY(0f);
+        clearDynamicMediaResources(holder.binding.mediaContainer);
         holder.binding.mediaContainer.removeAllViews();
         holder.binding.mediaToggle.animate().cancel();
         holder.binding.mediaToggle.setEnabled(true);
@@ -463,10 +506,6 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         );
         root.addView(rail, railParams);
 
-        root.setAlpha(0.72f);
-        root.setScaleX(0.975f);
-        root.setScaleY(0.975f);
-        root.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150L).start();
         root.setContentDescription("当前第 " + (current + 1) + " 张，共 " + media.size() + " 张；左右滑动切换");
         boolean[] longPressed = {false};
         GestureDetector gestures = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
@@ -591,7 +630,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             JsonObject attachment = media.get(index);
             String preview = Jsons.string(attachment, "thumbnail_url");
             if (preview.isEmpty()) preview = Jsons.string(attachment, "url");
-            if (!preview.isEmpty()) ImageLoader.get().load(absolute(context, preview), image, R.drawable.ic_file);
+            if (!preview.isEmpty()) ImageLoader.get().loadThumbnail(absolute(context, preview), image, R.drawable.ic_file);
             layerCard.addView(image);
             if (layer == 0 && isVideoAttachment(attachment)) layerCard.addView(playOverlay(context));
             stage.addView(layerCard);
@@ -668,9 +707,6 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             root.addView(gap);
             root.addView(controlRail);
         }
-        root.setAlpha(0.8f);
-        root.setTranslationY(dp(context, 5));
-        root.animate().alpha(1f).translationY(0f).setDuration(170L).start();
         return root;
     }
 
@@ -703,7 +739,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         String preview = Jsons.string(attachment, "thumbnail_url");
         boolean video = isVideoAttachment(attachment);
         if (preview.isEmpty()) preview = Jsons.string(attachment, "url");
-        if (!preview.isEmpty()) ImageLoader.get().load(absolute(context, preview), image, R.drawable.ic_file);
+        if (!preview.isEmpty()) ImageLoader.get().loadThumbnail(absolute(context, preview), image, R.drawable.ic_file);
         frame.addView(image);
         if (video) frame.addView(playOverlay(context));
         String badgeText = mediaBadge(attachment);
@@ -1270,6 +1306,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (!element.isJsonPrimitive()) continue;
             String value = element.getAsString().trim();
             if (value.isEmpty()) continue;
+            if (!callRecordLabelVisible && "通话记录".equals(value)) continue;
             TextView tag = new TextView(holder.itemView.getContext());
             tag.setText("#" + value);
             tag.setTextSize(11);
@@ -1380,6 +1417,13 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
 
     private String absolute(Context context, String url) {
         return ImageLoader.get().absoluteUrl(context, url);
+    }
+
+    @Override public void onViewRecycled(@NonNull Holder holder) {
+        holder.binding.mediaContainer.animate().cancel();
+        clearDynamicMediaResources(holder.binding.mediaContainer);
+        holder.binding.mediaContainer.removeAllViews();
+        super.onViewRecycled(holder);
     }
 
     @Override public int getItemCount() { return items.size(); }

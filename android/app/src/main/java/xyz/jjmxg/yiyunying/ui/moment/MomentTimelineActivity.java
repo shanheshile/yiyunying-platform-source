@@ -136,6 +136,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private JsonObject likesMoment;
     private JsonObject pendingForwardMoment;
     private long replyingCommentId;
+    private final java.util.Set<Long> expandedMomentCommentThreads =
+        new java.util.LinkedHashSet<>();
     private ViewTreeObserver.OnGlobalLayoutListener commentsLayoutListener;
     private int commentsViewportHeight = -1;
     private boolean commentsViewportResizePosted;
@@ -329,6 +331,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         binding.recycler.setItemViewCacheSize(8);
         binding.recycler.setItemAnimator(null);
         binding.recycler.setAdapter(adapter);
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            binding.toolbar, binding.recycler);
         binding.swipeRefresh.setOnRefreshListener(this::load);
         binding.createButton.setOnClickListener(view -> showComposer(null));
         boolean ownTimeline = ownProfileTimeline || targetUserId <= 0 || targetUserId == actorId;
@@ -1211,6 +1215,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         commentsDialog = dialog;
         commentsBinding = sheetBinding;
         dialog.setContentView(sheetBinding.getRoot());
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            sheetBinding.commentsStickyHeader, sheetBinding.commentsScroll);
         configureCommentEmojiPanel();
         commentsBinding.emojiButton.setOnClickListener(view -> toggleCommentEmojiPanel());
         commentsBinding.stickerButton.setOnClickListener(view -> loadCommentStickers());
@@ -1256,6 +1262,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         }
         dialog.show();
+        // GlassBottomSheet deliberately disables clipping on its content host so generic
+        // action sheets can draw shadows around their last row. A scrolling comment list is
+        // different: without restoring clipping, several vendor renderers let a scrolled
+        // comment child draw above the sticky title and even outside the rounded panel.
+        sheetBinding.getRoot().setClipChildren(true);
+        sheetBinding.getRoot().setClipToPadding(true);
+        sheetBinding.commentsViewport.setClipChildren(true);
+        sheetBinding.commentsViewport.setClipToPadding(true);
+        sheetBinding.commentsScroll.setClipChildren(true);
+        sheetBinding.commentsScroll.setClipToPadding(true);
         commentsLayoutListener = this::scheduleCommentsViewportResize;
         sheetBinding.getRoot().getViewTreeObserver().addOnGlobalLayoutListener(commentsLayoutListener);
         scheduleCommentsViewportResize();
@@ -1290,7 +1306,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             commentsBinding.titleText.setText("评论");
             commentsBinding.commentCountText.setText(comments.size() + " 条");
             if (comments.isEmpty()) renderCommentsError("还没有评论，来说两句吧");
-            else for (JsonObject comment : comments) addCommentView(comment);
+            else renderCommentThreads(comments);
             scheduleCommentsViewportResize();
         });
     }
@@ -1307,10 +1323,98 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         scheduleCommentsViewportResize();
     }
 
-    private void addCommentView(JsonObject comment) {
+    private void renderCommentThreads(List<JsonObject> comments) {
         if (commentsBinding == null) return;
+        Map<Long, JsonObject> byId = new LinkedHashMap<>();
+        List<JsonObject> roots = new ArrayList<>();
+        List<JsonObject> orphanReplies = new ArrayList<>();
+        Map<Long, List<JsonObject>> repliesByRoot = new LinkedHashMap<>();
+        for (JsonObject comment : comments) {
+            long id = Jsons.longValue(comment, "id");
+            if (id > 0L) byId.put(id, comment);
+        }
+        for (JsonObject comment : comments) {
+            long parentId = Jsons.longValue(comment, "parent_id");
+            if (parentId <= 0L) {
+                roots.add(comment);
+                continue;
+            }
+            long rootId = resolveMomentCommentRoot(comment, byId);
+            JsonObject root = byId.get(rootId);
+            if (root == null || Jsons.longValue(root, "parent_id") > 0L) {
+                orphanReplies.add(comment);
+                continue;
+            }
+            repliesByRoot.computeIfAbsent(rootId, ignored -> new ArrayList<>()).add(comment);
+            if (targetCommentId > 0L && Jsons.longValue(comment, "id") == targetCommentId) {
+                expandedMomentCommentThreads.add(rootId);
+            }
+        }
+
+        for (JsonObject root : roots) {
+            ItemMomentCommentBinding rootRow = addCommentView(
+                root, commentsBinding.commentsContainer, false);
+            long rootId = Jsons.longValue(root, "id");
+            List<JsonObject> replies = repliesByRoot.get(rootId);
+            if (replies == null || replies.isEmpty()) continue;
+            rootRow.replyThreadContainer.setVisibility(View.VISIBLE);
+            List<View> replyViews = new ArrayList<>();
+            for (JsonObject reply : replies) {
+                ItemMomentCommentBinding replyRow = addCommentView(
+                    reply, rootRow.nestedRepliesContainer, true);
+                replyViews.add(replyRow.getRoot());
+            }
+            Runnable refresh = () -> {
+                boolean expanded = expandedMomentCommentThreads.contains(rootId);
+                for (int index = 0; index < replyViews.size(); index++) {
+                    replyViews.get(index).setVisibility(
+                        expanded || index < 2 ? View.VISIBLE : View.GONE);
+                }
+                boolean toggleNeeded = replyViews.size() > 2;
+                rootRow.replyThreadToggle.setVisibility(toggleNeeded ? View.VISIBLE : View.GONE);
+                rootRow.replyThreadToggle.setText(expanded
+                    ? "收起回复" : "展开全部 " + replyViews.size() + " 条回复");
+                rootRow.replyThreadToggle.setContentDescription(
+                    rootRow.replyThreadToggle.getText());
+            };
+            rootRow.replyThreadToggle.setOnClickListener(view -> {
+                if (expandedMomentCommentThreads.contains(rootId)) {
+                    expandedMomentCommentThreads.remove(rootId);
+                } else {
+                    expandedMomentCommentThreads.add(rootId);
+                }
+                refresh.run();
+                scheduleCommentsViewportResize();
+            });
+            refresh.run();
+        }
+        for (JsonObject orphan : orphanReplies) {
+            addCommentView(orphan, commentsBinding.commentsContainer, false);
+        }
+    }
+
+    private long resolveMomentCommentRoot(JsonObject comment, Map<Long, JsonObject> byId) {
+        long id = Jsons.longValue(comment, "id");
+        long parentId = Jsons.longValue(comment, "parent_id");
+        long rootId = id;
+        java.util.Set<Long> visited = new java.util.HashSet<>();
+        while (parentId > 0L && visited.add(parentId)) {
+            rootId = parentId;
+            JsonObject parent = byId.get(parentId);
+            if (parent == null) break;
+            parentId = Jsons.longValue(parent, "parent_id");
+        }
+        return rootId;
+    }
+
+    private ItemMomentCommentBinding addCommentView(
+        JsonObject comment,
+        LinearLayout parentContainer,
+        boolean nested
+    ) {
+        if (commentsBinding == null) return null;
         ItemMomentCommentBinding row = ItemMomentCommentBinding.inflate(
-            getLayoutInflater(), commentsBinding.commentsContainer, false);
+            getLayoutInflater(), parentContainer, false);
         String author = Jsons.string(comment, "display_name");
         if (author.isEmpty()) author = Jsons.string(comment, "account");
         if (author.isEmpty()) author = "用户";
@@ -1357,7 +1461,22 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             confirmDeleteComment(comment);
             return true;
         });
-        commentsBinding.commentsContainer.addView(row.getRoot());
+        if (nested) {
+            row.commentCard.setStrokeWidth(0);
+            row.commentCard.setRadius(dp(4));
+            row.commentCard.setCardBackgroundColor(getColor(R.color.surface_container_high));
+            ViewGroup.LayoutParams rawParams = row.getRoot().getLayoutParams();
+            if (rawParams instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) rawParams;
+                params.bottomMargin = dp(3);
+                row.getRoot().setLayoutParams(params);
+            }
+            ViewGroup.LayoutParams avatarParams = row.avatar.getLayoutParams();
+            avatarParams.width = dp(32);
+            avatarParams.height = dp(32);
+            row.avatar.setLayoutParams(avatarParams);
+        }
+        parentContainer.addView(row.getRoot());
 
         long commentId = Jsons.longValue(comment, "id");
         if (targetCommentId > 0 && targetCommentId == commentId) {
@@ -1366,10 +1485,16 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(this));
             commentsBinding.commentsScroll.post(() -> {
                 if (commentsBinding != null) {
-                    commentsBinding.commentsScroll.smoothScrollTo(0, Math.max(0, row.getRoot().getTop() - dp(8)));
+                    Rect target = new Rect();
+                    row.getRoot().getDrawingRect(target);
+                    commentsBinding.commentsContainer.offsetDescendantRectToMyCoords(
+                        row.getRoot(), target);
+                    commentsBinding.commentsScroll.smoothScrollTo(
+                        0, Math.max(0, target.top - dp(8)));
                 }
             });
         }
+        return row;
     }
 
     private void focusCommentReply(JsonObject comment, String author) {
@@ -1437,7 +1562,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) raw;
                 verticalMargins = margins.topMargin + margins.bottomMargin;
             }
-            if (child == sheet.commentsScroll) {
+            if (child == sheet.commentsViewport) {
                 scrollMargins = verticalMargins;
             } else if (child.getVisibility() != View.GONE) {
                 chromeHeight += child.getMeasuredHeight() + verticalMargins;

@@ -2,6 +2,7 @@ package xyz.jjmxg.yiyunying.ui.forum;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -18,11 +19,14 @@ import android.widget.EditText;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.format.Formatter;
+import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
@@ -37,11 +41,17 @@ import com.google.gson.JsonParser;
 import android.view.MenuItem;
 
 import java.util.ArrayList;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Locale;
+import java.util.TimeZone;
+import java.util.UUID;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
@@ -49,6 +59,8 @@ import xyz.jjmxg.yiyunying.data.api.ActionFeedback;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityForumComposerBinding;
+import xyz.jjmxg.yiyunying.domain.chat.ChatFeatureFlags;
+import xyz.jjmxg.yiyunying.domain.forum.ForumUnlockPolicy;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.common.SecureMediaClipboard;
@@ -72,12 +84,17 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     private RequestHandle uploadRequest;
     private RequestHandle submitRequest;
     private RequestHandle stickerRequest;
-    private RequestHandle paidRequest;
     private RequestHandle taxonomyRequest;
+    private RequestHandle featureRequest;
     private long selectedCategoryId;
     private String pickerType = "file";
     private boolean submittedSuccessfully;
     private boolean working;
+    private boolean chaptersEnabled = true;
+    private boolean paidUnlockEnabled = true;
+    private boolean scheduledUnlockEnabled = true;
+    private boolean attachmentUnlockEnabled = true;
+    private String clientDraftId = "";
 
     private final ActivityResultLauncher<Intent> imagePicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -125,17 +142,12 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.tagsLayout.setVisibility(post ? View.VISIBLE : View.GONE);
         binding.paidHeading.setVisibility(post ? View.VISIBLE : View.GONE);
         binding.paidSwitch.setVisibility(post ? View.VISIBLE : View.GONE);
+        binding.scheduledSwitch.setVisibility(post ? View.VISIBLE : View.GONE);
         binding.paidHelper.setVisibility(post ? View.VISIBLE : View.GONE);
         binding.sectionEditorArea.setVisibility(post ? View.VISIBLE : View.GONE);
-        binding.paidSwitch.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && !sectionDrafts.isEmpty()) {
-                button.setChecked(false);
-                Snackbar.make(binding.getRoot(), "整帖付费与分节付费只能选择一种", Snackbar.LENGTH_LONG).show();
-                return;
-            }
-            binding.paidSection.setVisibility(checked ? View.VISIBLE : View.GONE);
-            updateComposerState();
-        });
+        binding.paidSwitch.setOnCheckedChangeListener((button, checked) -> updateBodyUnlockUi());
+        binding.scheduledSwitch.setOnCheckedChangeListener((button, checked) -> updateBodyUnlockUi());
+        binding.unlockAtInput.setOnClickListener(view -> pickUnlockAt(binding.unlockAtInput));
         binding.titleInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(120)});
         binding.contentInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10000)});
         binding.paidPreviewInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(1000)});
@@ -150,9 +162,24 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.submitButton.setOnClickListener(view -> submit());
         MenuItem draft = binding.toolbar.getMenu().add("保存草稿");
         draft.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        MaterialButton draftAction = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonStyle);
+        draftAction.setText("存草稿");
+        draftAction.setTextColor(getColor(R.color.on_forum_draft_container));
+        draftAction.setBackgroundTintList(ColorStateList.valueOf(getColor(R.color.forum_draft_container)));
+        draftAction.setMinWidth(0);
+        draftAction.setInsetTop(0);
+        draftAction.setInsetBottom(0);
+        draftAction.setContentDescription("保存当前帖子草稿，不会发布");
+        draftAction.setOnClickListener(view -> saveDraft(true));
+        draft.setActionView(draftAction);
         binding.toolbar.setOnMenuItemClickListener(item -> { saveDraft(true); return true; });
         restoreDraft();
-        if (post) loadCategories();
+        if (post) ensureClientDraftId();
+        if (post) {
+            loadCategories();
+            loadFeaturePolicy();
+        }
+        updateBodyUnlockUi();
         updateComposerState();
     }
 
@@ -164,6 +191,47 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             }
             @Override public void afterTextChanged(Editable value) { }
         });
+    }
+
+    private void loadFeaturePolicy() {
+        if (featureRequest != null) featureRequest.cancel();
+        featureRequest = AppAccess.from(this).repository().get("/api/public/features", new LinkedHashMap<>(), result -> {
+            featureRequest = null;
+            if (!isUiActive() || !result.isSuccessful()) return;
+            JsonObject features = Jsons.object(result.dataObject(), "features");
+            chaptersEnabled = ChatFeatureFlags.enabled(features.get("forum_chapters"), true);
+            paidUnlockEnabled = ChatFeatureFlags.enabled(features.get("forum_paid_unlock"), true);
+            scheduledUnlockEnabled = ChatFeatureFlags.enabled(features.get("forum_scheduled_unlock"), true);
+            attachmentUnlockEnabled = ChatFeatureFlags.enabled(features.get("forum_attachment_unlock"), true);
+            boolean canUsePaid = chaptersEnabled && paidUnlockEnabled;
+            boolean canUseScheduled = chaptersEnabled && scheduledUnlockEnabled;
+            binding.sectionEditorArea.setVisibility(chaptersEnabled || !sectionDrafts.isEmpty()
+                ? View.VISIBLE : View.GONE);
+            binding.paidSwitch.setVisibility(canUsePaid || binding.paidSwitch.isChecked()
+                ? View.VISIBLE : View.GONE);
+            binding.scheduledSwitch.setVisibility(canUseScheduled || binding.scheduledSwitch.isChecked()
+                ? View.VISIBLE : View.GONE);
+            binding.paidSwitch.setEnabled(canUsePaid && !working);
+            binding.scheduledSwitch.setEnabled(canUseScheduled && !working);
+            binding.addSectionButton.setEnabled(chaptersEnabled && !working);
+            boolean hasUnlock = chaptersEnabled && (paidUnlockEnabled || scheduledUnlockEnabled);
+            boolean hasProtectedDraft = ForumUnlockPolicy.protectedContent(bodyUnlockType())
+                || !sectionDrafts.isEmpty();
+            binding.paidHeading.setVisibility(hasUnlock || hasProtectedDraft ? View.VISIBLE : View.GONE);
+            binding.paidHelper.setVisibility(hasUnlock || hasProtectedDraft ? View.VISIBLE : View.GONE);
+            updateBodyUnlockUi();
+            renderPending();
+        });
+    }
+
+    private void updateBodyUnlockUi() {
+        if (binding == null) return;
+        boolean paid = binding.paidSwitch.isChecked();
+        boolean scheduled = binding.scheduledSwitch.isChecked();
+        binding.paidSection.setVisibility(paid || scheduled ? View.VISIBLE : View.GONE);
+        binding.paidPriceLayout.setVisibility(paid ? View.VISIBLE : View.GONE);
+        binding.unlockAtLayout.setVisibility(scheduled ? View.VISIBLE : View.GONE);
+        updateComposerState();
     }
 
     private void loadCategories() {
@@ -277,6 +345,10 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     }
 
     private void showSectionEditor(int position) {
+        if (!chaptersEnabled) {
+            Snackbar.make(binding.getRoot(), "管理员已关闭帖子分章节功能", Snackbar.LENGTH_LONG).show();
+            return;
+        }
         SectionDraft existing = position >= 0 && position < sectionDrafts.size() ? sectionDrafts.get(position) : null;
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
@@ -286,33 +358,62 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         EditText tags = editor("标签，使用逗号分隔", false);
         MaterialSwitch paid = new MaterialSwitch(this);
         paid.setText("本节需要余额解锁");
+        paid.setVisibility(paidUnlockEnabled ? View.VISIBLE : View.GONE);
+        MaterialSwitch scheduled = new MaterialSwitch(this);
+        scheduled.setText("本节按日期和时间自动解锁");
+        scheduled.setVisibility(scheduledUnlockEnabled ? View.VISIBLE : View.GONE);
         EditText price = editor("解锁价格（余额）", false);
         price.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText unlockAt = editor("点击选择自动解锁时间", false);
+        unlockAt.setFocusable(false);
+        unlockAt.setClickable(true);
+        unlockAt.setOnClickListener(view -> pickUnlockAt(unlockAt));
+        EditText preview = editor("锁定时显示的预览（可选）", true);
+        preview.setMinLines(2);
         if (existing != null) {
             title.setText(existing.title);
             content.setText(existing.content);
             tags.setText(existing.tags);
-            paid.setChecked(existing.paid);
+            paid.setChecked(ForumUnlockPolicy.needsPayment(existing.unlockType));
+            scheduled.setChecked(ForumUnlockPolicy.needsSchedule(existing.unlockType));
             price.setText(existing.price > 0 ? String.valueOf(existing.price) : "");
+            setUnlockAt(unlockAt, existing.unlockAtIso);
+            preview.setText(existing.preview);
         }
         price.setVisibility(paid.isChecked() ? View.VISIBLE : View.GONE);
+        unlockAt.setVisibility(scheduled.isChecked() ? View.VISIBLE : View.GONE);
         paid.setOnCheckedChangeListener((button, checked) -> price.setVisibility(checked ? View.VISIBLE : View.GONE));
+        scheduled.setOnCheckedChangeListener((button, checked) -> unlockAt.setVisibility(checked ? View.VISIBLE : View.GONE));
         form.addView(title); form.addView(content); form.addView(tags); form.addView(paid); form.addView(price);
-        new YiyunyingDialogBuilder(this).setTitle(existing == null ? "添加内容节" : "编辑内容节")
+        form.addView(scheduled); form.addView(unlockAt); form.addView(preview);
+        AlertDialog dialog = new YiyunyingDialogBuilder(this).setTitle(existing == null ? "添加章节" : "编辑章节")
             .setView(form)
-            .setPositiveButton("保存", (dialog, which) -> {
+            .setPositiveButton("保存", null)
+            .setNegativeButton("取消", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                 String sectionContent = text(content);
                 double sectionPrice = number(text(price));
-                if (sectionContent.isEmpty() || (paid.isChecked() && sectionPrice <= 0)) {
-                    Snackbar.make(binding.getRoot(), paid.isChecked() ? "付费节需要正文和大于 0 的价格" : "内容节正文不能为空", Snackbar.LENGTH_LONG).show();
+                String unlockType = ForumUnlockPolicy.from(paid.isChecked(), scheduled.isChecked());
+                String unlockAtIso = unlockAtIso(unlockAt);
+                boolean invalidSchedule = ForumUnlockPolicy.needsSchedule(unlockType)
+                    && !isFutureUnlockAt(unlockAtIso);
+                if (sectionContent.isEmpty() || !ForumUnlockPolicy.valid(unlockType, sectionPrice, unlockAtIso)
+                    || invalidSchedule) {
+                    Snackbar.make(binding.getRoot(), sectionContent.isEmpty()
+                        ? "章节正文不能为空"
+                        : invalidSchedule ? "自动解锁时间必须晚于当前时间"
+                        : "请补全当前章节需要的价格和自动解锁时间", Snackbar.LENGTH_LONG).show();
                     return;
                 }
-                SectionDraft value = new SectionDraft(text(title), sectionContent, text(tags), paid.isChecked(), sectionPrice);
+                SectionDraft value = new SectionDraft(text(title), sectionContent, text(tags), unlockType,
+                    sectionPrice, unlockAtIso, text(preview));
                 if (existing == null) sectionDrafts.add(value); else sectionDrafts.set(position, value);
-                if (!sectionDrafts.isEmpty()) binding.paidSwitch.setChecked(false);
                 renderSectionEditors();
                 updateComposerState();
-            }).setNegativeButton("取消", null).show();
+                dialog.dismiss();
+            }));
+        dialog.show();
     }
 
     private EditText editor(String hint, boolean multiline) {
@@ -345,7 +446,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             body.setPadding(dp(12), dp(10), dp(12), dp(8));
             TextView summary = new TextView(this);
             summary.setText("第 " + (index + 1) + " 节 · " + (section.title.isEmpty() ? "未命名" : section.title)
-                + "\n" + (section.paid ? "付费 " + section.price + " 余额" : "免费") + " · " + preview(section.content));
+                + "\n" + ForumUnlockPolicy.label(section.unlockType, section.price, localUnlockAt(section.unlockAtIso))
+                + " · " + preview(section.content));
             summary.setTextColor(getColor(R.color.on_surface));
             summary.setTextSize(14);
             body.addView(summary);
@@ -511,7 +613,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         for (int index = 0; index < attachments.size(); index++) {
             Attachment attachment = attachments.get(index);
             MaterialCardView card = new MaterialCardView(this);
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68));
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cardParams.bottomMargin = dp(6);
             card.setLayoutParams(cardParams);
             card.setRadius(dp(6));
@@ -528,20 +630,154 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
                 row.addView(preview, new LinearLayout.LayoutParams(dp(52), dp(52)));
             }
             TextView text = new TextView(this);
-            text.setText(typeLabel(attachment.type) + "\n" + attachment.name);
+            String privacy = MODE_POST.equals(mode()) ? "发布后隐藏原文件名" : "评论发布后隐藏原文件名";
+            String rule = ForumUnlockPolicy.label(attachment.unlockType, attachment.price, localUnlockAt(attachment.unlockAtIso));
+            text.setText(typeLabel(attachment.type) + " · " + privacy + "\n" + rule);
             text.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
             textParams.leftMargin = dp(10);
             row.addView(text, textParams);
-            MaterialButton remove = new MaterialButton(this);
-            remove.setText("移除");
             int target = index;
+            if (MODE_POST.equals(mode()) && attachmentUnlockEnabled && attachment.stickerId <= 0) {
+                MaterialButton unlock = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+                unlock.setText("解锁规则");
+                unlock.setMinWidth(0);
+                unlock.setOnClickListener(view -> showAttachmentUnlockEditor(target));
+                row.addView(unlock, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+            }
+            MaterialButton remove = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            remove.setText("移除");
+            remove.setMinWidth(0);
             remove.setOnClickListener(view -> { attachments.remove(target); renderPending(); });
             row.addView(remove, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
             card.addView(row);
             binding.pendingContainer.addView(card);
         }
         updateComposerState();
+    }
+
+    private void showAttachmentUnlockEditor(int position) {
+        if (!attachmentUnlockEnabled || position < 0 || position >= attachments.size()) return;
+        Attachment attachment = attachments.get(position);
+        if (attachment.stickerId > 0) {
+            Snackbar.make(binding.getRoot(), "表情包是公共素材，不能设置为付费或定时附件",
+                Snackbar.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+        MaterialSwitch paid = new MaterialSwitch(this);
+        paid.setText("此附件需要余额解锁");
+        paid.setVisibility(paidUnlockEnabled ? View.VISIBLE : View.GONE);
+        MaterialSwitch scheduled = new MaterialSwitch(this);
+        scheduled.setText("此附件按日期和时间自动解锁");
+        scheduled.setVisibility(scheduledUnlockEnabled ? View.VISIBLE : View.GONE);
+        EditText price = editor("解锁价格（余额）", false);
+        price.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText unlockAt = editor("点击选择自动解锁时间", false);
+        unlockAt.setFocusable(false);
+        unlockAt.setClickable(true);
+        unlockAt.setOnClickListener(view -> pickUnlockAt(unlockAt));
+        EditText preview = editor("锁定时显示的附件说明（可选）", true);
+        preview.setMinLines(2);
+        paid.setChecked(ForumUnlockPolicy.needsPayment(attachment.unlockType));
+        scheduled.setChecked(ForumUnlockPolicy.needsSchedule(attachment.unlockType));
+        price.setText(attachment.price > 0 ? String.valueOf(attachment.price) : "");
+        setUnlockAt(unlockAt, attachment.unlockAtIso);
+        preview.setText(attachment.preview);
+        price.setVisibility(paid.isChecked() ? View.VISIBLE : View.GONE);
+        unlockAt.setVisibility(scheduled.isChecked() ? View.VISIBLE : View.GONE);
+        paid.setOnCheckedChangeListener((button, checked) -> price.setVisibility(checked ? View.VISIBLE : View.GONE));
+        scheduled.setOnCheckedChangeListener((button, checked) -> unlockAt.setVisibility(checked ? View.VISIBLE : View.GONE));
+        form.addView(paid); form.addView(price); form.addView(scheduled); form.addView(unlockAt); form.addView(preview);
+        AlertDialog dialog = new YiyunyingDialogBuilder(this)
+            .setTitle("附件 " + (position + 1) + " 的解锁规则")
+            .setView(form)
+            .setPositiveButton("保存", null)
+            .setNegativeButton("取消", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            String type = ForumUnlockPolicy.from(paid.isChecked(), scheduled.isChecked());
+            double amount = number(text(price));
+            String time = unlockAtIso(unlockAt);
+            boolean invalidSchedule = ForumUnlockPolicy.needsSchedule(type) && !isFutureUnlockAt(time);
+            if (!ForumUnlockPolicy.valid(type, amount, time) || invalidSchedule) {
+                Snackbar.make(binding.getRoot(), invalidSchedule
+                    ? "自动解锁时间必须晚于当前时间"
+                    : "请补全附件需要的价格和自动解锁时间", Snackbar.LENGTH_LONG).show();
+                return;
+            }
+            attachment.unlockType = type;
+            attachment.price = amount;
+            attachment.unlockAtIso = time;
+            attachment.preview = text(preview);
+            renderPending();
+            dialog.dismiss();
+        }));
+        dialog.show();
+    }
+
+    private void pickUnlockAt(EditText input) {
+        Calendar selected = Calendar.getInstance();
+        Date parsed = parseUtcIso(unlockAtIso(input));
+        if (parsed != null) selected.setTime(parsed); else selected.add(Calendar.DAY_OF_MONTH, 1);
+        DatePickerDialog date = new DatePickerDialog(this, (dialog, year, month, day) -> {
+            selected.set(Calendar.YEAR, year);
+            selected.set(Calendar.MONTH, month);
+            selected.set(Calendar.DAY_OF_MONTH, day);
+            TimePickerDialog time = new TimePickerDialog(this, (timeDialog, hour, minute) -> {
+                selected.set(Calendar.HOUR_OF_DAY, hour);
+                selected.set(Calendar.MINUTE, minute);
+                selected.set(Calendar.SECOND, 0);
+                selected.set(Calendar.MILLISECOND, 0);
+                setUnlockAt(input, formatUtcIso(selected.getTime()));
+                updateComposerState();
+            }, selected.get(Calendar.HOUR_OF_DAY), selected.get(Calendar.MINUTE), true);
+            time.show();
+        }, selected.get(Calendar.YEAR), selected.get(Calendar.MONTH), selected.get(Calendar.DAY_OF_MONTH));
+        date.getDatePicker().setMinDate(System.currentTimeMillis() - 60_000L);
+        date.show();
+    }
+
+    private void setUnlockAt(EditText input, String iso) {
+        String normalized = iso == null ? "" : iso.trim();
+        input.setTag(normalized);
+        input.setText(localUnlockAt(normalized));
+    }
+
+    private String unlockAtIso(EditText input) {
+        Object value = input.getTag();
+        return value instanceof String ? ((String) value).trim() : "";
+    }
+
+    private String localUnlockAt(String iso) {
+        Date date = parseUtcIso(iso);
+        if (date == null) return "";
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(date);
+    }
+
+    private Date parseUtcIso(String value) {
+        if (value == null || value.trim().isEmpty()) return null;
+        try {
+            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
+            format.setTimeZone(TimeZone.getTimeZone("UTC"));
+            format.setLenient(false);
+            return format.parse(value.trim());
+        } catch (java.text.ParseException ignored) {
+            return null;
+        }
+    }
+
+    private String formatUtcIso(Date value) {
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
+        format.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return format.format(value);
+    }
+
+    private boolean isFutureUnlockAt(String value) {
+        Date parsed = parseUtcIso(value);
+        return parsed != null && parsed.getTime() > System.currentTimeMillis();
     }
 
     private void submit() {
@@ -553,6 +789,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.tagsLayout.setError(null);
         binding.paidPriceLayout.setError(null);
         binding.paidPreviewLayout.setError(null);
+        binding.unlockAtLayout.setError(null);
         if (MODE_POST.equals(mode()) && title.isEmpty()) {
             focusField(binding.titleLayout, "请填写帖子标题");
             return;
@@ -573,19 +810,38 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             focusField(binding.tagsLayout, "标签最多选择或填写 10 个");
             return;
         }
-        if (!sectionDrafts.isEmpty() && binding.paidSwitch.isChecked()) {
-            Snackbar.make(binding.getRoot(), "整帖付费与内容分节不能同时启用", Snackbar.LENGTH_LONG).show();
+        String unsupportedProtection = unsupportedProtectionReason();
+        if (!unsupportedProtection.isEmpty()) {
+            binding.publishReadiness.setText(unsupportedProtection);
+            Snackbar.make(binding.getRoot(), unsupportedProtection, Snackbar.LENGTH_LONG).show();
             return;
         }
-        if (MODE_POST.equals(mode()) && binding.paidSwitch.isChecked()) {
+        String bodyUnlockType = bodyUnlockType();
+        double bodyPrice = number(text(binding.paidPriceInput));
+        String bodyUnlockAt = unlockAtIso(binding.unlockAtInput);
+        if (MODE_POST.equals(mode()) && ForumUnlockPolicy.needsPayment(bodyUnlockType)) {
             String priceText = text(binding.paidPriceInput);
             if (!validMoney(priceText)) {
                 focusField(binding.paidPriceLayout,
                     "请输入不低于 0.01 且最多两位小数的余额");
                 return;
             }
-            if (text(binding.paidPreviewInput).isEmpty()) {
-                focusField(binding.paidPreviewLayout, "请填写免费预览内容");
+        }
+        if (MODE_POST.equals(mode()) && ForumUnlockPolicy.needsSchedule(bodyUnlockType) && bodyUnlockAt.isEmpty()) {
+            focusField(binding.unlockAtLayout, "请选择自动解锁日期和时间");
+            return;
+        }
+        if (MODE_POST.equals(mode()) && ForumUnlockPolicy.needsSchedule(bodyUnlockType)
+            && !isFutureUnlockAt(bodyUnlockAt)) {
+            focusField(binding.unlockAtLayout, "自动解锁时间必须晚于当前时间");
+            return;
+        }
+        if (!ForumUnlockPolicy.valid(bodyUnlockType, bodyPrice, bodyUnlockAt)) return;
+        for (Attachment attachment : attachments) {
+            if (!ForumUnlockPolicy.valid(attachment.unlockType, attachment.price, attachment.unlockAtIso)
+                || (ForumUnlockPolicy.needsSchedule(attachment.unlockType)
+                    && !isFutureUnlockAt(attachment.unlockAtIso))) {
+                Snackbar.make(binding.getRoot(), "有附件尚未补全解锁价格或时间", Snackbar.LENGTH_LONG).show();
                 return;
             }
         }
@@ -608,7 +864,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.publishReadiness.setText("正在上传附件 " + (index + 1) + " / " + attachments.size());
         binding.submitButton.setText("上传中 " + (index + 1) + " / " + attachments.size());
         Map<String, String> fields = new LinkedHashMap<>();
-        fields.put("scene", MODE_POST.equals(mode()) ? "forum_post" : "forum_comment");
+        fields.put("scene", !MODE_POST.equals(mode()) ? "forum_comment"
+            : (ForumUnlockPolicy.protectedContent(item.unlockType) ? "forum_section" : "forum_post"));
         ContentUriRequestBody file = new ContentUriRequestBody(getContentResolver(), item.uri, item.mime, item.size);
         uploadRequest = AppAccess.from(this).repository().upload("/api/user/uploads", item.name, item.mime, file, fields, result -> {
             uploadRequest = null;
@@ -624,7 +881,6 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             JsonObject attachment = new JsonObject();
             attachment.addProperty("media_type", item.type);
             attachment.addProperty("upload_id", Jsons.longValue(result.dataObject(), "upload_id"));
-            attachment.addProperty("file_name", item.name);
             attachment.addProperty("mime_type", item.mime);
             if (item.size > 0) attachment.addProperty("size_bytes", item.size);
             media.add(attachment);
@@ -636,20 +892,51 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.publishReadiness.setText("附件已就绪，正在提交内容");
         binding.submitButton.setText("正在发布");
         JsonObject body = new JsonObject();
-        body.addProperty("content", content);
-        body.add("attachments", media);
         String path;
         long target = getIntent().getLongExtra(EXTRA_TARGET_ID, 0);
         if (MODE_POST.equals(mode())) {
             path = "/api/user/forum-posts";
+            JsonArray publicMedia = new JsonArray();
+            JsonArray protectedAttachmentSections = new JsonArray();
+            for (int index = 0; index < media.size(); index++) {
+                Attachment attachment = attachments.get(index);
+                JsonObject uploaded = media.get(index).getAsJsonObject();
+                if (ForumUnlockPolicy.protectedContent(attachment.unlockType)) {
+                    JsonArray single = new JsonArray();
+                    single.add(uploaded);
+                    protectedAttachmentSections.add(sectionJson(
+                        "附件 " + (index + 1) + " · " + typeLabel(attachment.type),
+                        "解锁后可查看此" + typeLabel(attachment.type), "", attachment.unlockType,
+                        attachment.price, attachment.unlockAtIso, attachment.preview, single));
+                } else publicMedia.add(uploaded);
+            }
+            String rootContent = content;
+            JsonArray allSections = new JsonArray();
+            String bodyPolicy = bodyUnlockType();
+            if (!content.isEmpty() && ForumUnlockPolicy.protectedContent(bodyPolicy)) {
+                allSections.add(sectionJson("正文", content, text(binding.tagsInput), bodyPolicy,
+                    number(text(binding.paidPriceInput)), unlockAtIso(binding.unlockAtInput),
+                    text(binding.paidPreviewInput), new JsonArray()));
+                rootContent = text(binding.paidPreviewInput);
+                if (rootContent.isEmpty()) rootContent = "本帖正文包含需要解锁的内容。";
+            }
+            for (JsonElement section : sectionsJson()) allSections.add(section);
+            for (JsonElement section : protectedAttachmentSections) allSections.add(section);
+            body.addProperty("content", rootContent);
+            body.add("attachments", publicMedia);
             body.addProperty("plate_id", target);
+            body.addProperty("client_draft_id", ensureClientDraftId());
             if (selectedCategoryId > 0) body.addProperty("category_id", selectedCategoryId);
             body.addProperty("title", title);
             JsonArray tags = new JsonArray();
             for (String tag : enteredTags()) if (tags.size() < 10) tags.add(tag);
             body.add("tags", tags);
-            if (!sectionDrafts.isEmpty()) body.add("sections", sectionsJson());
-        } else path = "/api/user/forum-posts/" + target + "/comments";
+            if (!allSections.isEmpty()) body.add("sections", allSections);
+        } else {
+            path = "/api/user/forum-posts/" + target + "/comments";
+            body.addProperty("content", content);
+            body.add("attachments", media);
+        }
         submitRequest = AppAccess.from(this).repository().post(path, body, result -> {
             submitRequest = null;
             if (!isUiActive()) return;
@@ -664,35 +951,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
                     Snackbar.LENGTH_LONG).show();
                 return;
             }
-            if (MODE_POST.equals(mode()) && binding.paidSwitch.isChecked()) {
-                configurePaidContent(Jsons.longValue(result.dataObject(), "post_id"));
-            } else finishSuccess(result.message());
-        });
-    }
-
-    private void configurePaidContent(long postId) {
-        double price;
-        try { price = Double.parseDouble(text(binding.paidPriceInput)); }
-        catch (NumberFormatException exception) { price = 0; }
-        if (!validMoney(text(binding.paidPriceInput)) || price <= 0 || text(binding.paidPreviewInput).isEmpty()) {
-            setEnabled(true);
-            Snackbar.make(binding.getRoot(), "付费帖子需要填写大于 0 的余额价格和免费预览内容", Snackbar.LENGTH_LONG).show();
-            return;
-        }
-        binding.publishReadiness.setText("帖子已创建，正在保存付费规则");
-        binding.submitButton.setText("保存付费规则");
-        JsonObject body = new JsonObject(); body.addProperty("price_balance", price); body.addProperty("preview_content", text(binding.paidPreviewInput));
-        paidRequest = AppAccess.from(this).repository().put("/api/user/forum-posts/" + postId + "/paid-content", body, result -> {
-            paidRequest = null;
-            if (!isUiActive()) return;
-            if (!result.isSuccessful()) {
-                setEnabled(true);
-                Snackbar.make(binding.getRoot(), ActionFeedback.failure(
-                    result, "帖子已创建，但付费规则保存失败，请重试"),
-                    Snackbar.LENGTH_LONG).show();
-                return;
-            }
-            finishSuccess("付费帖子发布成功");
+            finishSuccess(result.message());
         });
     }
 
@@ -736,9 +995,12 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     private void saveDraft(boolean notify) {
         if (binding == null) return;
         JsonObject draft = new JsonObject();
+        if (MODE_POST.equals(mode())) draft.addProperty("client_draft_id", ensureClientDraftId());
         draft.addProperty("title", text(binding.titleInput)); draft.addProperty("tags", text(binding.tagsInput));
         draft.addProperty("category_id", selectedCategoryId);
         draft.addProperty("content", text(binding.contentInput)); draft.addProperty("paid", binding.paidSwitch.isChecked());
+        draft.addProperty("scheduled", binding.scheduledSwitch.isChecked());
+        draft.addProperty("unlock_at", unlockAtIso(binding.unlockAtInput));
         draft.addProperty("price", text(binding.paidPriceInput)); draft.addProperty("preview", text(binding.paidPreviewInput));
         draft.add("sections", sectionsJson());
         JsonArray savedAttachments = new JsonArray();
@@ -746,6 +1008,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             JsonObject value = new JsonObject(); value.addProperty("type", item.type); value.addProperty("name", item.name);
             value.addProperty("mime", item.mime); value.addProperty("size", item.size); value.addProperty("sticker_id", item.stickerId);
             value.addProperty("preview_url", item.previewUrl); value.addProperty("uri", item.uri == null ? "" : item.uri.toString());
+            value.addProperty("unlock_type", item.unlockType); value.addProperty("unlock_price", item.price);
+            value.addProperty("unlock_at", item.unlockAtIso); value.addProperty("locked_preview", item.preview);
             savedAttachments.add(value);
         }
         draft.add("attachments", savedAttachments);
@@ -758,21 +1022,31 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         if (raw == null || raw.isEmpty()) return;
         try {
             JsonObject draft = JsonParser.parseString(raw).getAsJsonObject();
+            clientDraftId = validClientDraftId(Jsons.string(draft, "client_draft_id"))
+                ? Jsons.string(draft, "client_draft_id").toLowerCase(Locale.ROOT) : "";
             if (draft.has("category_id")) selectedCategoryId = Jsons.longValue(draft, "category_id");
             binding.titleInput.setText(Jsons.string(draft, "title")); binding.tagsInput.setText(Jsons.string(draft, "tags"));
-            binding.contentInput.setText(Jsons.string(draft, "content")); binding.paidSwitch.setChecked(draft.has("paid") && draft.get("paid").getAsBoolean());
+            binding.contentInput.setText(Jsons.string(draft, "content")); binding.paidSwitch.setChecked(bool(draft, "paid"));
+            binding.scheduledSwitch.setChecked(bool(draft, "scheduled"));
+            setUnlockAt(binding.unlockAtInput, Jsons.string(draft, "unlock_at"));
             binding.paidPriceInput.setText(Jsons.string(draft, "price")); binding.paidPreviewInput.setText(Jsons.string(draft, "preview"));
             for (JsonElement element : Jsons.array(draft, "sections")) {
                 if (!element.isJsonObject()) continue;
                 JsonObject value = element.getAsJsonObject();
                 sectionDrafts.add(new SectionDraft(Jsons.string(value, "title"), Jsons.string(value, "content"),
-                    joinTags(Jsons.array(value, "tags")), "paid".equals(Jsons.string(value, "section_type")), decimal(value, "price_balance")));
+                    joinTags(Jsons.array(value, "tags")), Jsons.string(value, "section_type"), decimal(value, "price_balance"),
+                    Jsons.string(value, "unlock_at"), Jsons.string(value, "preview_content")));
             }
             for (JsonElement element : Jsons.array(draft, "attachments")) {
                 if (!element.isJsonObject()) continue; JsonObject value = element.getAsJsonObject();
                 String uri = Jsons.string(value, "uri");
-                attachments.add(new Attachment(uri.isEmpty() ? null : Uri.parse(uri), Jsons.string(value, "type"), Jsons.string(value, "name"),
-                    Jsons.string(value, "mime"), Jsons.longValue(value, "size"), Jsons.longValue(value, "sticker_id"), Jsons.string(value, "preview_url")));
+                Attachment attachment = new Attachment(uri.isEmpty() ? null : Uri.parse(uri), Jsons.string(value, "type"), Jsons.string(value, "name"),
+                    Jsons.string(value, "mime"), Jsons.longValue(value, "size"), Jsons.longValue(value, "sticker_id"), Jsons.string(value, "preview_url"));
+                attachment.unlockType = ForumUnlockPolicy.normalize(Jsons.string(value, "unlock_type"));
+                attachment.price = decimal(value, "unlock_price");
+                attachment.unlockAtIso = Jsons.string(value, "unlock_at");
+                attachment.preview = Jsons.string(value, "locked_preview");
+                attachments.add(attachment);
             }
             renderPending();
             renderSectionEditors();
@@ -781,7 +1055,23 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
 
     private void clearDraft() { getSharedPreferences("forum_drafts", 0).edit().remove(draftKey()).apply(); }
 
+    private String ensureClientDraftId() {
+        if (!validClientDraftId(clientDraftId)) clientDraftId = UUID.randomUUID().toString();
+        return clientDraftId;
+    }
+
+    private static boolean validClientDraftId(String value) {
+        if (value == null || value.length() != 36) return false;
+        try { return UUID.fromString(value).toString().equalsIgnoreCase(value); }
+        catch (IllegalArgumentException ignored) { return false; }
+    }
+
     private static String text(android.widget.EditText input) { return input.getText() == null ? "" : input.getText().toString().trim(); }
+
+    private static boolean bool(JsonObject value, String key) {
+        try { return value.has(key) && value.get(key).getAsBoolean(); }
+        catch (RuntimeException ignored) { return false; }
+    }
 
     private static List<JsonObject> objects(JsonArray values) {
         List<JsonObject> result = new ArrayList<>();
@@ -797,17 +1087,68 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     private JsonArray sectionsJson() {
         JsonArray result = new JsonArray();
         for (SectionDraft section : sectionDrafts) {
-            JsonObject value = new JsonObject();
-            value.addProperty("section_type", section.paid ? "paid" : "free");
-            value.addProperty("title", section.title);
-            value.addProperty("content", section.content);
-            if (section.paid) value.addProperty("price_balance", section.price);
-            JsonArray tags = new JsonArray();
-            for (String tag : section.tags.split("[,，]")) if (!tag.trim().isEmpty()) tags.add(tag.trim());
-            value.add("tags", tags);
-            result.add(value);
+            result.add(sectionJson(section.title, section.content, section.tags, section.unlockType,
+                section.price, section.unlockAtIso, section.preview, new JsonArray()));
         }
         return result;
+    }
+
+    private JsonObject sectionJson(String title, String content, String rawTags, String unlockType,
+                                   double price, String unlockAtIso, String preview, JsonArray media) {
+        JsonObject value = new JsonObject();
+        value.addProperty("section_type", ForumUnlockPolicy.normalize(unlockType));
+        value.addProperty("title", title);
+        value.addProperty("content", content);
+        if (ForumUnlockPolicy.needsPayment(unlockType)) value.addProperty("price_balance", price);
+        if (ForumUnlockPolicy.needsSchedule(unlockType)) value.addProperty("unlock_at", unlockAtIso);
+        if (preview != null && !preview.trim().isEmpty()) value.addProperty("preview_content", preview.trim());
+        JsonArray tags = new JsonArray();
+        for (String tag : rawTags.split("[,，]")) if (!tag.trim().isEmpty()) tags.add(tag.trim());
+        value.add("tags", tags);
+        if (media != null && !media.isEmpty()) value.add("attachments", media);
+        return value;
+    }
+
+    private String bodyUnlockType() {
+        return ForumUnlockPolicy.from(binding.paidSwitch.isChecked(), binding.scheduledSwitch.isChecked());
+    }
+
+    private String unsupportedProtectionReason() {
+        if (!MODE_POST.equals(mode())) return "";
+        String bodyPolicy = bodyUnlockType();
+        if (ForumUnlockPolicy.needsPayment(bodyPolicy) && (!chaptersEnabled || !paidUnlockEnabled)) {
+            return "管理员已关闭正文付费解锁；草稿保护设置仍被保留，当前禁止发布";
+        }
+        if (ForumUnlockPolicy.needsSchedule(bodyPolicy) && (!chaptersEnabled || !scheduledUnlockEnabled)) {
+            return "管理员已关闭正文定时解锁；草稿保护设置仍被保留，当前禁止发布";
+        }
+        if (!sectionDrafts.isEmpty() && !chaptersEnabled) {
+            return "管理员已关闭分章节内容；已有章节仍被保留，当前禁止发布";
+        }
+        for (SectionDraft section : sectionDrafts) {
+            if (ForumUnlockPolicy.needsPayment(section.unlockType) && !paidUnlockEnabled) {
+                return "管理员已关闭章节付费解锁；已有章节保护设置仍被保留，当前禁止发布";
+            }
+            if (ForumUnlockPolicy.needsSchedule(section.unlockType) && !scheduledUnlockEnabled) {
+                return "管理员已关闭章节定时解锁；已有章节保护设置仍被保留，当前禁止发布";
+            }
+        }
+        for (Attachment attachment : attachments) {
+            if (!ForumUnlockPolicy.protectedContent(attachment.unlockType)) continue;
+            if (attachment.stickerId > 0) {
+                return "表情包属于公共素材，不能作为付费或定时附件；请取消其解锁规则";
+            }
+            if (!attachmentUnlockEnabled) {
+                return "管理员已关闭附件独立解锁；已有附件保护设置仍被保留，当前禁止发布";
+            }
+            if (ForumUnlockPolicy.needsPayment(attachment.unlockType) && !paidUnlockEnabled) {
+                return "管理员已关闭附件付费解锁；已有附件保护设置仍被保留，当前禁止发布";
+            }
+            if (ForumUnlockPolicy.needsSchedule(attachment.unlockType) && !scheduledUnlockEnabled) {
+                return "管理员已关闭附件定时解锁；已有附件保护设置仍被保留，当前禁止发布";
+            }
+        }
+        return "";
     }
 
     private String joinTags(JsonArray tags) {
@@ -867,8 +1208,11 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         if (post) summary.add(selectedCategoryName());
         if (tagCount > 0) summary.add(tagCount + " 个标签");
         if (!attachments.isEmpty()) summary.add(attachments.size() + " 个附件");
-        if (!sectionDrafts.isEmpty()) summary.add(sectionDrafts.size() + " 个内容节");
-        if (post && binding.paidSwitch.isChecked()) summary.add("整篇付费");
+        if (!sectionDrafts.isEmpty()) summary.add(sectionDrafts.size() + " 个章节");
+        if (post && ForumUnlockPolicy.protectedContent(bodyUnlockType())) {
+            summary.add("正文" + ForumUnlockPolicy.label(bodyUnlockType(), number(text(binding.paidPriceInput)),
+                localUnlockAt(unlockAtIso(binding.unlockAtInput))));
+        }
         binding.publishSummary.setText(summary.isEmpty()
             ? (post ? "先完善标题和正文，再选择分类、标签或附件。" : "评论支持文字、Emoji 和附件。")
             : String.join(" · ", summary));
@@ -879,10 +1223,14 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         if (!hasContent) missing.add(post ? "正文或附件" : "评论内容");
         if (post && tagCount > 10) {
             binding.publishReadiness.setText("标签已超过 10 个，请删减后发布");
-        } else if (post && binding.paidSwitch.isChecked() && !validMoney(text(binding.paidPriceInput))) {
+        } else if (post && ForumUnlockPolicy.needsPayment(bodyUnlockType()) && !validMoney(text(binding.paidPriceInput))) {
             binding.publishReadiness.setText("请填写有效的付费余额，最低 0.01");
-        } else if (post && binding.paidSwitch.isChecked() && text(binding.paidPreviewInput).isEmpty()) {
-            binding.publishReadiness.setText("请填写免费预览内容");
+        } else if (post && ForumUnlockPolicy.needsSchedule(bodyUnlockType())
+            && unlockAtIso(binding.unlockAtInput).isEmpty()) {
+            binding.publishReadiness.setText("请选择自动解锁日期和时间");
+        } else if (post && ForumUnlockPolicy.needsSchedule(bodyUnlockType())
+            && !isFutureUnlockAt(unlockAtIso(binding.unlockAtInput))) {
+            binding.publishReadiness.setText("自动解锁时间必须晚于当前时间");
         } else if (!missing.isEmpty()) {
             binding.publishReadiness.setText("还需要填写：" + String.join("、", missing));
         } else {
@@ -897,13 +1245,15 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         working = !enabled;
         binding.submitButton.setEnabled(enabled);
         binding.addAttachmentButton.setEnabled(enabled);
-        binding.addSectionButton.setEnabled(enabled);
+        binding.addSectionButton.setEnabled(enabled && chaptersEnabled);
         binding.titleInput.setEnabled(enabled);
         binding.contentInput.setEnabled(enabled);
         binding.tagsInput.setEnabled(enabled);
-        binding.paidSwitch.setEnabled(enabled);
+        binding.paidSwitch.setEnabled(enabled && chaptersEnabled && paidUnlockEnabled);
+        binding.scheduledSwitch.setEnabled(enabled && chaptersEnabled && scheduledUnlockEnabled);
         binding.paidPriceInput.setEnabled(enabled);
         binding.paidPreviewInput.setEnabled(enabled);
+        binding.unlockAtInput.setEnabled(enabled);
         if (!enabled) {
             binding.publishReadiness.setText("正在准备发布内容");
             binding.submitButton.setText("处理中");
@@ -939,8 +1289,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         if (uploadRequest != null) uploadRequest.cancel();
         if (submitRequest != null) submitRequest.cancel();
         if (stickerRequest != null) stickerRequest.cancel();
-        if (paidRequest != null) paidRequest.cancel();
         if (taxonomyRequest != null) taxonomyRequest.cancel();
+        if (featureRequest != null) featureRequest.cancel();
         binding = null;
         super.onDestroy();
     }
@@ -953,6 +1303,10 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         final long size;
         final long stickerId;
         final String previewUrl;
+        String unlockType = ForumUnlockPolicy.FREE;
+        double price;
+        String unlockAtIso = "";
+        String preview = "";
 
         private Attachment(Uri uri, String type, String name, String mime, long size, long stickerId, String previewUrl) {
             this.uri = uri; this.type = type; this.name = name; this.mime = mime; this.size = size;
@@ -967,9 +1321,14 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     }
 
     private static final class SectionDraft {
-        final String title; final String content; final String tags; final boolean paid; final double price;
-        SectionDraft(String title, String content, String tags, boolean paid, double price) {
-            this.title = title; this.content = content; this.tags = tags; this.paid = paid; this.price = price;
+        final String title; final String content; final String tags; final String unlockType;
+        final double price; final String unlockAtIso; final String preview;
+        SectionDraft(String title, String content, String tags, String unlockType, double price,
+                     String unlockAtIso, String preview) {
+            this.title = title; this.content = content; this.tags = tags;
+            this.unlockType = ForumUnlockPolicy.normalize(unlockType); this.price = price;
+            this.unlockAtIso = unlockAtIso == null ? "" : unlockAtIso;
+            this.preview = preview == null ? "" : preview;
         }
     }
 }

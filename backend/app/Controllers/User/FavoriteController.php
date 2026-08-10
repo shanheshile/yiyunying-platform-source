@@ -8,6 +8,7 @@ use Yiyunying\Core\HttpException;
 use Yiyunying\Core\Request;
 use Yiyunying\Core\Response;
 use Yiyunying\Services\AuthService;
+use Yiyunying\Services\ForumVisibilityService;
 use Yiyunying\Services\MessageMediaService;
 
 final class FavoriteController
@@ -169,14 +170,17 @@ final class FavoriteController
     private static function posts(array $user): array
     {
         $items = Database::all(
-            'SELECT p.id, p.title, p.content, p.created_at, f.created_at AS favorited_at,
+            'SELECT p.id, p.user_id, p.title, p.content, p.created_at, f.created_at AS favorited_at,
                     profile.nickname AS author_name
              FROM forum_favorites f INNER JOIN forum_posts p ON p.id = f.post_id
              LEFT JOIN user_profiles profile ON profile.user_id = p.user_id
-             WHERE f.app_id = ? AND f.user_id = ? AND p.status = 1 AND p.deleted_at IS NULL',
-            [(int) $user['app_id'], (int) $user['id']]
+             WHERE f.app_id = ? AND f.user_id = ? AND p.status = 1 AND p.deleted_at IS NULL
+               AND (p.audit_status = \'approved\' OR p.user_id = ?)',
+            [(int) $user['app_id'], (int) $user['id'], (int) $user['id']]
         );
-        $items = MessageMediaService::hydrate($items, 'forum_post', (int) $user['app_id']);
+        $items = ForumVisibilityService::hydratePosts(
+            $items, (int) $user['app_id'], (int) $user['id']
+        );
         foreach ($items as &$item) {
             $item['favorite_type'] = 'post';
             $item['target_id'] = (int) $item['id'];

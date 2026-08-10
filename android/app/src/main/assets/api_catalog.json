@@ -121,6 +121,12 @@
     },
     {
         "method":  "GET",
+        "path":  "/api/public/forum-media/{attachment_id}",
+        "scope":  "public",
+        "handler":  "PublicForumMedia::show"
+    },
+    {
+        "method":  "GET",
         "path":  "/api/public/remote-files/{file_id}",
         "scope":  "public",
         "handler":  "PublicFile::show"
@@ -1920,6 +1926,12 @@
         "handler":  "AdminResource::createStoreApp"
     },
     {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminResource::auditStoreApp"
+    },
+    {
         "method":  "GET",
         "path":  "/api/admin/apps/{app_id}/forum-plates",
         "scope":  "admin",
@@ -2080,6 +2092,12 @@
         "path":  "/api/admin/apps/{app_id}/forum-plates/{plate_id}",
         "scope":  "admin",
         "handler":  "AdminForum::updatePlate"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar",
+        "scope":  "admin",
+        "handler":  "AdminForum::plateAvatar"
     },
     {
         "method":  "GET",
@@ -2892,6 +2910,12 @@
         "handler":  "UserMoment::update"
     },
     {
+        "method":  "PUT",
+        "path":  "/api/user/moments/{moment_id}/visibility",
+        "scope":  "user",
+        "handler":  "UserMoment::updateVisibility"
+    },
+    {
         "method":  "DELETE",
         "path":  "/api/user/moments/{moment_id}",
         "scope":  "user",
@@ -2932,6 +2956,12 @@
         "path":  "/api/user/moments/{moment_id}/comments",
         "scope":  "user",
         "handler":  "UserMoment::createComment"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/moments/{moment_id}/comments/{comment_id}/like",
+        "scope":  "user",
+        "handler":  "UserMoment::toggleCommentLike"
     },
     {
         "method":  "DELETE",
@@ -3880,6 +3910,12 @@
         "path":  "/api/user/chat-rooms/{room_id}",
         "scope":  "user",
         "handler":  "UserGroup::update"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/chat-rooms/{room_id}/avatar",
+        "scope":  "user",
+        "handler":  "UserGroup::avatar"
     },
     {
         "method":  "DELETE",

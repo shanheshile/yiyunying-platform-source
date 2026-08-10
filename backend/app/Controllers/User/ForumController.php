@@ -15,6 +15,7 @@ use Yiyunying\Services\ContentTagService;
 use Yiyunying\Services\ForumExperienceService;
 use Yiyunying\Services\ForumModeratorService;
 use Yiyunying\Services\ForumTaxonomyService;
+use Yiyunying\Services\ForumVisibilityService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\MessageForwardService;
@@ -34,13 +35,14 @@ final class ForumController
             $where[] = '(name LIKE ? OR description LIKE ? OR CAST(id AS CHAR) LIKE ?)';
             foreach (range(1, 3) as $_) $query[] = '%' . $keyword . '%';
         }
-        array_unshift($query, (int) $user['id'], (int) $user['id']);
+        array_unshift($query, (int) $user['id'], (int) $user['id'], (int) $user['id']);
         return Response::success(['items' => Database::all(
             "SELECT plate.id, plate.name, plate.icon, plate.description,
                     (SELECT COUNT(*) FROM forum_categories category
                      WHERE category.plate_id = plate.id AND category.status = 1) AS category_count,
                     (SELECT COUNT(*) FROM forum_posts post
-                     WHERE post.plate_id = plate.id AND post.status = 1 AND post.deleted_at IS NULL) AS post_count,
+                     WHERE post.plate_id = plate.id AND post.status = 1 AND post.deleted_at IS NULL
+                       AND (post.audit_status = 'approved' OR post.user_id = ?)) AS post_count,
                     COALESCE(personal.position, 'normal') AS personal_position,
                     COALESCE(personal.sort_order, 0) AS personal_sort_order,
                     CASE WHEN moderator.id IS NULL THEN 0 ELSE 1 END AS is_moderator
@@ -70,6 +72,19 @@ final class ForumController
         AuthService::ensureNotBanned($user, ['all', 'forum', 'post']);
         $data = $request->all();
         Validator::required($data, ['plate_id', 'title']);
+        $clientDraftId = self::clientDraftId($data);
+        if ($clientDraftId !== null) {
+            $existingDraft = self::draftPostResult(
+                (int) $user['app_id'], (int) $user['id'], $clientDraftId
+            );
+            if ($existingDraft !== null) {
+                return Response::success(
+                    $existingDraft + ['reward_result' => null],
+                    '该草稿已经发布，已返回原帖子',
+                    200
+                );
+            }
+        }
         if (Database::one('SELECT id FROM forum_plates WHERE id = ? AND app_id = ? AND status = 1', [(int) $data['plate_id'], (int) $user['app_id']]) === null) {
             throw new HttpException('论坛板块不存在', 404, 404);
         }
@@ -89,25 +104,46 @@ final class ForumController
         $tagsJson = ContentTagService::encode(ForumTaxonomyService::normalizeTags(
             (int) $user['app_id'], (int) $data['plate_id'], $categoryId, $data['tags'] ?? []
         ));
-        $result = Database::transaction(static function () use ($user, $data, $categoryId, $payload, $images, $tagsJson, $audit, $sections): array {
-            $id = Database::insert(
-                'INSERT INTO forum_posts
-                 (admin_id, app_id, plate_id, category_id, user_id, title, content, images_json, tags_json, audit_status, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-                [
-                    (int) $user['admin_id'], (int) $user['app_id'], (int) $data['plate_id'], $categoryId, (int) $user['id'],
-                    Validator::string($data['title'], 'title', 1, 120), (string) $payload['content'],
-                    json_encode((array) $images, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $tagsJson, $audit,
-                ]
-            );
+        $result = Database::transaction(static function () use (
+            $user, $data, $categoryId, $payload, $images, $tagsJson, $audit, $sections, $clientDraftId
+        ): array {
+            $insertSql = 'INSERT INTO forum_posts
+                 (admin_id, app_id, plate_id, category_id, user_id, client_draft_id, title, content,
+                  images_json, tags_json, audit_status, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())';
+            $insertParams = [
+                (int) $user['admin_id'], (int) $user['app_id'], (int) $data['plate_id'], $categoryId,
+                (int) $user['id'], $clientDraftId, Validator::string($data['title'], 'title', 1, 120),
+                (string) $payload['content'],
+                json_encode((array) $images, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $tagsJson, $audit,
+            ];
+            if ($clientDraftId !== null) {
+                Database::one(
+                    'SELECT id FROM users WHERE id = ? AND app_id = ? FOR UPDATE',
+                    [(int) $user['id'], (int) $user['app_id']]
+                );
+                $existing = self::draftPostResult(
+                    (int) $user['app_id'], (int) $user['id'], $clientDraftId
+                );
+                if ($existing !== null) return $existing;
+            }
+            $id = Database::insert($insertSql, $insertParams);
             MessageMediaService::save('forum_post', $id, $payload);
             $sectionIds = ForumExperienceService::createSections($user, $id, $sections);
-            return ['post_id' => $id, 'section_ids' => $sectionIds];
+            return [
+                'post_id' => $id,
+                'section_ids' => $sectionIds,
+                'audit_status' => $audit,
+                'idempotent_replay' => false,
+            ];
         });
         $id = (int) $result['post_id'];
-        LogService::userOperation($request, $user, 'forum', 'post_create', $id);
+        $idempotentReplay = (bool) ($result['idempotent_replay'] ?? false);
+        $auditStatus = (string) ($result['audit_status'] ?? $audit);
+        if (!$idempotentReplay) LogService::userOperation($request, $user, 'forum', 'post_create', $id);
         $rewardResult = null;
-        if ($audit === 'approved') {
+        if (!$idempotentReplay && $auditStatus === 'approved') {
             $rewardResult = RewardRuleService::trigger(
                 $user,
                 'forum_post_create',
@@ -124,36 +160,26 @@ final class ForumController
                 (int) $user['id']
             );
         }
-        return Response::success($result + ['audit_status' => $audit, 'reward_result' => $rewardResult], '帖子发布成功', 201);
+        return Response::success(
+            $result + ['audit_status' => $auditStatus, 'reward_result' => $rewardResult],
+            $idempotentReplay ? '该草稿已经发布，已返回原帖子' : '帖子发布成功',
+            $idempotentReplay ? 200 : 201
+        );
     }
 
     public static function showPost(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $view = ForumExperienceService::recordView($request, $post, $user);
         foreach (['view_count', 'unique_view_count', 'heat_score', 'hot_label'] as $field) {
             if (array_key_exists($field, $view)) $post[$field] = $view[$field];
         }
-        $paid = Database::one('SELECT * FROM forum_paid_contents WHERE post_id = ? AND status = 1', [(int) $post['id']]);
-        if ($paid !== null) {
-            $purchased = (int) $post['user_id'] === (int) $user['id'] || Database::one('SELECT id FROM forum_post_purchases WHERE post_id = ? AND buyer_user_id = ?', [(int) $post['id'], (int) $user['id']]) !== null;
-            $post['paid_content'] = true;
-            $post['paid_price_balance'] = (int) $paid['price_integral'];
-            $post['purchased'] = $purchased;
-            if (!$purchased) $post['content'] = (string) $paid['preview_content'];
-        } else {
-            $post['paid_content'] = false;
-            $post['purchased'] = true;
-        }
+        $post = ForumVisibilityService::hydratePosts(
+            [$post], (int) $user['app_id'], (int) $user['id']
+        )[0];
         if ((bool) $post['purchased']) {
-            $post = MessageMediaService::hydrate([$post], 'forum_post', (int) $user['app_id'])[0];
             $post = MessageForwardService::hydrate([$post], 'forum_post', (int) $user['app_id'])[0];
-        } else {
-            $post['attachments'] = [];
-            $post['attachment_count'] = 0;
-            $post['has_media'] = false;
-            $post['attachments_locked'] = true;
         }
         $post['sections'] = ForumExperienceService::sections($post, $user);
         $post['has_sections'] = $post['sections'] !== [];
@@ -214,6 +240,9 @@ final class ForumController
             ))
             : (string) ($post['tags_json'] ?? '[]');
         $hasMediaChange = $request->input('attachments') !== null || $request->input('images') !== null;
+        $rightsSensitiveUpdate = array_key_exists('content', $all)
+            || array_key_exists('attachments', $all)
+            || array_key_exists('images', $all);
         $payload = null;
         if ($hasMediaChange) {
             $mediaData = self::withLegacyImages($request->all());
@@ -221,7 +250,25 @@ final class ForumController
             $payload = MessageMediaService::userPayload($user, $mediaData);
         }
         $audit = $isOwner && AppService::setting((int) $user['app_id'], 'forum_post_audit', false) ? 'pending' : 'approved';
-        Database::transaction(static function () use ($request, $post, $postId, $categoryId, $images, $tagsJson, $payload, $audit): void {
+        Database::transaction(static function () use (
+            $request, $user, $post, $postId, $categoryId, $images, $tagsJson, $payload, $audit,
+            $rightsSensitiveUpdate
+        ): void {
+            $lockedPost = Database::one(
+                'SELECT id FROM forum_posts
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL FOR UPDATE',
+                [$postId, (int) $user['admin_id'], (int) $user['app_id']]
+            );
+            if ($lockedPost === null) throw new HttpException('帖子不存在或无权修改', 404, 404);
+            if ($rightsSensitiveUpdate) {
+                ForumExperienceService::assertPostPurchaseSafeMutation($postId);
+            }
+            if ($payload !== null && Database::one(
+                'SELECT id FROM forum_paid_contents WHERE post_id = ? AND status = 1', [$postId]
+            ) !== null) {
+                AppService::requireFeature((int) $user['app_id'], 'forum_attachment_unlock');
+                self::assertPaidPostPayloadProtectable($payload);
+            }
             Database::execute(
                 'UPDATE forum_posts SET category_id = ?, title = ?, content = ?, images_json = ?, tags_json = ?,
                  audit_status = ?, audit_reason = ?, audited_by = NULL, audited_at = NULL, updated_at = NOW() WHERE id = ?',
@@ -251,10 +298,20 @@ final class ForumController
         if ($post === null || (!$isOwner && !ForumModeratorService::canManage($user, (int) $post['plate_id'], 'delete_posts'))) {
             throw new HttpException('帖子不存在或无权删除', 404, 404);
         }
-        Database::execute(
-            'UPDATE forum_posts SET status = -1, deleted_at = NOW(), updated_at = NOW() WHERE id = ? AND deleted_at IS NULL',
-            [$postId]
-        );
+        Database::transaction(static function () use ($user, $postId): void {
+            $lockedPost = Database::one(
+                'SELECT id FROM forum_posts
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL FOR UPDATE',
+                [$postId, (int) $user['admin_id'], (int) $user['app_id']]
+            );
+            if ($lockedPost === null) throw new HttpException('帖子不存在或无权删除', 404, 404);
+            ForumExperienceService::assertPostPurchaseSafeMutation($postId);
+            Database::execute(
+                'UPDATE forum_posts SET status = -1, deleted_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND deleted_at IS NULL',
+                [$postId]
+            );
+        });
         LogService::userOperation($request, $user, 'forum', $isOwner ? 'post_delete' : 'moderator_post_delete', $postId, ['plate_id' => (int) $post['plate_id']]);
         return Response::success([], '帖子已删除');
     }
@@ -263,7 +320,7 @@ final class ForumController
     {
         $user = self::user($request);
         AuthService::ensureNotBanned($user, ['all', 'forum', 'comment']);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         if ((int) $post['is_locked'] === 1) {
             throw new HttpException('帖子已锁定，不能评论', 403, 403);
         }
@@ -422,7 +479,7 @@ final class ForumController
     public static function like(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $liked = ForumExperienceService::toggleLike($user, 'post', (int) $post['id']);
         if ($liked && (int) ($post['user_id'] ?? 0) > 0 && (int) $post['user_id'] !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $post['user_id']);
@@ -437,7 +494,7 @@ final class ForumController
     public static function favorite(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $favorited = ForumExperienceService::toggleFavorite($user, 'post', (int) $post['id']);
         if ($favorited && (int) ($post['user_id'] ?? 0) > 0 && (int) $post['user_id'] !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $post['user_id']);
@@ -456,16 +513,21 @@ final class ForumController
             'SELECT p.*, f.created_at AS favorited_at, up.nickname, up.avatar
              FROM forum_favorites f INNER JOIN forum_posts p ON p.id = f.post_id
              LEFT JOIN user_profiles up ON up.user_id = p.user_id
-             WHERE f.app_id = ? AND f.user_id = ? AND p.status = 1 AND p.deleted_at IS NULL ORDER BY f.id DESC',
-            [(int) $user['app_id'], (int) $user['id']]
+             WHERE f.app_id = ? AND f.user_id = ? AND p.status = 1 AND p.deleted_at IS NULL
+               AND (p.audit_status = \'approved\' OR p.user_id = ?) ORDER BY f.id DESC',
+            [(int) $user['app_id'], (int) $user['id'], (int) $user['id']]
         );
-        return Response::success(['items' => MessageMediaService::hydrate($items, 'forum_post', (int) $user['app_id'])]);
+        foreach ($items as &$item) unset($item['client_draft_id']);
+        unset($item);
+        return Response::success(['items' => ForumVisibilityService::hydratePosts(
+            $items, (int) $user['app_id'], (int) $user['id']
+        )]);
     }
 
     public static function comments(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
@@ -511,7 +573,7 @@ final class ForumController
     public static function likes(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
@@ -605,11 +667,19 @@ final class ForumController
         $items = Database::all(
             "SELECT r.id, r.target_type, r.target_id, r.reason, r.status, r.handled_at, r.created_at,
                     t.name AS report_tag_name,
-                    CASE WHEN r.target_type = 'post' THEN p.title ELSE LEFT(c.content, 120) END AS target_summary
+                    CASE WHEN r.target_type = 'post' THEN p.title
+                         WHEN comment_post.id IS NOT NULL THEN LEFT(c.content, 120)
+                         ELSE NULL END AS target_summary
              FROM forum_reports r
              LEFT JOIN forum_report_tags t ON t.id = r.report_tag_id AND t.app_id = r.app_id
              LEFT JOIN forum_posts p ON r.target_type = 'post' AND p.id = r.target_id
+               AND p.status = 1 AND p.deleted_at IS NULL
+               AND (p.audit_status = 'approved' OR p.user_id = r.user_id)
              LEFT JOIN forum_comments c ON r.target_type = 'comment' AND c.id = r.target_id
+               AND c.status = 1 AND (c.audit_status = 'approved' OR c.user_id = r.user_id)
+             LEFT JOIN forum_posts comment_post ON comment_post.id = c.post_id
+               AND comment_post.status = 1 AND comment_post.deleted_at IS NULL
+               AND (comment_post.audit_status = 'approved' OR comment_post.user_id = r.user_id)
              WHERE r.admin_id = ? AND r.app_id = ? AND r.user_id = ?
              ORDER BY r.id DESC LIMIT {$limit} OFFSET {$offset}",
             $query
@@ -630,21 +700,32 @@ final class ForumController
             'SELECT p.*, h.view_count AS my_view_count, h.last_viewed_at, up.nickname, up.avatar
              FROM forum_view_history h INNER JOIN forum_posts p ON p.id = h.post_id
              LEFT JOIN user_profiles up ON up.user_id = p.user_id
-             WHERE h.user_id = ? AND p.app_id = ? AND p.status = 1 AND p.deleted_at IS NULL ORDER BY h.last_viewed_at DESC LIMIT 1000',
-            [(int) $user['id'], (int) $user['app_id']]
+             WHERE h.user_id = ? AND p.app_id = ? AND p.status = 1 AND p.deleted_at IS NULL
+               AND (p.audit_status = \'approved\' OR p.user_id = ?)
+             ORDER BY h.last_viewed_at DESC LIMIT 1000',
+            [(int) $user['id'], (int) $user['app_id'], (int) $user['id']]
         );
-        return Response::success(['items' => MessageMediaService::hydrate($items, 'forum_post', (int) $user['app_id'])]);
+        foreach ($items as &$item) unset($item['client_draft_id']);
+        unset($item);
+        return Response::success(['items' => ForumVisibilityService::hydratePosts(
+            $items, (int) $user['app_id'], (int) $user['id']
+        )]);
     }
 
     public static function reward(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
         if (!AppService::setting((int) $user['app_id'], 'forum_reward_enabled', true)) throw new HttpException('管理员已关闭论坛打赏', 403, 403);
-        $post = self::post((int) $user['app_id'], (int) $params['post_id']);
+        $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
         $amount = Validator::integer($request->input('balance'), 'balance', 1, 1000000000);
         $targetType = trim((string) $request->input('target_type', 'post')); $targetId = (int) $request->input('target_id', $post['id']); $toUserId = (int) $post['user_id'];
         if ($targetType === 'comment') {
-            $comment = Database::one('SELECT user_id FROM forum_comments WHERE id = ? AND post_id = ? AND status = 1', [$targetId, (int) $post['id']]);
+            $comment = Database::one(
+                "SELECT user_id FROM forum_comments
+                 WHERE id = ? AND post_id = ? AND status = 1
+                   AND (audit_status = 'approved' OR user_id = ?)",
+                [$targetId, (int) $post['id'], (int) $user['id']]
+            );
             if ($comment === null) throw new HttpException('评论不存在', 404, 404); $toUserId = (int) $comment['user_id'];
         } elseif ($targetType !== 'post') throw new HttpException('target_type 仅支持 post 或 comment', 0, 422);
         if ($toUserId === (int) $user['id']) throw new HttpException('不能打赏自己', 0, 422);
@@ -668,26 +749,103 @@ final class ForumController
     public static function setPaidContent(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        if (!AppService::setting((int) $user['app_id'], 'forum_paid_content_enabled', true)) throw new HttpException('管理员已关闭付费内容', 403, 403);
+        $appId = (int) $user['app_id'];
+        AppService::requireFeature($appId, 'forum_paid_unlock');
+        if (!AppService::setting($appId, 'forum_paid_content_enabled', true)) {
+            throw new HttpException('管理员已关闭付费内容', 403, 403);
+        }
+        $assetType = strtolower(trim((string) $request->input('asset_type', 'balance')));
+        if ($assetType !== 'balance') throw new HttpException('整帖付费仅支持 balance 余额资产', 0, 422);
         $postId = (int) $params['post_id'];
-        if (Database::one('SELECT id FROM forum_posts WHERE id = ? AND app_id = ? AND user_id = ? AND status = 1 AND deleted_at IS NULL', [$postId, (int) $user['app_id'], (int) $user['id']]) === null) throw new HttpException('帖子不存在或无权设置', 404, 404);
-        $price = Validator::integer($request->input('price_balance'), 'price_balance', 1, 1000000000); $preview = Validator::string($request->input('preview_content', ''), 'preview_content', 1, 5000);
-        Database::execute('INSERT INTO forum_paid_contents (post_id, price_integral, preview_content, status, created_at, updated_at) VALUES (?, ?, ?, 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE price_integral = VALUES(price_integral), preview_content = VALUES(preview_content), status = 1, updated_at = NOW()', [$postId, $price, $preview]);
-        return Response::success(['post_id' => $postId, 'price_balance' => $price], '付费内容规则已保存');
+        $maxPrice = max(1, min(1000000000, (int) AppService::setting(
+            $appId, 'forum_unlock_max_price_balance', 1000000000
+        )));
+        $price = Validator::integer($request->input('price_balance'), 'price_balance', 1, $maxPrice);
+        $preview = Validator::string($request->input('preview_content', ''), 'preview_content', 1, 5000);
+        Database::transaction(static function () use ($user, $appId, $postId, $price, $preview, $assetType): void {
+            $post = Database::one(
+                'SELECT id FROM forum_posts
+                 WHERE id = ? AND app_id = ? AND user_id = ? AND status = 1 AND deleted_at IS NULL
+                 FOR UPDATE',
+                [$postId, $appId, (int) $user['id']]
+            );
+            if ($post === null) throw new HttpException('帖子不存在或无权设置', 404, 404);
+            self::assertWholePostAttachmentsProtectable($appId, $postId);
+            $existing = Database::one(
+                'SELECT asset_type FROM forum_paid_contents WHERE post_id = ? FOR UPDATE',
+                [$postId]
+            );
+            if ($existing !== null && (string) $existing['asset_type'] !== 'balance') {
+                throw new HttpException('整帖付费资产类型不一致，请先执行数据迁移', 0, 409);
+            }
+            Database::execute(
+                'INSERT INTO forum_paid_contents
+                 (post_id, price_integral, asset_type, preview_content, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 1, NOW(), NOW())
+                 ON DUPLICATE KEY UPDATE price_integral = VALUES(price_integral),
+                   preview_content = VALUES(preview_content), status = 1, updated_at = NOW()',
+                [$postId, $price, $assetType, $preview]
+            );
+        });
+        return Response::success([
+            'post_id' => $postId, 'price_balance' => $price, 'asset_type' => $assetType,
+        ], '付费内容规则已保存');
     }
 
     public static function buyPaidContent(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
-        $user = self::user($request); $postId = (int) $params['post_id'];
-        $result = Database::transaction(static function () use ($user, $postId): array {
-            $paid = Database::one('SELECT pc.*, p.user_id AS seller_user_id FROM forum_paid_contents pc INNER JOIN forum_posts p ON p.id = pc.post_id WHERE pc.post_id = ? AND p.app_id = ? AND pc.status = 1 AND p.status = 1 FOR UPDATE', [$postId, (int) $user['app_id']]);
+        $user = self::user($request);
+        $postId = (int) $params['post_id'];
+        $appId = (int) $user['app_id'];
+        AppService::requireFeature($appId, 'forum_paid_unlock');
+        if (!AppService::setting($appId, 'forum_paid_content_enabled', true)) {
+            throw new HttpException('管理员已关闭付费内容', 403, 403);
+        }
+        $maxPrice = max(1, min(1000000000, (int) AppService::setting(
+            $appId, 'forum_unlock_max_price_balance', 1000000000
+        )));
+        $result = Database::transaction(static function () use ($user, $postId, $appId, $maxPrice): array {
+            $paid = Database::one(
+                "SELECT pc.*, p.user_id AS seller_user_id
+                 FROM forum_paid_contents pc INNER JOIN forum_posts p ON p.id = pc.post_id
+                 WHERE pc.post_id = ? AND p.app_id = ? AND pc.status = 1 AND p.status = 1
+                   AND p.audit_status = 'approved' AND p.deleted_at IS NULL FOR UPDATE",
+                [$postId, $appId]
+            );
             if ($paid === null) throw new HttpException('付费内容不存在', 404, 404);
-            if ((int) $paid['seller_user_id'] === (int) $user['id']) return ['already_owned' => true, 'price_balance' => 0];
-            if (Database::one('SELECT id FROM forum_post_purchases WHERE post_id = ? AND buyer_user_id = ?', [$postId, (int) $user['id']])) return ['already_owned' => true, 'price_balance' => (int) $paid['price_integral']];
+            if ((string) ($paid['asset_type'] ?? '') !== 'balance') {
+                throw new HttpException('整帖付费资产类型不一致，请先执行数据迁移', 0, 409);
+            }
+            $price = (int) $paid['price_integral'];
+            if ($price < 1 || $price > $maxPrice) throw new HttpException('付费内容价格超出管理员允许范围', 0, 422);
+            if ((int) $paid['seller_user_id'] === (int) $user['id']) {
+                return ['already_owned' => true, 'price_balance' => 0, 'asset_type' => 'balance'];
+            }
+            $purchase = Database::one(
+                'SELECT id, asset_type FROM forum_post_purchases WHERE post_id = ? AND buyer_user_id = ?',
+                [$postId, (int) $user['id']]
+            );
+            if ($purchase !== null) {
+                if ((string) ($purchase['asset_type'] ?? '') !== 'balance') {
+                    throw new HttpException('购买记录资产类型不一致，请先执行数据迁移', 0, 409);
+                }
+                return ['already_owned' => true, 'price_balance' => $price, 'asset_type' => 'balance'];
+            }
             $seller = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $paid['seller_user_id']); if ($seller === null) throw new HttpException('内容作者不存在', 404, 404);
-            $price = (int) $paid['price_integral']; $asset = WalletService::requireActivityEnabled((int) $user['app_id']); WalletService::adjust($user, $asset, -$price, 'forum_paid_buy', 'post', $postId, '购买论坛付费内容'); WalletService::adjust($seller, $asset, $price, 'forum_paid_sale', 'post', $postId, '论坛付费内容收入');
-            Database::execute('INSERT INTO forum_post_purchases (post_id, buyer_user_id, seller_user_id, price_integral, created_at) VALUES (?, ?, ?, ?, NOW())', [$postId, (int) $user['id'], (int) $seller['id'], $price]); NotificationService::send($seller, 'forum_paid_sale', '付费内容售出', '你的付费内容已售出', ['post_id' => $postId, 'balance' => $price]);
-            return ['already_owned' => false, 'price_balance' => $price];
+            WalletService::requireActivityEnabled($appId);
+            $assetType = 'balance';
+            WalletService::adjust($user, $assetType, -$price, 'forum_paid_buy', 'post', $postId, '购买论坛付费内容');
+            WalletService::adjust($seller, $assetType, $price, 'forum_paid_sale', 'post', $postId, '论坛付费内容收入');
+            Database::execute(
+                'INSERT INTO forum_post_purchases
+                 (post_id, buyer_user_id, seller_user_id, price_integral, asset_type, created_at)
+                 VALUES (?, ?, ?, ?, ?, NOW())',
+                [$postId, (int) $user['id'], (int) $seller['id'], $price, $assetType]
+            );
+            NotificationService::send($seller, 'forum_paid_sale', '付费内容售出', '你的付费内容已售出', [
+                'post_id' => $postId, 'balance' => $price, 'asset_type' => $assetType,
+            ]);
+            return ['already_owned' => false, 'price_balance' => $price, 'asset_type' => $assetType];
         });
         return Response::success($result, $result['already_owned'] ? '已拥有该内容' : '购买成功');
     }
@@ -730,14 +888,20 @@ final class ForumController
     public static function contentLike(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $liked = ForumExperienceService::toggleLike($user, (string) $params['target_type'], (int) $params['target_id']);
+        $targetType = (string) $params['target_type'];
+        $targetId = (int) $params['target_id'];
+        self::assertContentVisible($user, $targetType, $targetId);
+        $liked = ForumExperienceService::toggleLike($user, $targetType, $targetId);
         return Response::success(['liked' => $liked], $liked ? '点赞成功' : '已取消点赞');
     }
 
     public static function contentFavorite(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
-        $favorited = ForumExperienceService::toggleFavorite($user, (string) $params['target_type'], (int) $params['target_id']);
+        $targetType = (string) $params['target_type'];
+        $targetId = (int) $params['target_id'];
+        self::assertContentVisible($user, $targetType, $targetId);
+        $favorited = ForumExperienceService::toggleFavorite($user, $targetType, $targetId);
         return Response::success(['favorited' => $favorited], $favorited ? '收藏成功' : '已取消收藏');
     }
 
@@ -755,6 +919,9 @@ final class ForumController
     public static function personalPosition(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
+        if ((string) $params['target_type'] === 'post') {
+            self::post((int) $user['app_id'], (int) $params['target_id'], (int) $user['id']);
+        }
         $result = ForumExperienceService::setPersonalPosition(
             $user, (string) $params['target_type'], (int) $params['target_id'],
             trim((string) $request->input('position', 'normal')), (int) $request->input('sort_order', 0)
@@ -765,6 +932,7 @@ final class ForumController
     public static function forwardContent(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
+        self::assertContentVisible($user, (string) $params['target_type'], (int) $params['target_id']);
         $id = ForumExperienceService::recordForward(
             $user, (string) $params['target_type'], (int) $params['target_id'],
             trim((string) $request->input('destination_type', '')), (int) $request->input('destination_id', 0)
@@ -790,8 +958,20 @@ final class ForumController
         } else {
             $targetId = (int) $data['target_id'];
             $targetExists = $targetType === 'post'
-                ? Database::one('SELECT id FROM forum_posts WHERE id = ? AND app_id = ? AND status = 1 AND deleted_at IS NULL', [$targetId, (int) $user['app_id']])
-                : Database::one('SELECT id FROM forum_comments WHERE id = ? AND app_id = ? AND status = 1', [$targetId, (int) $user['app_id']]);
+                ? Database::one(
+                    "SELECT id FROM forum_posts WHERE id = ? AND app_id = ? AND status = 1
+                       AND deleted_at IS NULL AND (audit_status = 'approved' OR user_id = ?)",
+                    [$targetId, (int) $user['app_id'], (int) $user['id']]
+                )
+                : Database::one(
+                    "SELECT comment.id FROM forum_comments comment
+                     INNER JOIN forum_posts post ON post.id = comment.post_id
+                     WHERE comment.id = ? AND comment.app_id = ? AND comment.status = 1
+                       AND post.status = 1 AND post.deleted_at IS NULL
+                       AND (comment.audit_status = 'approved' OR comment.user_id = ?)
+                       AND (post.audit_status = 'approved' OR post.user_id = ?)",
+                    [$targetId, (int) $user['app_id'], (int) $user['id'], (int) $user['id']]
+                );
             if ($targetExists === null) throw new HttpException('举报目标不存在', 404, 404);
             $tagId = max(0, (int) ($data['report_tag_id'] ?? 0));
             $tag = $tagId > 0 ? Database::one(
@@ -837,7 +1017,8 @@ final class ForumController
         $where = ['p.app_id = ?', 'p.status = 1', 'p.deleted_at IS NULL', $condition];
         $query = array_merge([(int) $user['app_id']], $conditionParams);
         if ($approvedOnly) {
-            $where[] = "p.audit_status = 'approved'";
+            $where[] = "(p.audit_status = 'approved' OR p.user_id = ?)";
+            $query[] = (int) $user['id'];
         }
         if ((int) $request->input('plate_id', 0) > 0) {
             $where[] = 'p.plate_id = ?';
@@ -845,8 +1026,9 @@ final class ForumController
         }
         $keyword = trim((string) $request->input('keyword', ''));
         if ($keyword !== '') {
-            $where[] = '(p.title LIKE ? OR p.content LIKE ? OR p.tags_json LIKE ?)';
-            array_push($query, '%' . $keyword . '%', '%' . $keyword . '%', '%' . $keyword . '%');
+            $search = ForumVisibilityService::keywordClause('p', $keyword, (int) $user['id'], false);
+            $where[] = $search['sql'];
+            array_push($query, ...$search['params']);
         }
         foreach (['date_from' => '>=', 'date_to' => '<='] as $field => $operator) {
             $date = trim((string) $request->input($field, ''));
@@ -878,9 +1060,9 @@ final class ForumController
             $query
         );
         $items = ContentTagService::hydrate($items);
-        if ($hydrateMedia) {
-            $items = MessageMediaService::hydrate($items, 'forum_post', (int) $user['app_id']);
-        }
+        $items = ForumVisibilityService::hydratePosts(
+            $items, (int) $user['app_id'], (int) $user['id'], $hydrateMedia
+        );
         return Pagination::data($items, $total, $page, $limit);
     }
 
@@ -900,12 +1082,17 @@ final class ForumController
             $query[] = (int) $request->input('category_id');
         }
         if (trim((string) $request->input('tag', '')) !== '') {
-            $where[] = 'p.tags_json LIKE ?';
+            $entitlement = ForumVisibilityService::legacyUnlockedClause('p', $userId);
+            $where[] = '(p.tags_json LIKE ? AND (' . $entitlement['sql'] . '))';
             $query[] = '%"' . trim((string) $request->input('tag')) . '"%';
+            array_push($query, ...$entitlement['params']);
         }
         if (trim((string) $request->input('keyword', '')) !== '') {
-            $where[] = '(p.title LIKE ? OR p.content LIKE ? OR p.tags_json LIKE ? OR CAST(p.id AS CHAR) LIKE ?)';
-            foreach (range(1, 4) as $_) $query[] = '%' . trim((string) $request->input('keyword')) . '%';
+            $search = ForumVisibilityService::keywordClause(
+                'p', trim((string) $request->input('keyword')), $userId, true
+            );
+            $where[] = $search['sql'];
+            array_push($query, ...$search['params']);
         }
         $dateFrom = trim((string) $request->input('date_from', ''));
         if ($dateFrom !== '') {
@@ -954,19 +1141,25 @@ final class ForumController
             $queryWithJoin
         );
         $items = ContentTagService::hydrate($items);
-        $items = MessageMediaService::hydrate($items, 'forum_post', $appId);
+        $items = ForumVisibilityService::hydratePosts($items, $appId, $userId);
         return Pagination::data($items, $total, $page, $limit);
     }
 
-    public static function post(int $appId, int $postId): array
+    public static function post(int $appId, int $postId, ?int $viewerUserId = null): array
     {
+        $visibility = $viewerUserId !== null && $viewerUserId > 0
+            ? "(p.audit_status = 'approved' OR p.user_id = ?)"
+            : "p.audit_status = 'approved'";
+        $query = [$postId, $appId];
+        if ($viewerUserId !== null && $viewerUserId > 0) $query[] = $viewerUserId;
         $post = Database::one(
             'SELECT p.*, fp.name AS plate_name, fc.name AS category_name, up.nickname, up.avatar
              FROM forum_posts p INNER JOIN forum_plates fp ON fp.id = p.plate_id
              LEFT JOIN forum_categories fc ON fc.id = p.category_id
              LEFT JOIN user_profiles up ON up.user_id = p.user_id
-             WHERE p.id = ? AND p.app_id = ? AND p.audit_status = ? AND p.status = 1 AND p.deleted_at IS NULL',
-            [$postId, $appId, 'approved']
+             WHERE p.id = ? AND p.app_id = ? AND ' . $visibility . '
+               AND p.status = 1 AND p.deleted_at IS NULL',
+            $query
         );
         if ($post === null) {
             throw new HttpException('帖子不存在', 404, 404);
@@ -975,7 +1168,98 @@ final class ForumController
         unset($post['images_json']);
         $post['tags'] = ContentTagService::decode($post['tags_json'] ?? null);
         unset($post['tags_json']);
+        unset($post['client_draft_id']);
         return $post;
+    }
+
+    private static function clientDraftId(array $data): ?string
+    {
+        if (!array_key_exists('client_draft_id', $data)) return null;
+        $value = strtolower(trim((string) $data['client_draft_id']));
+        if ($value === '') return null;
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $value) !== 1) {
+            throw new HttpException('client_draft_id 必须是标准 UUID', 0, 422);
+        }
+        return $value;
+    }
+
+    private static function draftPostResult(int $appId, int $userId, string $clientDraftId): ?array
+    {
+        $post = Database::one(
+            'SELECT id, audit_status FROM forum_posts
+             WHERE app_id = ? AND user_id = ? AND client_draft_id = ? LIMIT 1',
+            [$appId, $userId, $clientDraftId]
+        );
+        if ($post === null) return null;
+        $sectionIds = array_map(
+            static fn(array $row): int => (int) $row['id'],
+            Database::all(
+                'SELECT id FROM forum_post_sections WHERE post_id = ? AND status = 1 ORDER BY sort_order, id',
+                [(int) $post['id']]
+            )
+        );
+        return [
+            'post_id' => (int) $post['id'],
+            'section_ids' => $sectionIds,
+            'audit_status' => (string) $post['audit_status'],
+            'idempotent_replay' => true,
+        ];
+    }
+
+    private static function assertWholePostAttachmentsProtectable(int $appId, int $postId): void
+    {
+        $total = (int) (Database::one(
+            "SELECT COUNT(*) AS total FROM media_attachments
+             WHERE app_id = ? AND target_type = 'forum_post' AND target_id = ?",
+            [$appId, $postId]
+        )['total'] ?? 0);
+        if ($total === 0) return;
+        AppService::requireFeature($appId, 'forum_attachment_unlock');
+        $unsafe = Database::one(
+            "SELECT attachment.id FROM media_attachments attachment
+             LEFT JOIN uploads upload
+               ON upload.id = attachment.upload_id
+              AND upload.admin_id = attachment.admin_id
+              AND upload.app_id = attachment.app_id
+             WHERE attachment.app_id = ? AND attachment.target_type = 'forum_post'
+               AND attachment.target_id = ?
+               AND (attachment.sticker_id IS NOT NULL OR attachment.upload_id IS NULL
+                    OR upload.id IS NULL OR upload.status <> 1 OR upload.file_path NOT LIKE 'private/%')
+             LIMIT 1",
+            [$appId, $postId]
+        );
+        if ($unsafe !== null) {
+            throw new HttpException('整帖付费附件必须全部迁入私有存储；普通帖子附件请改用受保护章节', 0, 422);
+        }
+    }
+
+    private static function assertPaidPostPayloadProtectable(array $payload): void
+    {
+        foreach ((array) ($payload['attachments'] ?? []) as $attachment) {
+            if (is_array($attachment) && (int) ($attachment['sticker_id'] ?? 0) > 0) {
+                throw new HttpException('整帖付费不能直接使用公共贴纸，请改用私有上传的受保护章节', 0, 422);
+            }
+        }
+        MessageMediaService::assertPrivateForumUploads($payload);
+    }
+
+    private static function assertContentVisible(array $user, string $targetType, int $targetId): void
+    {
+        if ($targetType === 'post') {
+            self::post((int) $user['app_id'], $targetId, (int) $user['id']);
+            return;
+        }
+        if ($targetType !== 'comment') throw new HttpException('target_type 仅支持 post 或 comment', 0, 422);
+        $comment = Database::one(
+            "SELECT comment.id FROM forum_comments comment
+             INNER JOIN forum_posts post ON post.id = comment.post_id
+             WHERE comment.id = ? AND comment.app_id = ? AND comment.status = 1
+               AND post.status = 1 AND post.deleted_at IS NULL
+               AND (comment.audit_status = 'approved' OR comment.user_id = ?)
+               AND (post.audit_status = 'approved' OR post.user_id = ?)",
+            [$targetId, (int) $user['app_id'], (int) $user['id'], (int) $user['id']]
+        );
+        if ($comment === null) throw new HttpException('评论或回复不存在', 404, 404);
     }
 
     /**

@@ -167,6 +167,8 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.recycler.setItemViewCacheSize(8);
         binding.recycler.setItemAnimator(null);
         binding.recycler.setAdapter(adapter);
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            binding.toolbar, binding.recycler);
         binding.swipeRefresh.setOnRefreshListener(this::refreshAll);
         binding.searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }

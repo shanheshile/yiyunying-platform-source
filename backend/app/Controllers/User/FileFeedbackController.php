@@ -65,7 +65,11 @@ final class FileFeedbackController
 
     public static function upload(Request $request): \Yiyunying\Core\ApiResponse
     {
-        $user = self::user($request, 'remote_files');
+        $user = AuthService::user($request);
+        $scene = self::normalizeUploadScene($request->input('scene', 'general'));
+        foreach (self::uploadFeaturesForScene($scene) as $feature) {
+            AppService::requireFeature((int) $user['app_id'], $feature);
+        }
         AuthService::ensureNotBanned($user, ['all', 'upload']);
         if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
             throw new HttpException('缺少 multipart/form-data 文件字段 file', 0, 422);
@@ -94,11 +98,11 @@ final class FileFeedbackController
         }
         $result = UploadStorageService::store(
             $file, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
-            (string) $request->input('scene', 'general'), self::ALLOWED_EXTENSIONS,
+            $scene, self::ALLOWED_EXTENSIONS,
             ['original_upload' => $request->input('original_upload', false)]
         );
         LogService::userOperation($request, $user, 'upload', 'create', (int) $result['upload_id'], [
-            'scene' => $request->input('scene', 'general'), 'reused' => (bool) $result['reused'],
+            'scene' => $scene, 'reused' => (bool) $result['reused'],
         ]);
         return Response::success($result, (bool) $result['reused'] ? '已复用相同文件，无需重复上传' : '文件上传成功', 201);
     }
@@ -284,6 +288,32 @@ final class FileFeedbackController
         }
         unset($item);
         return Response::success(['items' => $items]);
+    }
+
+    private static function normalizeUploadScene($value): string
+    {
+        $raw = trim((string) ($value ?? ''));
+        if ($raw === '') return 'general';
+        $normalized = strtolower($raw);
+        return match ($normalized) {
+            'chat_camera', 'chat_album', 'forum_post', 'forum_comment', 'forum_section' => $normalized,
+            '论坛帖子' => 'forum_post',
+            '论坛评论' => 'forum_comment',
+            '论坛章节' => 'forum_section',
+            default => mb_substr($raw, 0, 40),
+        };
+    }
+
+    /** @return list<string> */
+    private static function uploadFeaturesForScene(string $scene): array
+    {
+        return match ($scene) {
+            'chat_camera' => ['chat_camera'],
+            'chat_album' => ['chat_album'],
+            'forum_post', 'forum_comment' => ['forum'],
+            'forum_section' => ['forum', 'forum_chapters', 'forum_attachment_unlock'],
+            default => ['remote_files'],
+        };
     }
 
     private static function user(Request $request, string $feature): array

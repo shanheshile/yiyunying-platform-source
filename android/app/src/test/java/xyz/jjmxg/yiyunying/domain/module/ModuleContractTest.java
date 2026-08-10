@@ -21,7 +21,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class ModuleContractTest {
-    private static final int EXPECTED_ROUTE_COUNT = 756;
+    private static final int EXPECTED_ROUTE_COUNT = 762;
 
     @Test
     public void modulesAreUniqueAndRoleScoped() {
@@ -105,7 +105,8 @@ public class ModuleContractTest {
     }
 
     private static void assertAction(Set<String> routes, ActionSpec action, Role role, ModuleSpec module) {
-        String key = action.method() + " " + action.pathTemplate();
+        String wireMethod = action.method().startsWith("UPLOAD_") ? "POST" : action.method();
+        String key = wireMethod + " " + action.pathTemplate();
         assertTrue("missing action route for " + role + "/" + module.id() + ": " + key, routes.contains(key));
     }
 }

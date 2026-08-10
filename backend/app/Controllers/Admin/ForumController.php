@@ -16,6 +16,7 @@ use Yiyunying\Services\ForumExperienceService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\NotificationService;
+use Yiyunying\Services\ProfileAvatarService;
 use Yiyunying\Services\RewardRuleService;
 
 final class ForumController
@@ -32,13 +33,17 @@ final class ForumController
     public static function createPlate(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         [$admin, $appId] = self::context($request, $params);
+        $icon = mb_substr(trim((string) $request->input('icon', '')), 0, 500);
+        if ($icon !== '') {
+            AppService::requireFeature($appId, 'forum_plate_avatar_upload');
+        }
         $id = Database::insert(
             'INSERT INTO forum_plates
              (admin_id, app_id, name, icon, description, sort_order, status, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
             [
                 (int) $admin['id'], $appId, Validator::string($request->input('name', ''), 'name', 1, 100),
-                mb_substr((string) $request->input('icon', ''), 0, 500),
+                $icon,
                 mb_substr((string) $request->input('description', ''), 0, 1000), (int) $request->input('sort_order', 0),
             ]
         );
@@ -53,6 +58,9 @@ final class ForumController
         if ($row === null) {
             throw new HttpException('论坛板块不存在', 404, 404);
         }
+        if (array_key_exists('icon', $request->all())) {
+            AppService::requireFeature($appId, 'forum_plate_avatar_upload');
+        }
         Database::execute(
             'UPDATE forum_plates SET name = ?, icon = ?, description = ?, sort_order = ?, status = ?, updated_at = NOW() WHERE id = ?',
             [
@@ -63,6 +71,36 @@ final class ForumController
             ]
         );
         return Response::success([], '论坛板块修改成功');
+    }
+
+    public static function plateAvatar(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        [$admin, $appId] = self::context($request, $params);
+        AppService::requireFeature($appId, 'forum_plate_avatar_upload');
+        $plateId = (int) ($params['plate_id'] ?? 0);
+        $plate = Database::one(
+            'SELECT id FROM forum_plates WHERE id = ? AND admin_id = ? AND app_id = ?',
+            [$plateId, (int) $admin['id'], $appId]
+        );
+        if ($plate === null) throw new HttpException('论坛板块不存在', 404, 404);
+        $result = ProfileAvatarService::upload('forum_plate', $plateId);
+        Database::execute(
+            'UPDATE forum_plates SET icon = ?, updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
+            [(string) $result['avatar'], $plateId, (int) $admin['id'], $appId]
+        );
+        LogService::adminOperation(
+            $request,
+            (int) $admin['id'],
+            $appId,
+            'forum_plate',
+            'avatar_update',
+            $plateId
+        );
+        return Response::success(
+            $result + ['icon' => (string) $result['avatar'], 'plate_id' => $plateId],
+            '板块头像上传成功',
+            201
+        );
     }
 
     public static function posts(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -139,7 +177,7 @@ final class ForumController
         $post['comments'] = ContentTagService::hydrate($post['comments']);
         $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', $appId);
         $post['paid_rule'] = Database::one(
-            'SELECT price_integral AS price_balance, preview_content, status, created_at, updated_at
+            'SELECT price_integral AS price_balance, asset_type, preview_content, status, created_at, updated_at
              FROM forum_paid_contents WHERE post_id = ?',
             [(int) $post['id']]
         );
@@ -156,17 +194,19 @@ final class ForumController
         );
         if ($post === null) throw new HttpException('帖子不存在', 404, 404);
 
+        $all = $request->all();
         $updates = [];
         $query = [];
-        if (array_key_exists('title', $request->all())) {
+        $rightsSensitiveUpdate = array_key_exists('content', $all);
+        if (array_key_exists('title', $all)) {
             $updates[] = 'title = ?';
             $query[] = Validator::string($request->input('title'), 'title', 1, 200);
         }
-        if (array_key_exists('content', $request->all())) {
+        if (array_key_exists('content', $all)) {
             $updates[] = 'content = ?';
             $query[] = Validator::string($request->input('content'), 'content', 1, 100000);
         }
-        if (array_key_exists('plate_id', $request->all())) {
+        if (array_key_exists('plate_id', $all)) {
             $plateId = Validator::integer($request->input('plate_id'), 'plate_id', 1, PHP_INT_MAX);
             if (Database::one('SELECT id FROM forum_plates WHERE id = ? AND admin_id = ? AND app_id = ?', [$plateId, (int) $admin['id'], $appId]) === null) {
                 throw new HttpException('论坛板块不存在', 404, 404);
@@ -174,7 +214,7 @@ final class ForumController
             $updates[] = 'plate_id = ?';
             $query[] = $plateId;
         }
-        if (array_key_exists('category_id', $request->all())) {
+        if (array_key_exists('category_id', $all)) {
             $categoryId = (int) $request->input('category_id', 0);
             if ($categoryId > 0 && Database::one(
                 'SELECT id FROM forum_categories WHERE id = ? AND admin_id = ? AND app_id = ?',
@@ -183,22 +223,37 @@ final class ForumController
             $updates[] = 'category_id = ?';
             $query[] = $categoryId > 0 ? $categoryId : null;
         }
-        if (array_key_exists('tags', $request->all())) {
+        if (array_key_exists('tags', $all)) {
             $updates[] = 'tags_json = ?';
             $query[] = ContentTagService::encode($request->input('tags', []));
         }
-        if (array_key_exists('status', $request->all())) {
+        if (array_key_exists('status', $all)) {
+            $status = Validator::integer($request->input('status'), 'status', 0, 1);
             $updates[] = 'status = ?';
-            $query[] = Validator::integer($request->input('status'), 'status', 0, 1);
+            $query[] = $status;
+            $rightsSensitiveUpdate = $rightsSensitiveUpdate || $status !== 1;
         }
         if ($updates === []) throw new HttpException('没有可修改的帖子字段', 0, 422);
         $query[] = $postId;
-        Database::execute(
-            'UPDATE forum_posts SET ' . implode(', ', $updates) . ', updated_at = NOW() WHERE id = ?',
-            $query
-        );
+        $after = Database::transaction(static function () use (
+            $admin, $appId, $postId, $updates, $query, $rightsSensitiveUpdate
+        ): array {
+            $lockedPost = Database::one(
+                'SELECT id FROM forum_posts
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL FOR UPDATE',
+                [$postId, (int) $admin['id'], $appId]
+            );
+            if ($lockedPost === null) throw new HttpException('帖子不存在', 404, 404);
+            if ($rightsSensitiveUpdate) {
+                ForumExperienceService::assertPostPurchaseSafeMutation($postId);
+            }
+            Database::execute(
+                'UPDATE forum_posts SET ' . implode(', ', $updates) . ', updated_at = NOW() WHERE id = ?',
+                $query
+            );
+            return Database::one('SELECT * FROM forum_posts WHERE id = ?', [$postId]) ?? [];
+        });
         ForumExperienceService::refreshHeat($postId, $appId);
-        $after = Database::one('SELECT * FROM forum_posts WHERE id = ?', [$postId]);
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'forum_post', 'update', $postId, $post, $after);
         return Response::success(['post_id' => $postId], '帖子已修改');
     }
@@ -379,11 +434,20 @@ final class ForumController
     {
         [$admin, $appId] = self::context($request, $params);
         $postId = (int) $params['post_id'];
-        Database::execute(
-            'UPDATE forum_posts SET status = -1, deleted_at = NOW(), updated_at = NOW()
-             WHERE id = ? AND admin_id = ? AND app_id = ?',
-            [$postId, (int) $admin['id'], $appId]
-        );
+        Database::transaction(static function () use ($admin, $appId, $postId): void {
+            $post = Database::one(
+                'SELECT id FROM forum_posts
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL FOR UPDATE',
+                [$postId, (int) $admin['id'], $appId]
+            );
+            if ($post === null) throw new HttpException('帖子不存在', 404, 404);
+            ForumExperienceService::assertPostPurchaseSafeMutation($postId);
+            Database::execute(
+                'UPDATE forum_posts SET status = -1, deleted_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND admin_id = ? AND app_id = ?',
+                [$postId, (int) $admin['id'], $appId]
+            );
+        });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'forum', 'delete_post', $postId, null, ['reason' => $request->input('reason', '')]);
         return Response::success([], '帖子已删除');
     }

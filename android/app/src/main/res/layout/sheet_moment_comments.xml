@@ -3,19 +3,22 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@color/glass_surface_strong"
+    android:background="@color/surface"
+    android:clipChildren="true"
+    android:clipToPadding="true"
     android:orientation="vertical"
     android:paddingStart="18dp"
-    android:paddingTop="14dp"
+    android:paddingTop="8dp"
     android:paddingEnd="18dp"
     android:paddingBottom="18dp">
 
     <FrameLayout
         android:id="@+id/commentsStickyHeader"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:background="@color/glass_surface_strong"
-        android:elevation="4dp">
+        android:layout_height="56dp"
+        android:background="@color/surface"
+        android:elevation="8dp"
+        android:translationZ="2dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -66,20 +69,31 @@
             android:indeterminate="true" />
     </FrameLayout>
 
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/commentsScroll"
+    <FrameLayout
+        android:id="@+id/commentsViewport"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:fillViewport="false"
-        android:overScrollMode="ifContentScrolls">
+        android:background="@color/surface"
+        android:clipChildren="true"
+        android:clipToPadding="true">
 
-        <LinearLayout
-            android:id="@+id/commentsContainer"
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/commentsScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </androidx.core.widget.NestedScrollView>
+            android:clipChildren="true"
+            android:clipToPadding="true"
+            android:fillViewport="false"
+            android:overScrollMode="ifContentScrolls">
+
+            <LinearLayout
+                android:id="@+id/commentsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </androidx.core.widget.NestedScrollView>
+    </FrameLayout>
 
     <TextView
         android:id="@+id/replyHint"

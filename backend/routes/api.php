@@ -46,6 +46,7 @@ use Yiyunying\Controllers\PublicApi\BootstrapController as PublicBootstrap;
 use Yiyunying\Controllers\PublicApi\CaptchaController as PublicCaptcha;
 use Yiyunying\Controllers\PublicApi\FileController as PublicFile;
 use Yiyunying\Controllers\PublicApi\ForumController as PublicForum;
+use Yiyunying\Controllers\PublicApi\ForumMediaController as PublicForumMedia;
 use Yiyunying\Controllers\PublicApi\HealthController;
 use Yiyunying\Controllers\PublicApi\LifecycleController as PublicLifecycle;
 use Yiyunying\Controllers\PublicApi\PaymentController as PublicPayment;
@@ -101,6 +102,7 @@ $router->get('/api/public/resources/{resource_id}', [PublicResource::class, 'sho
 $router->get('/api/public/forum-plates', [PublicForum::class, 'plates']);
 $router->get('/api/public/forum-posts', [PublicForum::class, 'posts']);
 $router->get('/api/public/forum-posts/{post_id}', [PublicForum::class, 'show']);
+$router->get('/api/public/forum-media/{attachment_id}', [PublicForumMedia::class, 'show']);
 $router->get('/api/public/remote-files/{file_id}', [PublicFile::class, 'show']);
 $router->post('/api/public/captcha', [PublicCaptcha::class, 'create']);
 $router->post('/api/public/verification-code/email', [PublicVerification::class, 'email']);
@@ -449,6 +451,7 @@ $router->post('/api/admin/apps/{app_id}/bounties/{bounty_id}/cancel', [AdminBoun
 $router->delete('/api/admin/apps/{app_id}/bounties/{bounty_id}', [AdminBounty::class, 'delete']);
 $router->post('/api/admin/apps/{app_id}/forum-plates', [AdminForum::class, 'createPlate']);
 $router->put('/api/admin/apps/{app_id}/forum-plates/{plate_id}', [AdminForum::class, 'updatePlate']);
+$router->post('/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar', [AdminForum::class, 'plateAvatar']);
 $router->get('/api/admin/apps/{app_id}/forum-posts', [AdminForum::class, 'posts']);
 $router->get('/api/admin/apps/{app_id}/forum-posts/{post_id}', [AdminForum::class, 'showPost']);
 $router->put('/api/admin/apps/{app_id}/forum-posts/{post_id}', [AdminForum::class, 'updatePost']);
@@ -766,6 +769,7 @@ $router->get('/api/user/chat-rooms/{room_id}/qr-code', [UserGroup::class, 'qrCod
 $router->get('/api/user/chat-rooms/{room_id}', [UserGroup::class, 'show']);
 $router->put('/api/user/chat-rooms/{room_id}/user-settings', [UserGroup::class, 'saveUserSettings']);
 $router->put('/api/user/chat-rooms/{room_id}', [UserGroup::class, 'update']);
+$router->post('/api/user/chat-rooms/{room_id}/avatar', [UserGroup::class, 'avatar']);
 $router->delete('/api/user/chat-rooms/{room_id}', [UserGroup::class, 'dissolve']);
 $router->post('/api/user/chat-rooms/{room_id}/restore', [UserGroup::class, 'restore']);
 $router->post('/api/user/chat-rooms/{room_id}/join', [UserGroup::class, 'join']);

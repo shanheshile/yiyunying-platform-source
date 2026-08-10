@@ -1,11 +1,17 @@
 {
     "schemaVersion":  3,
-    "versionName":  "2.7.12",
-    "versionCode":  57,
-    "releaseDate":  "2026-08-02",
-    "generatedAt":  "2026-08-02T19:01:20.3934444+08:00",
+    "versionName":  "2.7.13",
+    "versionCode":  58,
+    "releaseDate":  "2026-08-10",
+    "generatedAt":  "2026-08-10T22:09:20.1943608+08:00",
     "downloadRootBase":  "/downloads",
-    "releaseNotes":  "优化动态与帖子评论语音录制状态卡、计时和取消操作；增加评论粘性顶部栏与实时数量；修复评论弹层输入法顶起、空白和动态操作栏卡字；补齐语音评论、粘性顶部栏与操作栏布局回归测试",
+    "releaseNotes":  [
+                         "优化短消息气泡、聊天滚动性能与更多面板交互",
+                         "新增软件内拍照录像、完整相册和本人名片快捷操作",
+                         "优化嵌套回复、音频拖动、资料页和顶部双击回顶",
+                         "新增帖子章节与附件独立付费或定时解锁",
+                         "强化私有媒体、已购内容冻结、幂等发布和文件名隐私"
+                     ],
     "releases":  [
                      {
                          "id":  "user",
@@ -13,13 +19,13 @@
                          "shortName":  "用户端",
                          "audience":  "普通用户",
                          "description":  "聊天、动态、活动、商城与个人中心",
-                         "fileName":  "yiyunying-user-v2.7.12-debug.apk",
+                         "fileName":  "yiyunying-user-v2.7.13-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.user.debug",
-                         "versionName":  "2.7.12-user-debug",
-                         "versionCode":  57,
-                         "sizeBytes":  96482433,
-                         "size":  "92.01 MB",
-                         "sha256":  "D0D007C3DF0A516F1A94F560A426CFC18E4CD7A4EEE83C5CD4B0F14B4AAB44A8",
+                         "versionName":  "2.7.13-user-debug",
+                         "versionCode":  58,
+                         "sizeBytes":  96538285,
+                         "size":  "92.07 MB",
+                         "sha256":  "DA766590E3CC838E98FA851E35D48F94B8F909A391F97310F8C800990E12E034",
                          "accent":  "blue"
                      },
                      {
@@ -28,13 +34,13 @@
                          "shortName":  "管理员",
                          "audience":  "管理员",
                          "description":  "用户、内容、订单与运营功能管理",
-                         "fileName":  "yiyunying-admin-v2.7.12-debug.apk",
+                         "fileName":  "yiyunying-admin-v2.7.13-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.admin.debug",
-                         "versionName":  "2.7.12-admin-debug",
-                         "versionCode":  57,
-                         "sizeBytes":  32080825,
-                         "size":  "30.59 MB",
-                         "sha256":  "83FA4B72C8C10F9B4A481C96A39AB6576FE4D8A22716B89CE3E7AEB5B9FB9E34",
+                         "versionName":  "2.7.13-admin-debug",
+                         "versionCode":  58,
+                         "sizeBytes":  32136681,
+                         "size":  "30.65 MB",
+                         "sha256":  "D5BE640F67EEAAF3C96176D7AB23C20B37EF6484264F8F7EB379E24265CFB44D",
                          "accent":  "green"
                      },
                      {
@@ -43,13 +49,13 @@
                          "shortName":  "授权平台",
                          "audience":  "授权运营方",
                          "description":  "授权应用、下级管理员与业务数据管理",
-                         "fileName":  "yiyunying-authorized-platform-v2.7.12-debug.apk",
+                         "fileName":  "yiyunying-authorized-platform-v2.7.13-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.authorized.debug",
-                         "versionName":  "2.7.12-authorized-platform-debug",
-                         "versionCode":  57,
-                         "sizeBytes":  32080833,
-                         "size":  "30.59 MB",
-                         "sha256":  "6D3C63CD1F3F0D27DC6D5282D190C37F3D012881706AAE1C9620DBEBBA03227A",
+                         "versionName":  "2.7.13-authorized-platform-debug",
+                         "versionCode":  58,
+                         "sizeBytes":  32136681,
+                         "size":  "30.65 MB",
+                         "sha256":  "DA369F6C221984A0B271E65E155C925EC89AEBFCE71715C4BE7D1DFAAC38CEF6",
                          "accent":  "amber"
                      },
                      {
@@ -58,32 +64,32 @@
                          "shortName":  "平台总控",
                          "audience":  "平台所有者",
                          "description":  "全平台应用、权限、财务与审计总控",
-                         "fileName":  "yiyunying-platform-owner-v2.7.12-debug.apk",
+                         "fileName":  "yiyunying-platform-owner-v2.7.13-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner.debug",
-                         "versionName":  "2.7.12-platform-owner-debug",
-                         "versionCode":  57,
-                         "sizeBytes":  32080833,
-                         "size":  "30.59 MB",
-                         "sha256":  "7C9791D5B79338BC70F17F1ACC85C17FB5F80441E38113F5FBED24A463837F37",
+                         "versionName":  "2.7.13-platform-owner-debug",
+                         "versionCode":  58,
+                         "sizeBytes":  32136685,
+                         "size":  "30.65 MB",
+                         "sha256":  "10BE40FC7CA8050D5C5F80769C1B80D319B98D9E4359E43656C73548E1F9D8C1",
                          "accent":  "charcoal"
                      }
                  ],
     "projectAssets":  [
                           {
                               "id":  "source",
-                              "fileName":  "yiyunying-source-v2.7.12.zip",
+                              "fileName":  "yiyunying-source-v2.7.13.zip",
                               "label":  "完整源码快照",
                               "description":  "当前发布提交的完整源码，不含构建缓存、密钥与本地凭据。"
                           },
                           {
                               "id":  "history",
-                              "fileName":  "yiyunying-git-history-v2.7.12.bundle",
+                              "fileName":  "yiyunying-git-history-v2.7.13.bundle",
                               "label":  "完整 Git 历史",
                               "description":  "可离线克隆和恢复全部分支、标签与提交历史的 Git Bundle。"
                           },
                           {
                               "id":  "delivery",
-                              "fileName":  "yiyunying-project-delivery-v2.7.12.zip",
+                              "fileName":  "yiyunying-project-delivery-v2.7.13.zip",
                               "label":  "项目交接总包",
                               "description":  "源码、Git 历史、版本说明、架构与新任务交接文档的完整交付包。"
                           },

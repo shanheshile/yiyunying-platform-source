@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF000000">
+
+    <SurfaceView
+        android:id="@+id/capturePreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="应用内相机预览" />
+
+    <LinearLayout
+        android:id="@+id/captureTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/captureClose"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_capture_top_button"
+            android:contentDescription="取消拍摄"
+            android:padding="12dp"
+            android:src="@drawable/ic_close"
+            android:tint="@android:color/white" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/recordingTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_capture_top_button"
+            android:gravity="center"
+            android:minWidth="78dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="00:00 / 01:00"
+            android:textColor="@android:color/white"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/captureSwitchCamera"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_capture_top_button"
+            android:contentDescription="切换前后摄像头"
+            android:padding="11dp"
+            android:src="@drawable/ic_flip_camera"
+            android:tint="@android:color/white" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/captureBottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="20dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp">
+
+        <TextView
+            android:id="@+id/captureHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_capture_top_button"
+            android:gravity="center"
+            android:paddingStart="18dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="8dp"
+            android:text="轻触拍照 · 长按录像（最多 60 秒）"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
+
+        <FrameLayout
+            android:id="@+id/captureShutter"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/bg_capture_shutter_outer"
+            android:clickable="true"
+            android:contentDescription="轻触拍照，长按录像"
+            android:focusable="true"
+            android:padding="11dp">
+
+            <View
+                android:id="@+id/captureShutterCore"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_capture_shutter_photo" />
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>

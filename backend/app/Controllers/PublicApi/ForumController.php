@@ -9,6 +9,7 @@ use Yiyunying\Core\Response;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\ContentTagService;
 use Yiyunying\Services\ForumExperienceService;
+use Yiyunying\Services\ForumVisibilityService;
 use Yiyunying\Services\MessageMediaService;
 
 final class ForumController
@@ -36,22 +37,7 @@ final class ForumController
         foreach (['view_count', 'unique_view_count', 'heat_score', 'hot_label'] as $field) {
             if (array_key_exists($field, $view)) $post[$field] = $view[$field];
         }
-        $paid = Database::one('SELECT price_integral, preview_content FROM forum_paid_contents WHERE post_id = ? AND status = 1', [(int) $post['id']]);
-        if ($paid === null) {
-            $post = MessageMediaService::hydrate([$post], 'forum_post', (int) $app['id'])[0];
-            $post['paid_content'] = false;
-            $post['purchased'] = true;
-        } else {
-            $post['paid_content'] = true;
-            $post['purchased'] = false;
-            $post['paid_price_balance'] = (int) $paid['price_integral'];
-            $post['content'] = (string) $paid['preview_content'];
-            $post['tags'] = [];
-            $post['attachments'] = [];
-            $post['attachment_count'] = 0;
-            $post['has_media'] = false;
-            $post['attachments_locked'] = true;
-        }
+        $post = ForumVisibilityService::hydratePosts([$post], (int) $app['id'], null)[0];
         $post['sections'] = ForumExperienceService::sections($post, null);
         $post['has_sections'] = $post['sections'] !== [];
         $post['comments'] = Database::all(

@@ -3,7 +3,10 @@ package xyz.jjmxg.yiyunying.ui.module;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -50,6 +53,9 @@ import xyz.jjmxg.yiyunying.ui.management.ManagedUsersActivity;
 import xyz.jjmxg.yiyunying.ui.permission.RolePermissionActivity;
 import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 import xyz.jjmxg.yiyunying.ui.bounty.BountyPublishActivity;
+import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
+import xyz.jjmxg.yiyunying.ui.upload.MediaPickerActivity;
+import xyz.jjmxg.yiyunying.ui.upload.UploadPolicyStore;
 
 public final class GenericModuleFragment extends BaseFragment {
     private static final String ARG_MODULE_ID = "module_id";
@@ -63,6 +69,8 @@ public final class GenericModuleFragment extends BaseFragment {
     private boolean selectionMode;
     private long focusRecordId;
     private boolean focusHandled;
+    private String pendingImageUploadPath = "";
+    private String pendingImageUploadTitle = "";
     private final Map<String, JsonObject> selectedRecords = new LinkedHashMap<>();
     private final ActivityResultLauncher<Intent> bountyPublisher = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -71,6 +79,8 @@ public final class GenericModuleFragment extends BaseFragment {
                 load(false);
             }
         });
+    private final ActivityResultLauncher<Intent> imageUploader = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), this::uploadSelectedImage);
 
     public static GenericModuleFragment newInstance(String moduleId) {
         return newInstance(moduleId, 0L);
@@ -563,6 +573,7 @@ public final class GenericModuleFragment extends BaseFragment {
 
     private static int actionIcon(String title) {
         String value = title == null ? "" : title;
+        if (value.contains("头像")) return R.drawable.ic_person;
         if (value.contains("评论") || value.contains("投稿")) return R.drawable.ic_chat;
         if (value.contains("购买") || value.contains("余额")) return R.drawable.ic_wallet;
         if (value.contains("收藏")) return R.drawable.ic_favorite;
@@ -574,6 +585,10 @@ public final class GenericModuleFragment extends BaseFragment {
     private void executeAction(ActionSpec action, JsonObject item) {
         Context context = activeContext();
         if (context == null) return;
+        if ("UPLOAD_IMAGE".equalsIgnoreCase(action.method())) {
+            startImageUpload(action, item);
+            return;
+        }
         if (action.pathTemplate().endsWith("/entitlement")) {
             EntitlementEditorDialog.show(context, entitlementKind(), 1,
                 body -> submitAction(action, item, body));
@@ -596,6 +611,83 @@ public final class GenericModuleFragment extends BaseFragment {
                 submitAction(action, item, body);
             }
         });
+    }
+
+    private void startImageUpload(ActionSpec action, JsonObject item) {
+        if (!pendingImageUploadPath.isEmpty()) {
+            if (binding != null) message(binding.getRoot(), "请等待当前图片上传完成");
+            return;
+        }
+        try {
+            pendingImageUploadPath = PathResolver.resolve(action.pathTemplate(), app().session(), item);
+        } catch (IllegalArgumentException exception) {
+            if (binding != null) message(binding.getRoot(), exception.getMessage());
+            return;
+        }
+        pendingImageUploadTitle = action.title();
+        Context context = activeContext();
+        if (context == null) {
+            pendingImageUploadPath = "";
+            pendingImageUploadTitle = "";
+            return;
+        }
+        imageUploader.launch(MediaPickerActivity.imageIntent(context, 1));
+    }
+
+    private void uploadSelectedImage(androidx.activity.result.ActivityResult pickerResult) {
+        String path = pendingImageUploadPath;
+        if (path.isEmpty()) return;
+        if (pickerResult.getResultCode() != Activity.RESULT_OK || pickerResult.getData() == null) {
+            pendingImageUploadPath = "";
+            pendingImageUploadTitle = "";
+            return;
+        }
+        ArrayList<Uri> uris = pickerResult.getData()
+            .getParcelableArrayListExtra(MediaPickerActivity.EXTRA_SELECTED_URIS);
+        Uri uri = uris == null || uris.isEmpty() ? null : uris.get(0);
+        Context context = activeContext();
+        if (uri == null || context == null || binding == null) {
+            pendingImageUploadPath = "";
+            pendingImageUploadTitle = "";
+            return;
+        }
+        String name = "avatar.jpg";
+        long size = -1L;
+        try (Cursor cursor = context.getContentResolver().query(
+            uri, new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (nameColumn >= 0 && !cursor.isNull(nameColumn)) name = cursor.getString(nameColumn);
+                if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn);
+            }
+        } catch (RuntimeException ignored) { }
+        String mime = context.getContentResolver().getType(uri);
+        if (mime == null || !mime.startsWith("image/")) mime = "image/jpeg";
+        if (!UploadPolicyStore.accepts(context, "image", size)) {
+            message(binding.getRoot(), UploadPolicyStore.rejectionMessage(context, "image", size));
+            pendingImageUploadPath = "";
+            pendingImageUploadTitle = "";
+            return;
+        }
+        String successTitle = pendingImageUploadTitle;
+        pendingImageUploadTitle = "";
+        binding.progress.setVisibility(View.VISIBLE);
+        track(app().repository().upload(
+            path,
+            name,
+            mime,
+            new ContentUriRequestBody(context.getContentResolver(), uri, mime, size),
+            new LinkedHashMap<>(),
+            result -> {
+                pendingImageUploadPath = "";
+                if (binding == null) return;
+                binding.progress.setVisibility(View.GONE);
+                if (handleFailure(result, binding.getRoot())) return;
+                message(binding.getRoot(), result.message().isEmpty() ? successTitle + "成功" : result.message());
+                load(false);
+            }
+        ));
     }
 
     private EntitlementEditorDialog.TargetKind entitlementKind() {
@@ -649,6 +741,8 @@ public final class GenericModuleFragment extends BaseFragment {
 
     @Override
     public void onDestroyView() {
+        pendingImageUploadPath = "";
+        pendingImageUploadTitle = "";
         binding = null;
         super.onDestroyView();
     }

@@ -87,19 +87,50 @@ final class UploadLibraryService
             $where[] = 'user_id = ?';
             $query[] = $userId;
         }
-        $upload = Database::one('SELECT * FROM uploads WHERE ' . implode(' AND ', $where), $query);
-        if ($upload === null) throw new HttpException('上传文件不存在或无权删除', 404, 404);
-        Database::execute('UPDATE uploads SET status = 0 WHERE id = ?', [$uploadId]);
-        $remainingReferences = (int) (Database::one(
-            'SELECT COUNT(*) AS total FROM uploads WHERE file_path = ? AND status = 1',
-            [(string) ($upload['file_path'] ?? '')]
-        )['total'] ?? 0);
-        if ($remainingReferences === 0) self::removePhysicalFile((string) ($upload['file_path'] ?? ''));
-        return [
-            'upload_id' => $uploadId, 'original_name' => (string) $upload['original_name'],
-            'physical_file_removed' => $remainingReferences === 0,
-            'remaining_references' => $remainingReferences,
-        ];
+        $result = Database::transaction(static function () use (
+            $where, $query, $adminId, $appId, $uploadId
+        ): array {
+            $upload = Database::one(
+                'SELECT * FROM uploads WHERE ' . implode(' AND ', $where) . ' FOR UPDATE',
+                $query
+            );
+            if ($upload === null) throw new HttpException('上传文件不存在或无权删除', 404, 404);
+
+            $attachmentReference = Database::one(
+                'SELECT id, target_type, target_id FROM media_attachments
+                 WHERE admin_id = ? AND app_id = ? AND upload_id = ? LIMIT 1 FOR UPDATE',
+                [$adminId, $appId, $uploadId]
+            );
+            if ($attachmentReference !== null) {
+                $targetName = (string) $attachmentReference['target_type'] === 'forum_section'
+                    ? '论坛内容节'
+                    : '已发布内容';
+                throw new HttpException(
+                    '该上传文件仍被' . $targetName . '引用，不能删除；请先在原内容中解除引用',
+                    0,
+                    409
+                );
+            }
+
+            Database::execute('UPDATE uploads SET status = 0 WHERE id = ?', [$uploadId]);
+            $filePath = (string) ($upload['file_path'] ?? '');
+            $remainingReferences = $filePath === '' ? 0 : (int) (Database::one(
+                'SELECT COUNT(*) AS total FROM uploads WHERE file_path = ? AND status = 1',
+                [$filePath]
+            )['total'] ?? 0);
+            return [
+                'upload_id' => $uploadId,
+                'original_name' => (string) $upload['original_name'],
+                'file_path' => $filePath,
+                'physical_file_removed' => $remainingReferences === 0,
+                'remaining_references' => $remainingReferences,
+            ];
+        });
+        if ((bool) $result['physical_file_removed']) {
+            self::removePhysicalFile((string) $result['file_path']);
+        }
+        unset($result['file_path']);
+        return $result;
     }
 
     private static function decorate(array &$item): void

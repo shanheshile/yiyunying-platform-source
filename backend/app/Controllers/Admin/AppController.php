@@ -259,23 +259,44 @@ final class AppController
         $admin = AuthService::admin($request);
         $appId = (int) $params['app_id'];
         AppService::owned((int) $admin['id'], $appId);
-        $items = $request->input('features');
+        $payload = $request->all();
+        $items = $payload['features'] ?? null;
         if ($items === null) {
-            $items = [[
+            $item = [
                 'feature_code' => $request->input('feature_code'),
                 'enabled' => $request->input('enabled'),
-                'config' => $request->input('config_json'),
-            ]];
+            ];
+            if (array_key_exists('config', $payload)) {
+                $item['config'] = $payload['config'];
+            } elseif (array_key_exists('config_json', $payload)) {
+                $item['config'] = $payload['config_json'];
+            }
+            $items = [$item];
         }
         if (!is_array($items) || $items === []) {
             throw new HttpException('features 必须是非空数组', 0, 422);
+        }
+        if (!array_is_list($items)) {
+            $normalized = [];
+            foreach ($items as $featureCode => $value) {
+                if (is_array($value)) {
+                    $normalized[] = array_merge($value, ['feature_code' => (string) $featureCode]);
+                } else {
+                    $normalized[] = [
+                        'feature_code' => (string) $featureCode,
+                        'enabled' => $value,
+                    ];
+                }
+            }
+            $items = $normalized;
         }
         foreach ($items as $item) {
             if (!is_array($item) || trim((string) ($item['feature_code'] ?? '')) === '') {
                 throw new HttpException('每个功能项必须包含 feature_code', 0, 422);
             }
             $enabled = Validator::boolean($item['enabled'] ?? true, 'enabled');
-            $config = $item['config'] ?? null;
+            $configProvided = array_key_exists('config', $item) || array_key_exists('config_json', $item);
+            $config = array_key_exists('config', $item) ? $item['config'] : ($item['config_json'] ?? null);
             if (is_string($config) && $config !== '') {
                 $config = json_decode($config, true);
             }
@@ -285,7 +306,8 @@ final class AppController
                 $appId,
                 trim((string) $item['feature_code']),
                 $enabled,
-                is_array($config) ? $config : null
+                is_array($config) ? $config : null,
+                $configProvided
             );
         }
         $after = AppService::features($appId);

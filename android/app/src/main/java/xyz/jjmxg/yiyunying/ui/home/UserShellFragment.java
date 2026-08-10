@@ -19,6 +19,7 @@ import androidx.viewpager2.adapter.FragmentStateAdapter;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.google.android.material.badge.BadgeDrawable;
+import com.google.gson.JsonObject;
 
 import java.util.LinkedHashMap;
 
@@ -52,6 +53,7 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
     private int chatUnreadCount = -1;
     private int notificationUnreadCount = -1;
     private RequestHandle unreadRequest;
+    private JsonObject featureFlags = new JsonObject();
     private final ViewPager2.OnPageChangeCallback pageChangeCallback =
         new ViewPager2.OnPageChangeCallback() {
             @Override public void onPageSelected(int position) {
@@ -105,6 +107,7 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
             @Override public void afterTextChanged(Editable value) { }
         });
         configureHeader(binding.pager.getCurrentItem());
+        loadFeatureFlags();
         return binding.getRoot();
     }
 
@@ -205,6 +208,35 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
             });
         }
         if (page == 3) updateNotificationPage();
+        binding.pager.post(this::syncFeatureFlags);
+    }
+
+    private void loadFeatureFlags() {
+        track(app().repository().getPublic(
+            "/api/public/features", new LinkedHashMap<>(), result -> {
+                if (binding == null || !result.isSuccessful()) return;
+                featureFlags = Jsons.object(result.dataObject(), "features").deepCopy();
+                syncFeatureFlags();
+            }));
+    }
+
+    private void syncFeatureFlags() {
+        if (binding == null) return;
+        for (int page = 0; page < MENU_IDS.length; page++) {
+            Fragment fragment = getChildFragmentManager().findFragmentByTag("f" + page);
+            if (fragment instanceof UserTabPage) {
+                ((UserTabPage) fragment).onFeatureFlags(featureFlags);
+            }
+        }
+        binding.notesButton.setVisibility(
+            HomeFeaturePolicy.enabled(featureFlags, "documents") ? View.VISIBLE : View.INVISIBLE);
+        Fragment current = getChildFragmentManager().findFragmentByTag(
+            "f" + binding.pager.getCurrentItem());
+        boolean actionAvailable = !(current instanceof UserTabPage)
+            || ((UserTabPage) current).isPrimaryActionAvailable();
+        binding.primaryAction.setEnabled(actionAvailable);
+        binding.primaryAction.setAlpha(actionAvailable ? 1f : 0f);
+        binding.primaryAction.setVisibility(actionAvailable ? View.VISIBLE : View.INVISIBLE);
     }
 
     private void currentPageSearch(String query) {
@@ -219,7 +251,11 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
 
     private void currentPageAction() {
         Fragment page = getChildFragmentManager().findFragmentByTag("f" + binding.pager.getCurrentItem());
-        if (page instanceof UserTabPage) ((UserTabPage) page).onPrimaryAction();
+        if (page instanceof UserTabPage) {
+            UserTabPage tab = (UserTabPage) page;
+            tab.onFeatureFlags(featureFlags);
+            if (tab.isPrimaryActionAvailable()) tab.onPrimaryAction();
+        }
     }
 
     private static int pageFor(int menuId) {

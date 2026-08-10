@@ -25,18 +25,38 @@ import java.util.Locale;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
+import xyz.jjmxg.yiyunying.domain.forum.ForumPrivateMediaPolicy;
 import xyz.jjmxg.yiyunying.ui.chat.InlineAudioPlayerView;
 import xyz.jjmxg.yiyunying.ui.chat.InlineMediaPreviewDialog;
 import xyz.jjmxg.yiyunying.ui.upload.FilePreviewActivity;
 
 public final class MediaViewRenderer {
+    public interface PrivateMediaRefreshListener {
+        void onPrivateMediaRefreshRequired(long attachmentId);
+    }
+
     private MediaViewRenderer() { }
 
     public static void render(Context context, LinearLayout container, JsonArray attachments) {
-        render(context, container, attachments, new boolean[]{false});
+        render(context, container, attachments, null);
     }
 
-    private static void render(Context context, LinearLayout container, JsonArray attachments, boolean[] expanded) {
+    public static void render(
+        Context context,
+        LinearLayout container,
+        JsonArray attachments,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
+        render(context, container, attachments, new boolean[]{false}, privateMediaRefreshListener);
+    }
+
+    private static void render(
+        Context context,
+        LinearLayout container,
+        JsonArray attachments,
+        boolean[] expanded,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
         container.removeAllViews();
         if (attachments == null || attachments.isEmpty()) {
             container.setVisibility(View.GONE);
@@ -56,7 +76,7 @@ public final class MediaViewRenderer {
 
         int visualCount = expanded[0] ? visualMedia.size() : Math.min(visualMedia.size(), 3);
         for (int index = 0; index < visualCount; index++) {
-            container.addView(visualCard(context, visualMedia, index));
+            container.addView(visualCard(context, visualMedia, index, privateMediaRefreshListener));
         }
         if (visualMedia.size() > 3) {
             MaterialButton toggle = new MaterialButton(
@@ -73,7 +93,7 @@ public final class MediaViewRenderer {
                 expanded[0] = !expanded[0];
                 container.animate().cancel();
                 container.animate().alpha(0.35f).setDuration(70L).withEndAction(() -> {
-                    render(context, container, attachments, expanded);
+                    render(context, container, attachments, expanded, privateMediaRefreshListener);
                     container.setAlpha(0.35f);
                     container.animate().alpha(1f).setDuration(150L).start();
                 }).start();
@@ -84,11 +104,20 @@ public final class MediaViewRenderer {
             container.addView(toggle, toggleParams);
         }
 
-        for (JsonObject sticker : stickers) container.addView(stickerCard(context, sticker));
-        for (JsonObject attachment : others) container.addView(fileCard(context, attachment));
+        for (JsonObject sticker : stickers) {
+            container.addView(stickerCard(context, sticker, privateMediaRefreshListener));
+        }
+        for (JsonObject attachment : others) {
+            container.addView(fileCard(context, attachment, privateMediaRefreshListener));
+        }
     }
 
-    private static View visualCard(Context context, List<JsonObject> media, int index) {
+    private static View visualCard(
+        Context context,
+        List<JsonObject> media,
+        int index,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
         JsonObject attachment = media.get(index);
         boolean video = isVideo(attachment);
         boolean animated = isAnimated(attachment);
@@ -148,11 +177,18 @@ public final class MediaViewRenderer {
 
         card.addView(frame);
         card.setContentDescription(video ? "视频，点击在当前页面预览" : (animated ? "动图，点击预览" : "图片，点击预览"));
-        card.setOnClickListener(view -> InlineMediaPreviewDialog.show(context, media, index));
+        card.setOnClickListener(view -> {
+            if (requestPrivateMediaRefresh(attachment, privateMediaRefreshListener)) return;
+            InlineMediaPreviewDialog.show(context, media, index);
+        });
         return card;
     }
 
-    private static View stickerCard(Context context, JsonObject attachment) {
+    private static View stickerCard(
+        Context context,
+        JsonObject attachment,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
         FrameLayout frame = new FrameLayout(context);
         int size = dp(context, 148);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(size, size);
@@ -172,7 +208,10 @@ public final class MediaViewRenderer {
         frame.setContentDescription("表情包");
         List<JsonObject> one = new ArrayList<>();
         one.add(attachment);
-        frame.setOnClickListener(view -> InlineMediaPreviewDialog.show(context, one, 0));
+        frame.setOnClickListener(view -> {
+            if (requestPrivateMediaRefresh(attachment, privateMediaRefreshListener)) return;
+            InlineMediaPreviewDialog.show(context, one, 0);
+        });
         return frame;
     }
 
@@ -238,7 +277,11 @@ public final class MediaViewRenderer {
         return value;
     }
 
-    private static View fileCard(Context context, JsonObject attachment) {
+    private static View fileCard(
+        Context context,
+        JsonObject attachment,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
         String type = mediaType(attachment);
         String mime = Jsons.string(attachment, "mime_type").toLowerCase(Locale.ROOT);
         if ("audio".equals(type) || "voice".equals(type) || mime.startsWith("audio/")) {
@@ -249,7 +292,8 @@ public final class MediaViewRenderer {
                 context,
                 ImageLoader.get().absoluteUrl(context, mediaUrl(attachment)),
                 Math.max(0L, Jsons.longValue(attachment, "duration_ms")),
-                voice);
+                voice,
+                () -> !requestPrivateMediaRefresh(attachment, privateMediaRefreshListener));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(context, 8);
@@ -312,8 +356,24 @@ public final class MediaViewRenderer {
         row.addView(open, openParams);
 
         card.addView(row);
-        card.setOnClickListener(view -> previewFile(context, attachment));
+        card.setOnClickListener(view -> {
+            if (requestPrivateMediaRefresh(attachment, privateMediaRefreshListener)) return;
+            previewFile(context, attachment);
+        });
         return card;
+    }
+
+    private static boolean requestPrivateMediaRefresh(
+        JsonObject attachment,
+        PrivateMediaRefreshListener listener
+    ) {
+        if (listener == null
+            || !ForumPrivateMediaPolicy.shouldRefresh(attachment, System.currentTimeMillis())) {
+            return false;
+        }
+        listener.onPrivateMediaRefreshRequired(
+            ForumPrivateMediaPolicy.privateAttachmentId(attachment));
+        return true;
     }
 
     private static String attachmentName(JsonObject attachment) {

@@ -14,6 +14,7 @@ use Yiyunying\Services\AuthService;
 use Yiyunying\Services\NotificationService;
 use Yiyunying\Services\WalletService;
 use Yiyunying\Services\ContentTagService;
+use Yiyunying\Services\ForumVisibilityService;
 use Yiyunying\Services\IdentityService;
 use Yiyunying\Services\MessageMediaService;
 
@@ -91,12 +92,13 @@ final class SocialController
              FROM documents WHERE app_id = ? AND user_id = ? AND deleted_at IS NULL AND status = 1' . $visibilitySql . ' ORDER BY id DESC LIMIT 30',
             [(int) $user['app_id'], $targetId]
         ), 'note', (int) $user['app_id']));
-        $profile['posts'] = ContentTagService::hydrate(Database::all(
-            "SELECT id, plate_id, title, content, tags_json, like_count, comment_count, created_at
-             FROM forum_posts WHERE app_id = ? AND user_id = ? AND deleted_at IS NULL AND status = 1 AND audit_status = 'approved'
+        $profile['posts'] = ForumVisibilityService::hydratePosts(ContentTagService::hydrate(Database::all(
+            "SELECT id, user_id, plate_id, title, content, tags_json, like_count, comment_count, created_at
+             FROM forum_posts WHERE app_id = ? AND user_id = ? AND deleted_at IS NULL AND status = 1
+               AND (audit_status = 'approved' OR user_id = ?)
              ORDER BY id DESC LIMIT 30",
-            [(int) $user['app_id'], $targetId]
-        ));
+             [(int) $user['app_id'], $targetId, (int) $user['id']]
+        )), (int) $user['app_id'], (int) $user['id'], false);
         return Response::success(['profile' => $profile]);
     }
 

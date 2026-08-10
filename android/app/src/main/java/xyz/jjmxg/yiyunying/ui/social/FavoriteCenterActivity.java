@@ -108,6 +108,8 @@ public final class FavoriteCenterActivity extends xyz.jjmxg.yiyunying.ui.common.
         adapter = new FavoriteAdapter();
         binding.recycler.setLayoutManager(new LinearLayoutManager(this));
         binding.recycler.setAdapter(adapter);
+        xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
+            binding.toolbar, binding.recycler);
         binding.swipeRefresh.setOnRefreshListener(this::load);
         binding.searchLayout.setEndIconOnClickListener(view -> load());
         binding.searchInput.setOnEditorActionListener((view, action, event) -> {

@@ -53,6 +53,8 @@ public final class ProfileFragment extends BaseFragment {
     private RequestHandle avatarHistoryRequest;
     private int profileLoadGeneration;
     private boolean profileRendered;
+    private boolean readOnlyAdmin;
+    private boolean profileEditable = true;
     private final ActivityResultLauncher<Intent> avatarPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), this::uploadAvatar);
 
@@ -63,7 +65,7 @@ public final class ProfileFragment extends BaseFragment {
         binding = FragmentProfileBinding.inflate(inflater, container, false);
         host().setPageTitle("个人资料");
         boolean user = app().session().role() == Role.USER;
-        boolean readOnlyAdmin = app().session().isAdminBillingOnly();
+        readOnlyAdmin = app().session().isAdminBillingOnly();
         binding.qqLayout.setVisibility(user ? View.VISIBLE : View.GONE);
         binding.signatureLayout.setVisibility(user ? View.VISIBLE : View.GONE);
         binding.publicProfileSwitch.setVisibility(user ? View.VISIBLE : View.GONE);
@@ -83,8 +85,38 @@ public final class ProfileFragment extends BaseFragment {
         binding.changePasswordButton.setOnClickListener(view -> changePassword());
         binding.dynamicPrivacyButton.setOnClickListener(view -> UserSettingsActivity.openDynamicPrivacy(requireContext()));
         binding.logoutButton.setOnClickListener(view -> host().onLogoutRequested());
+        loadProfilePolicy();
         load();
         return binding.getRoot();
+    }
+
+    private void loadProfilePolicy() {
+        if (app().session().role() != Role.USER) {
+            applyEditingPolicy();
+            return;
+        }
+        track(app().repository().getPublic("/api/public/bootstrap", new LinkedHashMap<>(), result -> {
+            if (binding == null || !result.isSuccessful()) return;
+            JsonObject settings = Jsons.object(result.dataObject(), "settings");
+            profileEditable = !settings.has("profile_edit_enabled")
+                || settings.get("profile_edit_enabled").getAsBoolean();
+            applyEditingPolicy();
+            if (profileRendered) render();
+        }));
+    }
+
+    private void applyEditingPolicy() {
+        if (binding == null) return;
+        boolean editable = !readOnlyAdmin && profileEditable;
+        binding.nicknameInput.setEnabled(editable);
+        binding.emailInput.setEnabled(editable);
+        binding.phoneInput.setEnabled(editable);
+        binding.qqInput.setEnabled(editable);
+        binding.signatureInput.setEnabled(editable);
+        binding.publicProfileSwitch.setEnabled(editable);
+        binding.saveButton.setVisibility(editable ? View.VISIBLE : View.GONE);
+        binding.changePasswordButton.setVisibility(readOnlyAdmin ? View.GONE : View.VISIBLE);
+        binding.avatarButton.setVisibility(editable ? View.VISIBLE : View.GONE);
     }
 
     private void load() {
@@ -129,7 +161,8 @@ public final class ProfileFragment extends BaseFragment {
             binding.qqInput.setText(Jsons.string(profile, "qq"));
             binding.signatureInput.setText(Jsons.string(profile, "signature"));
             binding.publicProfileSwitch.setChecked(profile.has("public_profile") && profile.get("public_profile").getAsBoolean());
-            binding.statusText.setText("等级 " + Jsons.string(profile, "level_code") + " · 余额 " + Jsons.string(profile, "balance"));
+            binding.statusText.setText("等级 " + Jsons.string(profile, "level_code") + " · 余额 "
+                + Jsons.string(profile, "balance") + (profileEditable ? "" : " · 资料修改已关闭"));
         } else if (app().session().role() == Role.ADMIN) {
             String restriction = app().session().isAdminBillingOnly() ? " · " + app().session().adminAccessReason() : "";
             binding.statusText.setText("会员 " + Jsons.string(profile, "membership_level") + " · 余额 " + Jsons.string(profile, "balance") + " · 到期 " + Jsons.string(profile, "membership_expired_at") + restriction);

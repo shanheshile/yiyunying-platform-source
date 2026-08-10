@@ -2,7 +2,7 @@
 
 > 本文件由 `php tools/generate-reference.php` 从 `database/install.sql` 生成。
 
-- 数据表：199
+- 数据表：215
 - 字符集：`utf8mb4`
 - 租户边界：平台层按 `platform_id`，后台层按 `admin_id`，应用业务层按 `admin_id + app_id` 隔离
 
@@ -650,6 +650,7 @@
 | `notification_preview_enabled` | `TINYINT NOT NULL DEFAULT 1` |
 | `notification_sound_enabled` | `TINYINT NOT NULL DEFAULT 1` |
 | `notification_vibration_enabled` | `TINYINT NOT NULL DEFAULT 1` |
+| `remote_login_protection` | `TINYINT NOT NULL DEFAULT 1` |
 | `dynamic_enabled` | `TINYINT NOT NULL DEFAULT 1` |
 | `dynamic_visible_days` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` |
 | `dynamic_visibility_mode` | `VARCHAR(20) NOT NULL DEFAULT 'public'` |
@@ -1124,6 +1125,29 @@
 - `KEY \`idx_app_features_tenant\` (\`admin_id\`, \`app_id\`)`
 - `CONSTRAINT \`fk_app_features_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
 
+## `user_feature_permissions`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `feature_code` | `VARCHAR(64) NOT NULL` |
+| `enabled` | `TINYINT NOT NULL DEFAULT 1` |
+| `config_json` | `LONGTEXT` |
+| `updated_by_type` | `VARCHAR(20) NOT NULL DEFAULT 'admin'` |
+| `updated_by_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_user_feature_permission\` (\`app_id\`, \`user_id\`, \`feature_code\`)`
+- `KEY \`idx_user_feature_permission_tenant\` (\`admin_id\`, \`app_id\`, \`user_id\`)`
+- `CONSTRAINT \`fk_user_feature_permission_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
 ## `app_domains`
 
 | 字段 | SQL 定义 |
@@ -1532,6 +1556,7 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `resource_type` | `VARCHAR(30) NOT NULL DEFAULT 'app_store' COMMENT 'app_store/source_market'` |
 | `name` | `VARCHAR(100) NOT NULL` |
 | `icon` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `description` | `VARCHAR(500) NOT NULL DEFAULT ''` |
@@ -1543,7 +1568,7 @@
 **索引与约束**
 
 - `PRIMARY KEY (\`id\`)`
-- `UNIQUE KEY \`uk_resource_categories_name\` (\`app_id\`, \`name\`)`
+- `UNIQUE KEY \`uk_resource_categories_name\` (\`app_id\`, \`resource_type\`, \`name\`)`
 - `UNIQUE KEY \`uk_resource_categories_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `CONSTRAINT \`fk_resource_categories_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
 
@@ -1554,13 +1579,25 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `resource_type` | `VARCHAR(30) NOT NULL DEFAULT 'app_store' COMMENT 'app_store/source_market'` |
 | `category_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `title` | `VARCHAR(200) NOT NULL` |
 | `description` | `LONGTEXT` |
 | `cover_url` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `download_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `size_bytes` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `file_sha256` | `CHAR(64) NOT NULL DEFAULT ''` |
+| `risk_level` | `VARCHAR(20) NOT NULL DEFAULT 'review'` |
+| `risk_reason` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `source_upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `cover_upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `metadata_json` | `LONGTEXT` |
+| `tags_json` | `LONGTEXT` |
+| `images_json` | `LONGTEXT` |
+| `attachments_json` | `LONGTEXT` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `price_money` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
 | `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `is_top` | `TINYINT NOT NULL DEFAULT 0` |
@@ -1577,6 +1614,8 @@
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_resources_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_resources_category_status\` (\`app_id\`, \`category_id\`, \`audit_status\`, \`status\`)`
+- `KEY \`idx_resources_type_status\` (\`app_id\`, \`resource_type\`, \`audit_status\`, \`status\`, \`created_at\`)`
+- `KEY \`idx_resources_risk\` (\`app_id\`, \`risk_level\`, \`audit_status\`)`
 - `KEY \`idx_resources_user\` (\`user_id\`, \`created_at\`)`
 - `CONSTRAINT \`fk_resources_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`resource_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_resources_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
@@ -1701,6 +1740,14 @@
 | `apk_url` | `VARCHAR(1000) NOT NULL` |
 | `size_bytes` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `description` | `LONGTEXT` |
+| `metadata_json` | `LONGTEXT` |
+| `file_sha256` | `CHAR(64) NOT NULL DEFAULT ''` |
+| `risk_level` | `VARCHAR(20) NOT NULL DEFAULT 'review'` |
+| `risk_reason` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `source_upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `icon_upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
+| `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `download_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
@@ -1714,6 +1761,7 @@
 - `UNIQUE KEY \`uk_store_apps_package_version\` (\`app_id\`, \`package_name\`, \`version_code\`)`
 - `UNIQUE KEY \`uk_store_apps_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_store_apps_category_status\` (\`app_id\`, \`category_id\`, \`status\`)`
+- `KEY \`idx_store_apps_audit\` (\`app_id\`, \`audit_status\`, \`risk_level\`, \`status\`)`
 - `CONSTRAINT \`fk_store_apps_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`store_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_store_apps_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 
@@ -1841,6 +1889,32 @@
 - `CONSTRAINT \`fk_forum_structure_requests_category\` FOREIGN KEY (\`category_id\`) REFERENCES \`forum_categories\` (\`id\`) ON DELETE SET NULL`
 - `CONSTRAINT \`fk_forum_structure_requests_reviewer\` FOREIGN KEY (\`reviewer_admin_id\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
 
+## `forum_moderators`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `plate_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `permissions_json` | `LONGTEXT` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `granted_by_admin_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_forum_moderators_plate_user\` (\`plate_id\`, \`user_id\`)`
+- `KEY \`idx_forum_moderators_user\` (\`admin_id\`, \`app_id\`, \`user_id\`, \`status\`)`
+- `CONSTRAINT \`fk_forum_moderators_plate\` FOREIGN KEY (\`plate_id\`, \`app_id\`, \`admin_id\`)`
+- `REFERENCES \`forum_plates\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_forum_moderators_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`)`
+- `REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_forum_moderators_granter\` FOREIGN KEY (\`granted_by_admin_id\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
+
 ## `forum_posts`
 
 | 字段 | SQL 定义 |
@@ -1895,6 +1969,7 @@
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
 | `post_id` | `BIGINT UNSIGNED NOT NULL` |
 | `parent_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `root_comment_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `content` | `TEXT NOT NULL` |
 | `tags_json` | `LONGTEXT` |
@@ -1915,6 +1990,7 @@
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_forum_comments_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_forum_comments_post\` (\`post_id\`, \`status\`, \`created_at\`)`
+- `KEY \`idx_forum_comments_root\` (\`post_id\`, \`root_comment_id\`, \`status\`, \`id\`)`
 - `CONSTRAINT \`fk_forum_comments_post\` FOREIGN KEY (\`post_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`forum_posts\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_forum_comments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_forum_comments_parent\` FOREIGN KEY (\`parent_id\`) REFERENCES \`forum_comments\` (\`id\`) ON DELETE CASCADE`
@@ -2039,6 +2115,8 @@
 | `caller_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `callee_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `conversation_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `private_message_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `room_message_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `context_type` | `VARCHAR(20) NOT NULL DEFAULT 'private'` |
 | `context_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `context_name` | `VARCHAR(120) NOT NULL DEFAULT ''` |
@@ -2060,6 +2138,8 @@
 - `KEY \`idx_voice_calls_callee_status\` (\`app_id\`, \`callee_user_id\`, \`status\`, \`created_at\`)`
 - `KEY \`idx_voice_calls_expiry\` (\`status\`, \`expires_at\`)`
 - `KEY \`idx_voice_calls_context\` (\`app_id\`, \`context_type\`, \`context_id\`, \`created_at\`)`
+- `KEY \`idx_voice_calls_private_message\` (\`private_message_id\`)`
+- `KEY \`idx_voice_calls_room_message\` (\`room_message_id\`)`
 - `CONSTRAINT \`fk_voice_calls_caller\` FOREIGN KEY (\`caller_user_id\`, \`app_id\`, \`admin_id\`)`
 - `REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_voice_calls_callee\` FOREIGN KEY (\`callee_user_id\`, \`app_id\`, \`admin_id\`)`
@@ -2254,6 +2334,7 @@
 | `icon` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `description` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
 | `tags_json` | `LONGTEXT` |
+| `room_kind` | `VARCHAR(20) NOT NULL DEFAULT 'group' COMMENT 'group/chat_room'` |
 | `is_public` | `TINYINT NOT NULL DEFAULT 1` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `dissolved_at` | `DATETIME DEFAULT NULL` |
@@ -2266,6 +2347,7 @@
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_chat_rooms_name\` (\`app_id\`, \`name\`)`
 - `UNIQUE KEY \`uk_chat_rooms_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
+- `KEY \`idx_chat_rooms_kind\` (\`app_id\`, \`room_kind\`, \`status\`, \`created_at\`)`
 - `CONSTRAINT \`fk_chat_rooms_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
 
 ## `chat_room_members`
@@ -2614,6 +2696,8 @@
 | `amount` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `pay_amount` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `pay_channel` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `buyer_info_json` | `LONGTEXT` |
+| `snapshot_json` | `LONGTEXT` |
 | `status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
 | `paid_at` | `DATETIME DEFAULT NULL` |
 | `closed_at` | `DATETIME DEFAULT NULL` |
@@ -2678,9 +2762,16 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `catalog_code` | `VARCHAR(30) NOT NULL DEFAULT 'shop' COMMENT 'shop/balance_shop'` |
+| `category_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `name` | `VARCHAR(200) NOT NULL` |
 | `cover_url` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `description` | `LONGTEXT` |
+| `goods_type` | `VARCHAR(20) NOT NULL DEFAULT 'virtual'` |
+| `delivery_required` | `TINYINT NOT NULL DEFAULT 0` |
+| `tags_json` | `LONGTEXT` |
+| `images_json` | `LONGTEXT` |
+| `attachments_json` | `LONGTEXT` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `price_money` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `stock` | `INT NOT NULL DEFAULT 0` |
@@ -2694,7 +2785,33 @@
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_shop_goods_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_shop_goods_tenant_status\` (\`admin_id\`, \`app_id\`, \`status\`)`
+- `KEY \`idx_shop_goods_category\` (\`app_id\`, \`category_id\`, \`status\`, \`created_at\`)`
+- `KEY \`idx_shop_goods_catalog_status\` (\`app_id\`, \`catalog_code\`, \`status\`, \`created_at\`, \`id\`)`
 - `CONSTRAINT \`fk_shop_goods_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `shop_categories`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `catalog_code` | `VARCHAR(30) NOT NULL DEFAULT 'shop' COMMENT 'shop/balance_shop'` |
+| `parent_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `name` | `VARCHAR(100) NOT NULL` |
+| `icon_url` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `description` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `sort_order` | `INT NOT NULL DEFAULT 0` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_shop_categories_tenant_name\` (\`admin_id\`, \`app_id\`, \`catalog_code\`, \`parent_id\`, \`name\`)`
+- `KEY \`idx_shop_categories_tenant_status\` (\`admin_id\`, \`app_id\`, \`status\`, \`sort_order\`)`
+- `CONSTRAINT \`fk_shop_categories_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
 
 ## `shop_orders`
 
@@ -2703,13 +2820,26 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `catalog_code` | `VARCHAR(30) NOT NULL DEFAULT 'shop' COMMENT 'shop/balance_shop'` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `goods_id` | `BIGINT UNSIGNED NOT NULL` |
+| `goods_name` | `VARCHAR(200) NOT NULL DEFAULT ''` |
+| `goods_cover_url` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `goods_type` | `VARCHAR(20) NOT NULL DEFAULT 'virtual'` |
 | `order_no` | `VARCHAR(64) NOT NULL` |
 | `quantity` | `INT UNSIGNED NOT NULL` |
+| `unit_price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `unit_price_money` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `amount_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `amount_money` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
+| `buyer_info_json` | `LONGTEXT` |
 | `status` | `VARCHAR(20) NOT NULL DEFAULT 'paid'` |
+| `paid_at` | `DATETIME DEFAULT NULL` |
+| `fulfilled_at` | `DATETIME DEFAULT NULL` |
+| `closed_at` | `DATETIME DEFAULT NULL` |
+| `shipping_company` | `VARCHAR(100) NOT NULL DEFAULT ''` |
+| `tracking_no` | `VARCHAR(120) NOT NULL DEFAULT ''` |
+| `fulfillment_note` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 | `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
 
@@ -2721,7 +2851,93 @@
 - `CONSTRAINT \`fk_shop_orders_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_shop_orders_goods\` FOREIGN KEY (\`goods_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`shop_goods\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 
-## `red_packets`
+## `shop_goods_comments`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `goods_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `parent_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `content` | `TEXT NOT NULL` |
+| `score` | `TINYINT UNSIGNED NOT NULL DEFAULT 0` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_shop_goods_comments_goods\` (\`goods_id\`, \`status\`, \`created_at\`)`
+- `KEY \`idx_shop_goods_comments_user\` (\`user_id\`, \`created_at\`)`
+- `CONSTRAINT \`fk_shop_goods_comments_goods\` FOREIGN KEY (\`goods_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`shop_goods\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_shop_goods_comments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `shop_goods_reactions`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `goods_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `reaction_type` | `VARCHAR(20) NOT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_shop_goods_reactions\` (\`goods_id\`, \`user_id\`, \`reaction_type\`)`
+- `KEY \`idx_shop_goods_reactions_user\` (\`user_id\`, \`reaction_type\`, \`created_at\`)`
+- `CONSTRAINT \`fk_shop_goods_reactions_goods\` FOREIGN KEY (\`goods_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`shop_goods\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_shop_goods_reactions_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `shop_goods_forwards`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `goods_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `target_type` | `VARCHAR(30) NOT NULL` |
+| `target_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `recommend_text` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_shop_goods_forwards_goods\` (\`goods_id\`, \`created_at\`)`
+- `KEY \`idx_shop_goods_forwards_target\` (\`app_id\`, \`target_type\`, \`target_id\`, \`created_at\`)`
+- `CONSTRAINT \`fk_shop_goods_forwards_goods\` FOREIGN KEY (\`goods_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`shop_goods\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_shop_goods_forwards_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `shop_comment_reactions`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `comment_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `reaction_type` | `VARCHAR(20) NOT NULL DEFAULT 'like'` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_shop_comment_reactions\` (\`comment_id\`, \`user_id\`, \`reaction_type\`)`
+- `KEY \`idx_shop_comment_reactions_user\` (\`user_id\`, \`reaction_type\`, \`created_at\`)`
+- `CONSTRAINT \`fk_shop_comment_reactions_comment\` FOREIGN KEY (\`comment_id\`) REFERENCES \`shop_goods_comments\` (\`id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_shop_comment_reactions_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `shop_order_events`
 
 | 字段 | SQL 定义 |
 | --- | --- |
@@ -2729,21 +2945,61 @@
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
-| `packet_type` | `VARCHAR(20) NOT NULL DEFAULT 'equal'` |
-| `total_amount` | `BIGINT UNSIGNED NOT NULL` |
+| `order_source` | `VARCHAR(20) NOT NULL` |
+| `order_id` | `BIGINT UNSIGNED NOT NULL` |
+| `order_no` | `VARCHAR(64) NOT NULL` |
+| `event_code` | `VARCHAR(40) NOT NULL` |
+| `title` | `VARCHAR(150) NOT NULL` |
+| `detail` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `actor_type` | `VARCHAR(20) NOT NULL DEFAULT 'system'` |
+| `actor_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `metadata_json` | `LONGTEXT` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_shop_order_events_order\` (\`app_id\`, \`order_no\`, \`created_at\`)`
+- `KEY \`idx_shop_order_events_user\` (\`user_id\`, \`created_at\`)`
+- `CONSTRAINT \`fk_shop_order_events_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `red_packets`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `creator_type` | `VARCHAR(20) NOT NULL DEFAULT 'user' COMMENT 'platform/admin/user/system'` |
+| `creator_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `packet_type` | `VARCHAR(20) NOT NULL DEFAULT 'random'` |
+| `packet_label` | `VARCHAR(30) NOT NULL DEFAULT '拼手气红�` |
+| `distribution_mode` | `VARCHAR(20) NOT NULL DEFAULT 'count_split' COMMENT 'count_split/random_grab'` |
+| `eligibility_mode` | `VARCHAR(20) NOT NULL DEFAULT 'selected' COMMENT 'context_all/selected'` |
+| `scene_type` | `VARCHAR(30) NOT NULL DEFAULT 'chat' COMMENT 'chat/forum_tip/bounty_tip/earned_reward/activity'` |
+| `delivery_scope` | `VARCHAR(20) NOT NULL DEFAULT 'private' COMMENT 'private/group/chat_room/service/activity'` |
+| `context_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '会话、群聊、聊天室或活动编号'` |
+| `source_type` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `source_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `total_amount` | `DECIMAL(18,2) UNSIGNED NOT NULL` |
 | `total_count` | `INT UNSIGNED NOT NULL` |
-| `remain_amount` | `BIGINT UNSIGNED NOT NULL` |
+| `remain_amount` | `DECIMAL(18,2) UNSIGNED NOT NULL` |
 | `remain_count` | `INT UNSIGNED NOT NULL` |
 | `message` | `VARCHAR(255) NOT NULL DEFAULT ''` |
+| `return_policy` | `VARCHAR(30) NOT NULL DEFAULT 'recipient_return' COMMENT 'recipient_return/manager_only/none'` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `expired_at` | `DATETIME NOT NULL` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
 
+- `'`
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_red_packets_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_red_packets_tenant_status\` (\`admin_id\`, \`app_id\`, \`status\`, \`expired_at\`)`
+- `KEY \`idx_red_packets_delivery\` (\`app_id\`, \`delivery_scope\`, \`context_id\`, \`created_at\`)`
+- `KEY \`idx_red_packets_scene_source\` (\`app_id\`, \`scene_type\`, \`source_type\`, \`source_id\`, \`status\`, \`created_at\`)`
 - `CONSTRAINT \`fk_red_packets_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 
 ## `red_packet_claims`
@@ -2755,7 +3011,7 @@
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
 | `packet_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
-| `amount` | `BIGINT UNSIGNED NOT NULL` |
+| `amount` | `DECIMAL(18,2) UNSIGNED NOT NULL` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
@@ -2793,7 +3049,7 @@
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
 | `packet_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
-| `amount` | `BIGINT UNSIGNED NOT NULL` |
+| `amount` | `DECIMAL(18,2) UNSIGNED NOT NULL` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
@@ -3415,6 +3671,57 @@
 - `KEY \`idx_level_forum_reaction_actor\` (\`actor_type\`, \`actor_id\`, \`reaction_type\`)`
 - `CONSTRAINT \`fk_level_forum_reactions_post\` FOREIGN KEY (\`post_id\`) REFERENCES \`level_forum_posts\` (\`id\`) ON DELETE CASCADE`
 
+## `bounty_categories`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `name` | `VARCHAR(100) NOT NULL` |
+| `description` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `icon` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `sort_order` | `INT NOT NULL DEFAULT 0` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_bounty_categories_name\` (\`app_id\`, \`name\`)`
+- `UNIQUE KEY \`uk_bounty_categories_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
+- `KEY \`idx_bounty_categories_list\` (\`admin_id\`, \`app_id\`, \`status\`, \`sort_order\`, \`id\`)`
+- `CONSTRAINT \`fk_bounty_categories_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `bounty_category_requests`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `name` | `VARCHAR(100) NOT NULL` |
+| `description` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `reason` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
+| `reviewer_admin_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `review_comment` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `created_category_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `reviewed_at` | `DATETIME DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_bounty_category_requests_status\` (\`admin_id\`, \`app_id\`, \`status\`, \`id\`)`
+- `KEY \`idx_bounty_category_requests_user\` (\`user_id\`, \`status\`, \`id\`)`
+- `CONSTRAINT \`fk_bounty_category_requests_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_bounty_category_requests_reviewer\` FOREIGN KEY (\`reviewer_admin_id\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
+- `CONSTRAINT \`fk_bounty_category_requests_created\` FOREIGN KEY (\`created_category_id\`) REFERENCES \`bounty_categories\` (\`id\`) ON DELETE SET NULL`
+
 ## `bounties`
 
 | 字段 | SQL 定义 |
@@ -3422,12 +3729,14 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `admin_id` | `BIGINT UNSIGNED NOT NULL` |
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `category_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `creator_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `winner_user_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `winner_submission_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `title` | `VARCHAR(200) NOT NULL` |
 | `description` | `LONGTEXT NOT NULL` |
 | `requirements_json` | `LONGTEXT` |
+| `attachments_json` | `LONGTEXT` |
 | `reward_integral` | `BIGINT UNSIGNED NOT NULL` |
 | `submission_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `like_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
@@ -3450,8 +3759,10 @@
 - `KEY \`idx_bounties_feed\` (\`admin_id\`, \`app_id\`, \`status\`, \`id\`)`
 - `KEY \`idx_bounties_review\` (\`admin_id\`, \`app_id\`, \`audit_status\`, \`id\`)`
 - `KEY \`idx_bounties_creator\` (\`creator_user_id\`, \`status\`)`
+- `KEY \`idx_bounties_category\` (\`admin_id\`, \`app_id\`, \`category_id\`, \`status\`, \`id\`)`
 - `CONSTRAINT \`fk_bounties_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_bounties_creator\` FOREIGN KEY (\`creator_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_bounties_category\` FOREIGN KEY (\`category_id\`) REFERENCES \`bounty_categories\` (\`id\`) ON DELETE SET NULL`
 - `CONSTRAINT \`fk_bounties_winner\` FOREIGN KEY (\`winner_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
 
 ## `bounty_submissions`
@@ -3946,6 +4257,7 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `vote_id` | `BIGINT UNSIGNED NOT NULL` |
 | `option_text` | `VARCHAR(300) NOT NULL` |
+| `image_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
 | `vote_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `sort_order` | `INT NOT NULL DEFAULT 0` |
 
@@ -4126,6 +4438,8 @@
 | `content` | `LONGTEXT NOT NULL` |
 | `tags_json` | `LONGTEXT` |
 | `price_balance` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
+| `unlock_at` | `DATETIME DEFAULT NULL` |
+| `preview_content` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
 | `sort_order` | `INT NOT NULL DEFAULT 0` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
@@ -4427,6 +4741,9 @@
 | `creator_id` | `BIGINT UNSIGNED NOT NULL` |
 | `creator_name` | `VARCHAR(100) NOT NULL` |
 | `target_level` | `TINYINT UNSIGNED NOT NULL` |
+| `scene_type` | `VARCHAR(30) NOT NULL DEFAULT 'activity' COMMENT 'chat/forum/bounty/activity'` |
+| `source_type` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `source_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `title` | `VARCHAR(200) NOT NULL` |
 | `description` | `LONGTEXT` |
 | `multiple_choice` | `TINYINT NOT NULL DEFAULT 0` |
@@ -4448,6 +4765,7 @@
 - `PRIMARY KEY (\`id\`)`
 - `KEY \`idx_universal_polls_feed\` (\`root_platform_id\`, \`target_level\`, \`scope_platform_id\`, \`app_id\`, \`status\`, \`id\`)`
 - `KEY \`idx_universal_polls_creator\` (\`creator_type\`, \`creator_id\`, \`status\`, \`id\`)`
+- `KEY \`idx_universal_polls_scene\` (\`scene_type\`, \`source_type\`, \`source_id\`, \`status\`, \`id\`)`
 - `CONSTRAINT \`fk_universal_polls_root\` FOREIGN KEY (\`root_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_universal_polls_scope\` FOREIGN KEY (\`scope_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_universal_polls_app\` FOREIGN KEY (\`app_id\`) REFERENCES \`apps\` (\`id\`) ON DELETE CASCADE`
@@ -4785,6 +5103,8 @@
 | `visibility_mode` | `VARCHAR(20) NOT NULL DEFAULT 'inherit'` |
 | `visible_days` | `SMALLINT UNSIGNED DEFAULT NULL` |
 | `visibility_user_ids_json` | `LONGTEXT DEFAULT NULL` |
+| `is_pinned` | `TINYINT(1) NOT NULL DEFAULT 0` |
+| `pin_order` | `INT UNSIGNED NOT NULL DEFAULT 0` |
 | `edited_at` | `DATETIME DEFAULT NULL` |
 | `deleted_at` | `DATETIME DEFAULT NULL` |
 | `delete_expires_at` | `DATETIME DEFAULT NULL` |
@@ -4797,6 +5117,7 @@
 - `PRIMARY KEY (\`id\`)`
 - `KEY \`idx_user_moments_feed\` (\`admin_id\`, \`app_id\`, \`status\`, \`deleted_at\`, \`created_at\`)`
 - `KEY \`idx_user_moments_owner\` (\`user_id\`, \`created_at\`)`
+- `KEY \`idx_user_moments_pinned\` (\`user_id\`, \`is_pinned\`, \`pin_order\`, \`created_at\`)`
 - `KEY \`idx_user_moments_purge\` (\`app_id\`, \`delete_expires_at\`)`
 - `CONSTRAINT \`fk_user_moments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`)`
 - `REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
@@ -4830,6 +5151,7 @@
 | `moment_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `parent_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `sticker_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `content` | `VARCHAR(2000) NOT NULL` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
@@ -4843,6 +5165,26 @@
 - `CONSTRAINT \`fk_moment_comments_moment\` FOREIGN KEY (\`moment_id\`) REFERENCES \`user_moments\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_comments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_comments_parent\` FOREIGN KEY (\`parent_id\`) REFERENCES \`moment_comments\` (\`id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_moment_comments_sticker\` FOREIGN KEY (\`sticker_id\`) REFERENCES \`stickers\` (\`id\`) ON DELETE SET NULL`
+
+## `moment_comment_likes`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `comment_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_moment_comment_likes_user\` (\`comment_id\`, \`user_id\`)`
+- `KEY \`idx_moment_comment_likes_tenant\` (\`admin_id\`, \`app_id\`, \`user_id\`, \`id\`)`
+- `CONSTRAINT \`fk_moment_comment_likes_comment\` FOREIGN KEY (\`comment_id\`) REFERENCES \`moment_comments\` (\`id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_moment_comment_likes_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 
 ## `moment_favorites`
 
@@ -4883,3 +5225,128 @@
 - `KEY \`idx_moment_forwards_user\` (\`app_id\`, \`user_id\`, \`id\`)`
 - `CONSTRAINT \`fk_moment_forwards_moment\` FOREIGN KEY (\`moment_id\`) REFERENCES \`user_moments\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_forwards_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `business_catalogs`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `catalog_code` | `VARCHAR(30) NOT NULL COMMENT 'resource/shop/balance_shop'` |
+| `catalog_name` | `VARCHAR(50) NOT NULL` |
+| `description` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `sort_order` | `INT NOT NULL DEFAULT 0` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_business_catalogs_app_code\` (\`app_id\`, \`catalog_code\`)`
+- `KEY \`idx_business_catalogs_tenant\` (\`admin_id\`, \`app_id\`, \`status\`, \`sort_order\`)`
+- `CONSTRAINT \`fk_business_catalogs_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `interaction_scene_links`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `root_platform_id` | `BIGINT UNSIGNED NOT NULL` |
+| `scope_platform_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `admin_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `app_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `entity_type` | `VARCHAR(30) NOT NULL COMMENT 'red_packet/vote/lottery/reward'` |
+| `entity_id` | `BIGINT UNSIGNED NOT NULL` |
+| `scene_type` | `VARCHAR(30) NOT NULL COMMENT 'chat/forum/bounty/earned/activity'` |
+| `source_type` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `source_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `creator_type` | `VARCHAR(20) NOT NULL` |
+| `creator_id` | `BIGINT UNSIGNED NOT NULL` |
+| `target_level` | `TINYINT UNSIGNED NOT NULL DEFAULT 4` |
+| `visible_levels_json` | `LONGTEXT` |
+| `manageable_levels_json` | `LONGTEXT` |
+| `policy_json` | `LONGTEXT` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_interaction_scene_entity\` (\`entity_type\`, \`entity_id\`)`
+- `KEY \`idx_interaction_scene_source\` (\`scene_type\`, \`source_type\`, \`source_id\`, \`status\`)`
+- `KEY \`idx_interaction_scene_scope\` (\`root_platform_id\`, \`scope_platform_id\`, \`app_id\`, \`target_level\`, \`status\`)`
+- `CONSTRAINT \`fk_interaction_scene_root\` FOREIGN KEY (\`root_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_interaction_scene_scope\` FOREIGN KEY (\`scope_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_interaction_scene_app\` FOREIGN KEY (\`app_id\`) REFERENCES \`apps\` (\`id\`) ON DELETE CASCADE`
+
+## `app_reward_rules`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `scene_code` | `VARCHAR(60) NOT NULL` |
+| `scene_name` | `VARCHAR(100) NOT NULL` |
+| `description` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `enabled` | `TINYINT NOT NULL DEFAULT 0` |
+| `reward_json` | `LONGTEXT NOT NULL` |
+| `grant_mode` | `VARCHAR(20) NOT NULL DEFAULT 'automatic' COMMENT 'automatic/after_review/manual'` |
+| `cycle_type` | `VARCHAR(20) NOT NULL DEFAULT 'unlimited' COMMENT 'once/daily/weekly/monthly/unlimited'` |
+| `cycle_limit` | `INT UNSIGNED NOT NULL DEFAULT 0` |
+| `user_total_limit` | `INT UNSIGNED NOT NULL DEFAULT 0` |
+| `conditions_json` | `LONGTEXT` |
+| `audience_json` | `LONGTEXT` |
+| `manager_level` | `TINYINT UNSIGNED NOT NULL DEFAULT 3` |
+| `inherited_from_type` | `VARCHAR(20) NOT NULL DEFAULT ''` |
+| `inherited_from_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `force_sync` | `TINYINT NOT NULL DEFAULT 0` |
+| `created_by_type` | `VARCHAR(20) NOT NULL DEFAULT 'system'` |
+| `created_by_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_app_reward_rules_scene\` (\`app_id\`, \`scene_code\`)`
+- `UNIQUE KEY \`uk_app_reward_rules_id_tenant\` (\`id\`, \`app_id\`, \`admin_id\`)`
+- `KEY \`idx_app_reward_rules_manage\` (\`admin_id\`, \`app_id\`, \`enabled\`, \`status\`, \`scene_code\`)`
+- `CONSTRAINT \`fk_app_reward_rules_app\` FOREIGN KEY (\`app_id\`, \`admin_id\`) REFERENCES \`apps\` (\`id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `app_reward_events`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `rule_id` | `BIGINT UNSIGNED NOT NULL` |
+| `scene_code` | `VARCHAR(60) NOT NULL` |
+| `ref_type` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `ref_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `period_key` | `VARCHAR(40) NOT NULL DEFAULT ''` |
+| `dedupe_key` | `VARCHAR(191) NOT NULL` |
+| `reward_json` | `LONGTEXT NOT NULL` |
+| `context_json` | `LONGTEXT` |
+| `status` | `VARCHAR(20) NOT NULL DEFAULT 'granted' COMMENT 'pending/granted/rejected/reversed'` |
+| `reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `actor_type` | `VARCHAR(20) NOT NULL DEFAULT 'system'` |
+| `actor_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `granted_at` | `DATETIME DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_app_reward_events_dedupe\` (\`app_id\`, \`dedupe_key\`)`
+- `KEY \`idx_app_reward_events_user\` (\`app_id\`, \`user_id\`, \`scene_code\`, \`created_at\`)`
+- `KEY \`idx_app_reward_events_manage\` (\`admin_id\`, \`app_id\`, \`status\`, \`created_at\`)`
+- `CONSTRAINT \`fk_app_reward_events_rule\` FOREIGN KEY (\`rule_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`app_reward_rules\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_app_reward_events_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`

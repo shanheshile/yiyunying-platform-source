@@ -24,6 +24,8 @@
     <color name="warning">#F2BE75</color>
     <color name="white">#FFFFFF</color>
     <color name="transparent">#00000000</color>
+    <!-- High-contrast counterpart for the dark home toolbar. -->
+    <color name="home_header_action_tint">#C0C7D2</color>
     <color name="accent_blue">#8CB9FF</color>
     <color name="accent_blue_container">#164983</color>
     <color name="on_accent_blue_container">#D7E6FF</color>
@@ -33,4 +35,8 @@
     <color name="accent_rose">#FFAFCA</color>
     <color name="accent_rose_container">#742449</color>
     <color name="on_accent_rose_container">#FFD9E5</color>
+    <color name="forum_draft_container">#594500</color>
+    <color name="on_forum_draft_container">#FFE08A</color>
+    <color name="forum_chapter_container">#493061</color>
+    <color name="on_forum_chapter_container">#EFD8FF</color>
 </resources>

@@ -56,8 +56,14 @@ $required = @(
     'database\migrations\upgrade_20260722_bounty_moderation.sql',
     'database\migrations\upgrade_20260725_submission_risk_metadata.sql',
     'database\migrations\upgrade_20260731_chat_room_kind.sql',
+    'database\migrations\upgrade_20260801_auto_cache_media_policy.sql',
     'database\migrations\upgrade_20260801_forum_comment_threads.sql',
+    'database\migrations\upgrade_20260801_call_message_cards.sql',
     'database\migrations\upgrade_20260802_moment_comment_interactions.sql',
+    'database\migrations\upgrade_20260810_chat_experience_controls.sql',
+    'database\migrations\upgrade_20260810_profile_space_avatar_controls.sql',
+    'database\migrations\upgrade_20260810_forum_content_unlocks.sql',
+    'database\migrations\upgrade_20260810_forum_data_consistency.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -95,6 +101,13 @@ $required = @(
     'tools\test-moment-pinned-visibility.php',
     'tools\test-forum-comment-thread-contract.php',
     'tools\test-comment-voice-contract.php',
+    'tools\test-chat-experience-controls.php',
+    'tools\test-profile-space-avatar-controls.php',
+    'tools\test-forum-content-unlock-contract.php',
+    'tools\test-forum-legacy-paid-visibility.php',
+    'tools\test-private-forum-media-contract.php',
+    'tools\test-forum-data-consistency.php',
+    'tools\test-purchased-content-immutability.php',
     'tools\generate-requirement-verification.php',
     'tools\generate-reference.php',
     'tools\generate-api-html.php',
@@ -232,6 +245,41 @@ exit($invalid === [] ? 0 : 1);
         throw "Comment voice contract checks failed.`n$commentVoiceOutput"
     }
     Write-Host "Comment voice contract checks: passed"
+    $chatExperienceOutput = & $php.Source (Join-Path $root 'tools\test-chat-experience-controls.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Chat experience control checks failed.`n$chatExperienceOutput"
+    }
+    Write-Host "Chat experience control checks: passed"
+    $profileAvatarOutput = & $php.Source (Join-Path $root 'tools\test-profile-space-avatar-controls.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Profile-space avatar control checks failed.`n$profileAvatarOutput"
+    }
+    Write-Host "Profile-space avatar control checks: passed"
+    $forumUnlockOutput = & $php.Source (Join-Path $root 'tools\test-forum-content-unlock-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Forum content unlock contract checks failed.`n$forumUnlockOutput"
+    }
+    Write-Host "Forum content unlock contract checks: passed"
+    $forumConsistencyOutput = & $php.Source (Join-Path $root 'tools\test-forum-data-consistency.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Forum data consistency contract checks failed.`n$forumConsistencyOutput"
+    }
+    Write-Host "Forum data consistency contract checks: passed"
+    $forumLegacyVisibilityOutput = & $php.Source (Join-Path $root 'tools\test-forum-legacy-paid-visibility.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Forum legacy paid visibility contract checks failed.`n$forumLegacyVisibilityOutput"
+    }
+    Write-Host "Forum legacy paid visibility contract checks: passed"
+    $privateForumMediaOutput = & $php.Source (Join-Path $root 'tools\test-private-forum-media-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Private forum media contract checks failed.`n$privateForumMediaOutput"
+    }
+    Write-Host "Private forum media contract checks: passed"
+    $purchasedContentOutput = & $php.Source (Join-Path $root 'tools\test-purchased-content-immutability.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Purchased-content immutability contract checks failed.`n$purchasedContentOutput"
+    }
+    Write-Host "Purchased-content immutability contract checks: passed"
     Write-Host "PHP lint: passed ($($phpFiles.Count) files)"
 } else {
     Write-Host 'PHP is not in PATH; php -l was skipped.'

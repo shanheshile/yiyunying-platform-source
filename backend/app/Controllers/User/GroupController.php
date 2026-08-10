@@ -21,6 +21,7 @@ use Yiyunying\Services\MessageEditService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\MessagePresentationService;
 use Yiyunying\Services\NotificationService;
+use Yiyunying\Services\ProfileAvatarService;
 
 final class GroupController
 {
@@ -110,6 +111,7 @@ final class GroupController
     public static function saveUserSettings(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
+        AppService::requireFeature((int) $user['app_id'], 'chat_rooms');
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
         ChatRoomService::requireMember($user, $room);
         $groupId = (int) $request->input('group_id', 0);
@@ -147,6 +149,13 @@ final class GroupController
         $ownedLimit = max(0, (int) AppService::setting((int) $user['app_id'], $limitKey, 10));
         $defaultMemberLimit = max(2, (int) AppService::setting((int) $user['app_id'], $memberLimitKey, 500));
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
+        $icon = mb_substr(trim((string) $request->input('icon', '')), 0, 500);
+        if ($icon !== '') {
+            AppService::requireFeature(
+                (int) $user['app_id'],
+                $isChatroom ? 'chatroom_avatar_upload' : 'group_avatar_upload'
+            );
+        }
         $defaultJoinMode = $isChatroom ? ChatRoomService::JOIN_OPEN : ChatRoomService::JOIN_APPROVAL;
         $joinMode = ChatRoomService::joinMode($request->input('join_mode', $defaultJoinMode));
         $initialMemberIds = self::initialFriendIds($request, $user);
@@ -158,7 +167,7 @@ final class GroupController
             ]);
         }
         $roomId = Database::transaction(static function () use (
-            $request, $user, $name, $joinMode, $ownedLimit, $maxMembers, $roomKind, $entity, $initialMemberIds
+            $request, $user, $name, $icon, $joinMode, $ownedLimit, $maxMembers, $roomKind, $entity, $initialMemberIds
         ): int {
             Database::one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $user['id']]);
             $owned = (int) (Database::one(
@@ -177,7 +186,7 @@ final class GroupController
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], $name,
-                    mb_substr((string) $request->input('icon', ''), 0, 500),
+                    $icon,
                     mb_substr((string) $request->input('description', ''), 0, 1000),
                     ContentTagService::encode($request->input('tags', [])),
                     $roomKind,
@@ -259,8 +268,18 @@ final class GroupController
     public static function update(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request);
+        AppService::requireFeature((int) $user['app_id'], 'chat_rooms');
         $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
         ChatRoomService::requireManager($user, $room);
+        if (array_key_exists('icon', $request->all())) {
+            $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+            AppService::requireFeature(
+                (int) $user['app_id'],
+                $roomKind === ChatRoomService::ROOM_CHATROOM
+                    ? 'chatroom_avatar_upload'
+                    : 'group_avatar_upload'
+            );
+        }
         $before = ChatRoomService::detail($room, (int) $user['id']);
         $name = array_key_exists('name', $request->all())
             ? Validator::string($request->input('name'), 'name', 1, 100) : (string) $room['name'];
@@ -288,6 +307,40 @@ final class GroupController
         $after = ChatRoomService::detail($afterRoom, (int) $user['id']);
         LogService::userOperation($request, $user, 'group', 'update', (int) $room['id'], ['before' => $before, 'after' => $after]);
         return Response::success(['room' => $after], '群资料已更新');
+    }
+
+    public static function avatar(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = self::user($request);
+        AppService::requireFeature((int) $user['app_id'], 'chat_rooms');
+        $room = ChatRoomService::userRoom($user, (int) $params['room_id'], true);
+        ChatRoomService::requireManager($user, $room);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        AppService::requireFeature(
+            (int) $user['app_id'],
+            $roomKind === ChatRoomService::ROOM_CHATROOM
+                ? 'chatroom_avatar_upload'
+                : 'group_avatar_upload'
+        );
+        $result = ProfileAvatarService::upload($roomKind, (int) $room['id']);
+        Database::execute(
+            'UPDATE chat_rooms SET icon = ?, updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
+            [(string) $result['avatar'], (int) $room['id'], (int) $user['admin_id'], (int) $user['app_id']]
+        );
+        $updated = ChatRoomService::adminRoom(
+            (int) $user['admin_id'],
+            (int) $user['app_id'],
+            (int) $room['id']
+        );
+        LogService::userOperation($request, $user, $roomKind, 'avatar_update', (int) $room['id']);
+        return Response::success(
+            $result + [
+                'icon' => (string) $result['avatar'],
+                'room' => ChatRoomService::detail($updated, (int) $user['id']),
+            ],
+            $roomKind === ChatRoomService::ROOM_CHATROOM ? '聊天室头像上传成功' : '群聊头像上传成功',
+            201
+        );
     }
 
     public static function dissolve(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -747,6 +800,7 @@ final class GroupController
             throw new HttpException('你已被禁言', 403, 403, ['mute_until' => $member['mute_until']]);
         }
         $payload = MessageMediaService::userPayload($user, $request->all());
+        MessageMediaService::assertChatFeatures((int) $user['app_id'], $payload);
         $tagsJson = ContentTagService::encode($request->input('tags', []));
         $reply = self::replyId($room, (int) $request->input('reply_to_message_id', 0));
         $id = Database::transaction(static function () use ($user, $room, $payload, $tagsJson, $reply): int {

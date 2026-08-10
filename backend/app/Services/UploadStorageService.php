@@ -31,21 +31,25 @@ final class UploadStorageService
         $scene = mb_substr(trim($scene) !== '' ? trim($scene) : 'general', 0, 40);
         $originalUpload = self::boolean($options['original_upload'] ?? false);
         $requestedMode = $originalUpload ? 'original' : 'optimized';
+        $privateUpload = self::privateScene($scene);
         if ($originalUpload && !(bool) AppService::setting($appId, 'media_original_upload_enabled', true)) {
             throw new HttpException('当前应用不允许上传原图或原视频，请关闭原媒体开关后重试', 0, 422);
         }
 
+        $storageClause = $privateUpload
+            ? " AND file_path LIKE 'private/%'"
+            : " AND file_path NOT LIKE 'private/%'";
         $existing = Database::one(
             'SELECT * FROM uploads WHERE admin_id = ? AND app_id = ? AND sha256 = ?
              AND (original_size_bytes = ? OR (original_size_bytes = 0 AND size_bytes = ?))
-             AND original_name = ? AND upload_mode = ? AND status = 1 ORDER BY id LIMIT 1',
+             AND original_name = ? AND upload_mode = ? AND status = 1' . $storageClause . ' ORDER BY id LIMIT 1',
             [$adminId, $appId, $sha256, $size, $size, mb_substr($original, 0, 255), $requestedMode]
         );
         if ($existing !== null && self::physicalExists((string) $existing['file_path'])) {
             $sameOwner = Database::one(
                  'SELECT * FROM uploads WHERE admin_id = ? AND app_id = ? AND user_id <=> ? AND scene = ?
                   AND sha256 = ? AND (original_size_bytes = ? OR (original_size_bytes = 0 AND size_bytes = ?))
-                  AND original_name = ? AND upload_mode = ? AND status = 1 ORDER BY id DESC LIMIT 1',
+                  AND original_name = ? AND upload_mode = ? AND status = 1' . $storageClause . ' ORDER BY id DESC LIMIT 1',
                 [$adminId, $appId, $userId, $scene, $sha256, $size, $size, mb_substr($original, 0, 255), $requestedMode]
             );
             if ($sameOwner !== null) return self::result($sameOwner, true, false);
@@ -71,17 +75,18 @@ final class UploadStorageService
             return self::result($logical, true, true);
         }
 
-        $relativeDir = 'uploads/' . $appId . '/' . date('Y/m');
-        $publicDir = YIYUNYING_ROOT . '/public/' . $relativeDir;
-        if (!is_dir($publicDir) && !mkdir($publicDir, 0775, true) && !is_dir($publicDir)) {
+        $relativeDir = ($privateUpload ? 'private/uploads/' : 'uploads/') . $appId . '/' . date('Y/m');
+        $storageRoot = YIYUNYING_ROOT . ($privateUpload ? '/storage/' : '/public/');
+        $storageDir = $storageRoot . $relativeDir;
+        if (!is_dir($storageDir) && !mkdir($storageDir, 0775, true) && !is_dir($storageDir)) {
             throw new HttpException('创建上传目录失败', -1, 500);
         }
         $stored = bin2hex(random_bytes(16)) . '.' . $extension;
-        $originalPath = $publicDir . '/' . $stored;
+        $originalPath = $storageDir . '/' . $stored;
         if (!move_uploaded_file($tmp, $originalPath)) throw new HttpException('保存上传文件失败', -1, 500);
         $originalRelative = str_replace('\\', '/', $relativeDir) . '/' . $stored;
         $baseUrl = rtrim((string) config('app.url'), '/');
-        $originalUrl = $baseUrl . '/' . $originalRelative;
+        $originalUrl = $privateUpload ? '' : $baseUrl . '/' . $originalRelative;
         $optimize = !$originalUpload && (bool) AppService::setting($appId, 'media_optimize_by_default', true);
         if (str_contains(mb_strtolower($scene), '表情') || str_contains(strtolower($scene), 'sticker')) {
             $optimize = !$originalUpload && (bool) AppService::setting($appId, 'sticker_optimize_enabled', true);
@@ -99,10 +104,12 @@ final class UploadStorageService
                 'thumbnail_path' => '', 'width' => 0, 'height' => 0,
             ];
         $mainPath = (string) $optimization['path'];
-        $relative = self::relativePublicPath($mainPath);
-        $url = $baseUrl . '/' . $relative;
+        $relative = self::relativeStoredPath($mainPath, $privateUpload);
+        $url = $privateUpload ? '' : $baseUrl . '/' . $relative;
         $thumbnailPath = (string) ($optimization['thumbnail_path'] ?? '');
-        $thumbnailUrl = $thumbnailPath !== '' ? $baseUrl . '/' . self::relativePublicPath($thumbnailPath) : '';
+        $thumbnailUrl = !$privateUpload && $thumbnailPath !== ''
+            ? $baseUrl . '/' . self::relativeStoredPath($thumbnailPath, false)
+            : '';
         $mainSize = max(0, (int) ($optimization['size_bytes'] ?? filesize($mainPath)));
         $mainMime = trim((string) ($optimization['mime_type'] ?? '')) ?: $mime;
         $uploadMode = $originalUpload ? 'original' : 'optimized';
@@ -159,15 +166,34 @@ final class UploadStorageService
     private static function physicalExists(string $relative): bool
     {
         $relative = ltrim(str_replace('\\', '/', $relative), '/');
-        return $relative !== '' && is_file(YIYUNYING_ROOT . '/public/' . $relative);
+        if ($relative === '') return false;
+        $root = str_starts_with($relative, 'private/') ? '/storage/' : '/public/';
+        return is_file(YIYUNYING_ROOT . $root . $relative);
     }
 
-    private static function relativePublicPath(string $absolute): string
+    public static function privatePhysicalPath(string $relative): ?string
     {
-        $root = str_replace('\\', '/', YIYUNYING_ROOT . '/public/');
+        $relative = ltrim(str_replace('\\', '/', $relative), '/');
+        if (!str_starts_with($relative, 'private/')) return null;
+        $root = realpath(YIYUNYING_ROOT . '/storage/private');
+        $path = realpath(YIYUNYING_ROOT . '/storage/' . $relative);
+        if ($root === false || $path === false || !is_file($path)) return null;
+        $root = rtrim(str_replace('\\', '/', $root), '/') . '/';
+        $normalized = str_replace('\\', '/', $path);
+        return str_starts_with($normalized, $root) ? $path : null;
+    }
+
+    private static function relativeStoredPath(string $absolute, bool $private): string
+    {
+        $root = str_replace('\\', '/', YIYUNYING_ROOT . ($private ? '/storage/' : '/public/'));
         $path = str_replace('\\', '/', $absolute);
-        if (!str_starts_with($path, $root)) throw new HttpException('媒体优化结果不在公开上传目录内', -1, 500);
+        if (!str_starts_with($path, $root)) throw new HttpException('媒体优化结果不在指定上传目录内', -1, 500);
         return ltrim(substr($path, strlen($root)), '/');
+    }
+
+    private static function privateScene(string $scene): bool
+    {
+        return strtolower(trim($scene)) === 'forum_section';
     }
 
     private static function boolean(mixed $value): bool

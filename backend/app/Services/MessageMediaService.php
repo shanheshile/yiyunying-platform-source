@@ -12,6 +12,9 @@ final class MessageMediaService
         'image', 'sticker', 'audio', 'video', 'file', 'favorite', 'moment_share',
         'red_packet', 'transfer', 'contact_card', 'gift', 'location',
     ];
+    private const PUBLIC_MEDIA_TARGET_TYPES = [
+        'forum_post', 'forum_comment', 'forum_section', 'moment', 'moment_comment',
+    ];
     private const MAX_ATTACHMENTS = 200;
 
     public static function userPayload(array $user, array $data): array
@@ -25,6 +28,71 @@ final class MessageMediaService
         );
     }
 
+    /**
+     * Enforce app-level chat composer controls after attachment normalization.
+     * Camera/album provenance comes only from the authenticated, persisted upload
+     * record. Client attachment metadata is presentation data and is never an
+     * authorization source.
+     */
+    public static function assertChatFeatures(int $appId, array $payload): void
+    {
+        $attachments = is_array($payload['attachments'] ?? null) ? $payload['attachments'] : [];
+        if ($attachments === []) return;
+        $contactCardEnabled = AppService::featureEnabled($appId, 'chat_contact_card', true);
+        $cameraEnabled = AppService::featureEnabled($appId, 'chat_camera', true);
+        $albumEnabled = AppService::featureEnabled($appId, 'chat_album', true);
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) continue;
+            $mediaType = strtolower(trim((string) ($attachment['media_type'] ?? '')));
+            if ($mediaType === 'contact_card' && !$contactCardEnabled) {
+                throw new HttpException('管理员已关闭聊天名片功能', 403, 403);
+            }
+        }
+        if ($cameraEnabled && $albumEnabled) return;
+
+        $uploadScenes = self::trustedUploadScenes($appId, (int) ($payload['admin_id'] ?? 0), $attachments);
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) continue;
+            $uploadId = max(0, (int) ($attachment['upload_id'] ?? 0));
+            $scene = $uploadScenes[$uploadId] ?? '';
+            if ($scene === 'chat_camera' && !$cameraEnabled) {
+                throw new HttpException('管理员已关闭聊天拍摄功能', 403, 403);
+            }
+            if ($scene === 'chat_album' && !$albumEnabled) {
+                throw new HttpException('管理员已关闭聊天相册功能', 403, 403);
+            }
+        }
+    }
+
+    /** @return array<int, string> */
+    private static function trustedUploadScenes(int $appId, int $adminId, array $attachments): array
+    {
+        $uploadIds = [];
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) continue;
+            $uploadId = max(0, (int) ($attachment['upload_id'] ?? 0));
+            if ($uploadId > 0) $uploadIds[$uploadId] = true;
+        }
+        if ($uploadIds === []) return [];
+        $ids = array_keys($uploadIds);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $where = "id IN ({$placeholders}) AND app_id = ? AND status = 1";
+        $query = array_merge($ids, [$appId]);
+        if ($adminId > 0) {
+            $where .= ' AND admin_id = ?';
+            $query[] = $adminId;
+        }
+        $rows = Database::all("SELECT id, scene FROM uploads WHERE {$where}", $query);
+        $scenes = [];
+        foreach ($rows as $row) {
+            $scene = strtolower(trim((string) ($row['scene'] ?? '')));
+            if (in_array($scene, ['chat_camera', 'chat_album'], true)) {
+                $scenes[(int) $row['id']] = $scene;
+            }
+        }
+        return $scenes;
+    }
+
     public static function adminPayload(array $admin, int $appId, array $data): array
     {
         return self::payload((int) $admin['id'], $appId, null, (int) $admin['id'], $data);
@@ -33,7 +101,13 @@ final class MessageMediaService
     public static function save(string $targetType, int $targetId, array $payload): void
     {
         $sort = 0;
+        $publicMedia = self::isPublicMediaTarget($targetType);
         foreach ($payload['attachments'] as $attachment) {
+            $fileName = $publicMedia
+                ? self::publicFileName((string) $attachment['media_type'], $sort + 1)
+                : (string) $attachment['file_name'];
+            $metadata = is_array($attachment['metadata'] ?? null) ? $attachment['metadata'] : [];
+            if ($publicMedia) $metadata = self::sanitizePublicMetadata($metadata);
             Database::insert(
                 'INSERT INTO media_attachments
                  (admin_id, app_id, owner_user_id, owner_admin_id, target_type, target_id, media_type,
@@ -44,10 +118,10 @@ final class MessageMediaService
                     (int) $payload['admin_id'], (int) $payload['app_id'], $payload['owner_user_id'],
                     $payload['owner_admin_id'], $targetType, $targetId, (string) $attachment['media_type'],
                     $attachment['upload_id'], $attachment['sticker_id'], (string) $attachment['url'],
-                    (string) $attachment['thumbnail_url'], (string) $attachment['file_name'],
+                    (string) $attachment['thumbnail_url'], $fileName,
                     (string) $attachment['mime_type'], (int) $attachment['size_bytes'],
                     (int) $attachment['width'], (int) $attachment['height'], (int) $attachment['duration_ms'],
-                    $sort++, json_encode($attachment['metadata'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    $sort++, json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 ]
             );
         }
@@ -60,6 +134,48 @@ final class MessageMediaService
             [(int) $payload['admin_id'], (int) $payload['app_id'], $targetType, $targetId]
         );
         self::save($targetType, $targetId, $payload);
+    }
+
+    public static function assertPrivateForumUploads(array $payload): void
+    {
+        $ids = [];
+        foreach ((array) ($payload['attachments'] ?? []) as $attachment) {
+            $uploadId = is_array($attachment) ? max(0, (int) ($attachment['upload_id'] ?? 0)) : 0;
+            $stickerId = is_array($attachment) ? max(0, (int) ($attachment['sticker_id'] ?? 0)) : 0;
+            if ($uploadId <= 0 || $stickerId > 0) {
+                throw new HttpException('受保护章节仅允许使用论坛章节私有上传，不支持贴纸或公开媒体地址', 0, 422);
+            }
+            $ids[$uploadId] = true;
+        }
+        if ($ids === []) return;
+        $values = array_keys($ids);
+        $placeholders = implode(',', array_fill(0, count($values), '?'));
+        $row = Database::one(
+            "SELECT COUNT(DISTINCT id) AS total FROM uploads
+             WHERE id IN ({$placeholders}) AND admin_id = ? AND app_id = ? AND status = 1
+               AND scene = 'forum_section' AND file_path LIKE 'private/%'",
+            array_merge($values, [(int) $payload['admin_id'], (int) $payload['app_id']])
+        );
+        if ((int) ($row['total'] ?? 0) !== count($values)) {
+            throw new HttpException('受保护章节的附件必须通过论坛私有上传通道重新上传', 0, 422);
+        }
+    }
+
+    public static function assertStoredPrivateForumAttachments(int $sectionId, int $appId): void
+    {
+        $unsafe = Database::one(
+            "SELECT ma.id FROM media_attachments ma
+             LEFT JOIN uploads up
+               ON up.id = ma.upload_id AND up.admin_id = ma.admin_id AND up.app_id = ma.app_id
+             WHERE ma.app_id = ? AND ma.target_type = 'forum_section' AND ma.target_id = ?
+               AND (ma.sticker_id IS NOT NULL OR ma.upload_id IS NULL OR up.id IS NULL OR up.status <> 1
+                    OR COALESCE(up.scene, '') <> 'forum_section' OR up.file_path NOT LIKE 'private/%')
+             LIMIT 1",
+            [$appId, $sectionId]
+        );
+        if ($unsafe !== null) {
+            throw new HttpException('已有附件不在私有存储中，请重新上传后再启用解锁保护', 0, 422);
+        }
     }
 
     public static function hydrate(array $items, string $targetType, ?int $appId = null): array
@@ -79,8 +195,8 @@ final class MessageMediaService
             $query[] = $appId;
         }
         $rows = Database::all(
-            "SELECT ma.id, ma.target_id, ma.media_type, ma.upload_id, ma.sticker_id, ma.url,
-                    COALESCE(NULLIF(up.thumbnail_url, ''), ma.thumbnail_url) AS thumbnail_url,
+            "SELECT ma.id, ma.app_id, ma.target_id, ma.media_type, ma.upload_id, ma.sticker_id, ma.url,
+                     COALESCE(NULLIF(up.thumbnail_url, ''), ma.thumbnail_url) AS thumbnail_url,
                     ma.file_name, ma.mime_type, ma.size_bytes, ma.width, ma.height, ma.duration_ms,
                     ma.sort_order, ma.metadata_json,
                     COALESCE(NULLIF(up.original_file_url, ''), NULLIF(up.file_url, ''), ma.url) AS original_file_url,
@@ -88,7 +204,8 @@ final class MessageMediaService
                     COALESCE(NULLIF(up.original_size_bytes, 0), ma.size_bytes) AS original_size_bytes,
                     COALESCE(up.is_animated, 0) AS is_animated,
                     COALESCE(up.upload_mode, 'original') AS upload_mode,
-                    COALESCE(up.optimization_status, 'not_required') AS optimization_status
+                     COALESCE(up.optimization_status, 'not_required') AS optimization_status,
+                     COALESCE(up.file_path, '') AS upload_file_path
              FROM media_attachments ma
              LEFT JOIN uploads up
                ON up.id = ma.upload_id AND up.admin_id = ma.admin_id AND up.app_id = ma.app_id
@@ -96,10 +213,21 @@ final class MessageMediaService
             $query
         );
         $grouped = [];
+        $publicMedia = self::isPublicMediaTarget($targetType);
         foreach ($rows as $row) {
             $targetId = (int) $row['target_id'];
             unset($row['target_id']);
             $row['id'] = (int) $row['id'];
+            $row['app_id'] = (int) $row['app_id'];
+            $privatePath = ltrim(str_replace('\\', '/', (string) $row['upload_file_path']), '/');
+            if (str_starts_with($privatePath, 'private/')) {
+                $signedUrl = PrivateForumMediaService::signedUrl($row['id'], $row['app_id']);
+                $row['url'] = $signedUrl;
+                $row['thumbnail_url'] = $signedUrl;
+                $row['original_file_url'] = $signedUrl;
+                $row['optimized_file_url'] = $signedUrl;
+            }
+            unset($row['upload_file_path'], $row['app_id']);
             $row['upload_id'] = $row['upload_id'] === null ? null : (int) $row['upload_id'];
             $row['sticker_id'] = $row['sticker_id'] === null ? null : (int) $row['sticker_id'];
             foreach (['size_bytes', 'original_size_bytes', 'width', 'height', 'duration_ms', 'sort_order'] as $key) {
@@ -108,9 +236,22 @@ final class MessageMediaService
             $row['is_animated'] = (int) $row['is_animated'] === 1;
             $row['metadata'] = self::decodeObject($row['metadata_json'] ?? null);
             unset($row['metadata_json']);
+            if ($publicMedia) {
+                $row['file_name'] = self::publicFileName((string) $row['media_type'], (int) $row['sort_order'] + 1);
+            }
             $grouped[$targetId][] = $row;
         }
         $grouped = self::hydrateCommerceMetadata($grouped, $appId);
+        if ($publicMedia) {
+            foreach ($grouped as &$attachments) {
+                foreach ($attachments as &$attachment) {
+                    $metadata = is_array($attachment['metadata'] ?? null) ? $attachment['metadata'] : [];
+                    $attachment['metadata'] = self::sanitizePublicMetadata($metadata);
+                }
+                unset($attachment);
+            }
+            unset($attachments);
+        }
         foreach ($items as &$item) {
             $attachments = $grouped[(int) ($item['id'] ?? 0)] ?? [];
             $item['attachments'] = $attachments;
@@ -250,8 +391,10 @@ final class MessageMediaService
             $upload = Database::one($sql, $query);
             if ($upload === null) throw new HttpException('上传文件不存在或无权使用', 404, 404);
         }
-        $url = trim((string) ($sticker['image_url'] ?? $upload['file_url'] ?? $raw['url'] ?? ''));
-        if ($url === '' || mb_strlen($url) > 1000 || preg_match('#^(https?://|/)#i', $url) !== 1) {
+        $privateUpload = is_array($upload)
+            && str_starts_with(ltrim(str_replace('\\', '/', (string) ($upload['file_path'] ?? '')), '/'), 'private/');
+        $url = $privateUpload ? '' : trim((string) ($sticker['image_url'] ?? $upload['file_url'] ?? $raw['url'] ?? ''));
+        if (!$privateUpload && ($url === '' || mb_strlen($url) > 1000 || preg_match('#^(https?://|/)#i', $url) !== 1)) {
             throw new HttpException('第 ' . ($index + 1) . ' 个附件地址无效', 0, 422);
         }
         $mime = mb_substr((string) ($upload['mime_type'] ?? $raw['mime_type'] ?? ''), 0, 150);
@@ -260,6 +403,8 @@ final class MessageMediaService
         if (!in_array($mediaType, self::MEDIA_TYPES, true)) throw new HttpException('不支持的附件类型：' . $mediaType, 0, 422);
         $metadata = $raw['metadata'] ?? [];
         if (!is_array($metadata)) $metadata = [];
+        // Never persist a client-claimed camera/album source as trusted provenance.
+        unset($metadata['source']);
         if ($mediaType === 'location') {
             $name = trim((string) ($metadata['location_name'] ?? $raw['file_name'] ?? ''));
             if ($name === '') throw new HttpException('位置名称不能为空', 0, 422);
@@ -286,7 +431,8 @@ final class MessageMediaService
             'upload_id' => $uploadId > 0 ? $uploadId : null,
             'sticker_id' => $stickerId > 0 ? $stickerId : null,
             'url' => $url,
-            'thumbnail_url' => mb_substr((string) ($sticker['thumbnail_url'] ?? $raw['thumbnail_url'] ?? ''), 0, 1000),
+            'thumbnail_url' => $privateUpload ? ''
+                : mb_substr((string) ($sticker['thumbnail_url'] ?? $raw['thumbnail_url'] ?? ''), 0, 1000),
             'file_name' => mb_substr((string) ($upload['original_name'] ?? $raw['file_name'] ?? ''), 0, 255),
             'mime_type' => $mime,
             'size_bytes' => max(0, (int) ($upload['size_bytes'] ?? $raw['size_bytes'] ?? 0)),
@@ -308,6 +454,55 @@ final class MessageMediaService
         if (preg_match('/\.(mp3|m4a|aac|wav|ogg|opus)$/', $path)) return 'audio';
         if (preg_match('/\.(mp4|webm|mov|mkv|avi)$/', $path)) return 'video';
         return 'file';
+    }
+
+    private static function isPublicMediaTarget(string $targetType): bool
+    {
+        return in_array($targetType, self::PUBLIC_MEDIA_TARGET_TYPES, true);
+    }
+
+    /**
+     * Public attachment metadata must never contain a client filename or a local
+     * device path. The traversal also sanitizes nested picker/optimizer payloads.
+     */
+    private static function sanitizePublicMetadata(array $metadata): array
+    {
+        $sanitized = [];
+        foreach ($metadata as $key => $value) {
+            if (is_string($key) && self::isPrivateFileMetadataKey($key)) continue;
+            $sanitized[$key] = is_array($value) ? self::sanitizePublicMetadata($value) : $value;
+        }
+        return $sanitized;
+    }
+
+    private static function isPrivateFileMetadataKey(string $key): bool
+    {
+        $withSnakeCase = preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', trim($key));
+        $normalized = strtolower((string) preg_replace('/[^a-z0-9]+/i', '_', (string) $withSnakeCase));
+        $normalized = trim($normalized, '_');
+        if (in_array($normalized, [
+            'name', 'filename', 'file_name', 'original_name', 'original_filename', 'original_file_name',
+            'display_name', 'client_name', 'client_filename', 'client_file_name', 'upload_filename',
+            'upload_file_name', 'path', 'local_path', 'file_path', 'original_path', 'source_path',
+            'client_path', 'temporary_path', 'temp_path', 'cache_path', 'uri', 'local_uri',
+            'file_uri', 'content_uri',
+        ], true)) return true;
+        return str_ends_with($normalized, '_path')
+            || str_ends_with($normalized, '_uri')
+            || str_ends_with($normalized, '_filename')
+            || str_ends_with($normalized, '_file_name');
+    }
+
+    private static function publicFileName(string $mediaType, int $position): string
+    {
+        $label = match ($mediaType) {
+            'image' => '图片',
+            'audio' => '音频',
+            'video' => '视频',
+            'sticker' => '表情',
+            default => '附件',
+        };
+        return $label . ' ' . max(1, $position);
     }
 
     /**

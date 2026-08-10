@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-当前统一版本：`2.7.12 (57)`。
+当前统一版本：`2.7.13 (58)`。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -77,6 +77,7 @@ corepack pnpm export:static
 
 - [项目文档索引](docs/PROJECT_INDEX.md)
 - [全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)
+- [2.7.13 Debug 测试版说明：聊天、媒体、资料与论坛收尾](docs/releases/2.7.13.md)
 - [2.7.12 发布说明：评论顶起与操作栏裁字修复](docs/releases/2.7.12.md)
 - [2.7.11 发布说明：语音评论、评论互动与通知定位](docs/releases/2.7.11.md)
 - [2.7.10 发布说明：置顶动态显示、评论预览与更新包复用](docs/releases/2.7.10.md)

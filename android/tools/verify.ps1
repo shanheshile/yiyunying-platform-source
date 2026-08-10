@@ -49,7 +49,9 @@ try {
         'assembleAdminDebug',
         'assembleUserDebug'
     )
-    & .\gradlew.bat --no-daemon --rerun-tasks @tasks
+    # Keep the verification deterministic and within a bounded memory/worker budget.
+    # Parallel Gradle builds previously competed for shared intermediates and page-file commit.
+    & .\gradlew.bat --no-daemon --no-parallel --max-workers=1 --rerun-tasks @tasks
     if ($LASTEXITCODE -ne 0) {
         throw "Android verification failed with exit code $LASTEXITCODE."
     }

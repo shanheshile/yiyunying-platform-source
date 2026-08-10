@@ -255,7 +255,8 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="52dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="64dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
@@ -274,18 +275,20 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="每节可独立设置免费或余额解锁。"
+                            android:text="正文、章节和附件都可分别设置公开、付费或定时解锁。"
                             android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                             android:textColor="@color/on_surface_variant" />
                     </LinearLayout>
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/addSectionButton"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="@style/Widget.Material3.Button.TonalButton"
                         android:layout_width="wrap_content"
                         android:layout_height="44dp"
                         android:minWidth="112dp"
-                        android:text="添加内容节"
+                        android:text="添加章节"
+                        android:textColor="@color/on_forum_chapter_container"
+                        app:backgroundTint="@color/forum_chapter_container"
                         app:icon="@drawable/ic_add" />
                 </LinearLayout>
 
@@ -302,7 +305,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="付费设置"
+                android:text="正文解锁"
                 android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
                 android:visibility="gone" />
 
@@ -311,14 +314,21 @@
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:layout_marginTop="4dp"
-                android:text="整篇内容需要余额解锁"
+                android:text="正文需要余额解锁"
+                android:visibility="gone" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/scheduledSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="正文按日期和时间自动解锁"
                 android:visibility="gone" />
 
             <TextView
                 android:id="@+id/paidHelper"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="整篇付费与分节付费不能同时启用。付费后仅购买者可查看受保护内容。"
+                android:text="正文、每个章节和每个附件可独立选择解锁规则；同时开启付费和定时表示可提前购买，也会在到期后自动公开。"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                 android:textColor="@color/on_surface_variant"
                 android:visibility="gone" />
@@ -347,12 +357,32 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/unlockAtLayout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="自动解锁时间"
+                    android:visibility="gone"
+                    app:helperText="点击选择日期和时间；服务器按绝对时间执行解锁">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/unlockAtInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:cursorVisible="false"
+                        android:focusable="false"
+                        android:inputType="none" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/paidPreviewLayout"
                     style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:hint="免费预览内容"
+                    android:hint="锁定时显示的预览（可选）"
                     app:counterEnabled="true"
                     app:counterMaxLength="1000">
 

@@ -13,6 +13,7 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.SeekBar;
 
 import androidx.test.core.app.ApplicationProvider;
 
@@ -120,6 +121,26 @@ public final class VisualInputRuntimeTest {
         MediaViewRenderer.render(context, container, new JsonArray());
         assertEquals(View.GONE, container.getVisibility());
         assertEquals(0, container.getChildCount());
+    }
+
+    @Test
+    public void recordedVoiceCommentShowsAnExplicitDraggableProgressBar() {
+        LinearLayout container = new LinearLayout(context);
+        JsonObject voice = attachment("audio", "评论语音.m4a", 12_000L);
+        voice.addProperty("mime_type", "audio/mp4");
+        JsonObject metadata = new JsonObject();
+        metadata.addProperty("audio_kind", "voice");
+        voice.add("metadata", metadata);
+        JsonArray attachments = new JsonArray();
+        attachments.add(voice);
+
+        MediaViewRenderer.render(context, container, attachments);
+
+        List<SeekBar> progressBars = descendants(container, SeekBar.class);
+        assertEquals(1, progressBars.size());
+        assertEquals("语音播放进度，可手动拖动",
+            progressBars.get(0).getContentDescription().toString());
+        assertEquals(12_000, progressBars.get(0).getMax());
     }
 
     private JsonObject attachment(String type, String name, long durationMs) {
