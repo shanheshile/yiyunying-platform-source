@@ -2,11 +2,11 @@
 
 > 写给一台完全没有项目上下文的新电脑上的新 AI/新会话。先读本文件，再读 `docs/CURRENT_STATUS.md` 和 `docs/releases/2.7.14.md`。
 >
-> 状态时间：2026-08-11（Asia/Shanghai）。这是发布过程中的真实中间状态，不是最终上线完成证明。
+> 状态时间：2026-08-11（Asia/Shanghai）。2.7.14 Debug 测试版已经上线并完成 Git 标签与 E 盘非覆盖归档；真机验收仍未完成。
 
 ## 0. 一句话结论
 
-源码已经推进到 `2.7.14 (59)`，四端 Debug 本地发布候选已构建并通过自动化与制品校验；线上生产仍是 `2.7.13 (58)`。`2.7.14` 尚未部署，2026-08-11 内容审核迁移尚未在生产执行，生产/公网回读、真机覆盖安装、最终提交/标签和 E 盘归档也尚未完成。绝对不要把“本地候选完成”写成“线上 59 已发布”。
+`2.7.14 (59)` 四端非强制 Debug 测试更新已经上线：后端、审核迁移、四包、更新策略、静态下载中心及独立回读通过；最终源码以注释标签 `v2.7.14-debug` 固定，并已复制到 E 盘全新归档且完成恢复演练。它仍是 Debug 签名且使用 HTTP，Android 真机覆盖安装尚未验收，不能称为正式商用 Release。
 
 ## 1. 项目身份与唯一源码
 
@@ -16,14 +16,14 @@
 - 旧电脑规范源码目录：`C:\Users\Administrator\Documents\易云后台\github-source`。
 - 唯一规范源码是上面的 Git 仓库；工作区根目录、旧 ZIP、发布副本、历史解压目录和 Codex 会话都不是源码来源。
 - 当前源码版本：Android `2.7.14`，`versionCode=59`。
-- 当前线上版本：`2.7.13`，`versionCode=58`，四端非强制 Debug 测试更新。
+- 当前线上版本：`2.7.14`，`versionCode=59`，四端非强制 Debug 测试更新。
 - Android 四端包名：
   - 平台总控：`xyz.jjmxg.yiyunying.platformowner.debug`
   - 授权平台：`xyz.jjmxg.yiyunying.authorized.debug`
   - 管理员：`xyz.jjmxg.yiyunying.admin.debug`
   - 用户：`xyz.jjmxg.yiyunying.user.debug`
 
-当前工作区包含尚未形成最终发布提交的 `2.7.14` 实现与制品。接手时先运行 `git status --short --branch`，保护全部已有修改；不要重置、覆盖或从旧归档反向拷贝。
+已推送的源码实现提交为 `8e8d5de7bdad09ef672d038fba57cab1565720e1`，远端部署代码哈希与本地一致；最终部署证据提交由注释标签 `v2.7.14-debug` 固定。精确最终提交 SHA、归档目录和外层 ZIP SHA-256 记录在 E 盘归档旁的 `RELEASE_STATE.md` 与顶层 manifest，不在本文件内硬编码会自我变化的值。接手时先运行 `git status --short --branch`，不要从旧归档反向覆盖规范源码。
 
 ## 2. 我们在做什么
 
@@ -70,7 +70,7 @@
 - HTTPS 跳转禁止降级到 HTTP；Release 构建禁止 HTTP，Debug 仅为兼容当前测试链路保留受控 HTTP。
 - 后端更新元数据缺少包名、大小或 SHA-256 时失败关闭，不向客户端提供不可可靠验证的更新。
 
-## 4. 本地验证证据
+## 4. 自动化、制品与生产证据
 
 - Android：226 项 Gradle 任务全部执行通过；四个 variant 各 75 个 suites、260 项 tests，均 0 failure、0 skipped，合计 1,040 项 tests；四端 Lint、Debug 构建及包身份检查通过。
 - 后端 `backend/tools/check.ps1`：189 个 PHP 文件、215 张表、769 条路由、413 个文档端点及全部合同检查通过。
@@ -90,16 +90,25 @@
 
 它是与历史 Debug 安装连续的候选证书，不是受保护的正式生产 Release 证书。
 
+### 4.1 生产部署与回读
+
+- 后端和 `upgrade_20260811_content_moderation_closure.sql` 已部署；实际结构为 9 列、2 索引、2 外键、0 个缺失设置、1 条迁移记录。远端代码哈希与本地一致，健康状态为 `ok / database connected`。
+- 第一次部署因索引行值校验兼容误判安全停止：代码成功回滚，数据库迁移已经完整生效，59 策略没有激活。修正校验后幂等重跑成功。这是正确的失败关闭，不要尝试撤销已成功的幂等结构迁移。
+- 四包已公开到 `/downloads/2.7.14/`；服务器完整 SHA-256、MIME、Content-Length、ETag 和 Range 206 均 4/4 通过。
+- 本机独立生命周期八项回读通过：四端 `58 -> 59 available=true`，四端 `59 -> available=false`。
+- 静态下载中心显示 2.7.14，四条下载链接通过。
+
 ## 5. 当前卡在哪里 / 尚未完成什么
 
-### 5.1 本次 2.7.14 发布未完成
-
-- 生产 APK、生命周期更新策略和静态下载页仍是 `2.7.13 (58)`；`2.7.14 (59)` 只存在于本地候选目录。
-- `backend/database/migrations/upgrade_20260811_content_moderation_closure.sql` 尚未在生产执行。
-- 尚未创建本轮生产代码/数据库/配置恢复点，尚未隐藏上传和原子公开四包，尚未事务发布四端策略。
-- 尚未完成服务器内部与独立公网四端 `58 -> 59 available=true`、`59 -> 59 available=false` 回读，也未复核公网 MIME、Content-Length、Range 和完整哈希。
 - 尚未在已安装 2.7.13 的 Android 真机验证断点续传、暂停恢复、未知来源授权、覆盖安装、手动删除和自动清理。
-- 尚未建立最终提交、发布标签和 E 盘最终归档。不要预先写出不存在的提交号、标签或归档校验和。
+- 真机未验不影响已经完成的服务器与公网回读，但严禁把两者混写成同一项验收。
+
+### 5.1 已完成的冻结与归档
+
+- 已推送源码实现提交 `8e8d5de7bdad09ef672d038fba57cab1565720e1`；部署证据文档另形成最终提交，并由注释标签 `v2.7.14-debug` 固定。
+- E 盘新建 `E:\YiyunyingArchive\yiyunying-v2.7.14-debug-final-<时间戳>\` 及同名 ZIP，没有覆盖或删除任何历史归档。
+- 归档包含四个被 Git 忽略的 APK、两份发布清单、源码 ZIP、仅含 `main` 与固定标签的完整 Git bundle、两份一致的 HANDOFF、测试/部署证据、`RELEASE_STATE.md` 和顶层逐文件哈希清单；已完成解压、逐文件哈希及从 bundle 克隆/检出标签的恢复演练。
+- 新电脑必须以归档旁 `RELEASE_STATE.md`、顶层 JSON manifest 及其 sidecar SHA 为实际目录、精确提交和校验值依据，不要猜测时间戳。
 
 ### 5.2 正式商用仍受阻
 
@@ -109,25 +118,26 @@
 - Android 14/15/16 多品牌真机、弱网、输入法、后台限制、通知、锁屏来电、拍摄、媒体和通话未形成正式验收矩阵。
 - 资金双重记账、并发幂等、退款/对账，四级 RBAC/ABAC 越权矩阵，以及 TURN/STUN、推送、地图、对象存储、AI/语音、支付回调、监控告警和恢复演练仍需独立生产证明。
 
-## 6. 线上 2.7.13 历史恢复点
+## 6. 生产恢复点与 2.7.13 历史
 
 必须保留 2.7.13，不删除历史：
+
+- 2.7.14 真正迁移前：`/www/backup/yiyunying/20260811-044109-pre-2.7.14-debug`。
+- 2.7.14 成功部署前第二份：`/www/backup/yiyunying/20260811-044605-pre-2.7.14-debug`。
+- 2.7.14 APK 和更新策略：`/www/backup/yiyunying/20260811-044801-android-2.7.14-debug`。
+- 2.7.14 静态站：`/www/backup/yiyunying/download-center/20260811-045152-pre-2.7.14-static`。
 
 - 生产代码、数据库和 `.env` 恢复点：`/www/backup/yiyunying/20260810-221916-pre-2.7.13-debug`。
 - APK 和更新策略恢复点：`/www/backup/yiyunying/20260810-223329-android-2.7.13-debug`。
 - 2.7.13 四端 APK 已在 `/downloads/2.7.13/` 原子公开；四条策略均为非强制更新。
 - 历史回读证据：四端 `57 -> 58` 可更新，`58 -> 58` 无更新，服务器内与公网均 4/4 通过。
-- 新部署失败时，按发布脚本的事务和目录补偿恢复到这组代码、数据库、APK 与策略；不要删除或覆盖该恢复点。
+- 后续发布失败时，按发布脚本的事务和目录补偿选择正确恢复点；不要删除或覆盖任何 2.7.13/2.7.14 恢复点。
 
 ## 7. 下一步计划
 
-1. 先核对当前工作区、`releases/2.7.14/release-manifest.json`、秘密扫描和全部自动化结果；不得丢失未提交实现。
-2. 建立新的生产代码/数据库/配置恢复点，只执行 `upgrade_20260811_content_moderation_closure.sql`，然后回读迁移和健康状态。
-3. 将四个 2.7.14 APK 上传到同一文件系统的全新隐藏目录，逐一验证包名、版本、字节、SHA-256 和签名，再以目录改名原子公开；不得覆盖 2.7.13。
-4. 在一个数据库事务中发布四条非强制 59 更新策略；任何关键步骤失败都恢复到第 6 节的 2.7.13 基线。
-5. 服务器内和独立公网分别验证四端 58→59、59→无更新、MIME、Content-Length、Range 和完整 SHA-256。
-6. 在至少一台已有 2.7.13 的真机完成更新最小闭环，并记录设备、Android 版本、网络中断点、安装授权和清理结果。
-7. 只有部署与回读全部通过后，才更新文档为“线上 59”，创建最终提交/标签，并将源码、Git 历史、四包、清单和交接文档迁到空间充足的 E 盘新目录；不删除任何旧归档。
+1. 在至少一台已有 2.7.13 的真机完成更新最小闭环，记录设备、Android 版本、网络中断点、安装授权、覆盖结果和清理结果。
+2. 轮换沟通过程中暴露过的部署凭据，保留不含秘密值的轮换记录。
+3. 若继续走正式商用路线，先完成独立 Release 签名、HTTPS、真机矩阵和生产安全验收，再使用全新且单调递增的 `versionCode`；不得覆盖 59。
 
 ## 8. 全新电脑如何接手
 
@@ -141,13 +151,22 @@ New-Item -ItemType Directory -Force C:\src | Out-Null
 gh repo clone shanheshile/yiyunying-platform-source C:\src\yiyunying-platform-source
 Set-Location C:\src\yiyunying-platform-source
 git fetch --all --tags --prune
+git cat-file -e 'v2.7.14-debug^{commit}'
+git switch --detach v2.7.14-debug
 git status --short --branch
 Get-Content .\android\version.properties
 ```
 
-注意：在 2.7.14 最终提交和标签真正建立前，GitHub 可能仍只包含旧的 2.7.13 冻结基线。本机当前 dirty 工作区和本地候选制品不能被旧远端覆盖。
+以 `v2.7.14-debug` 指向的提交为最终源码与部署证据锚点；不要直接检出会继续变化的未来 `main` 来复现 2.7.14。
 
-### 8.2 依赖与验证
+### 8.2 离线归档恢复
+
+- 在 E 盘 `YiyunyingArchive` 中选择 `yiyunying-v2.7.14-debug-final-<时间戳>`，先读同级/包内 `RELEASE_STATE.md` 与顶层 manifest。
+- 先校验外层 ZIP、manifest sidecar、归档内逐文件 SHA-256，再用归档内 Git bundle 克隆新目录并检出 `v2.7.14-debug`；恢复后的 `HEAD`、标签提交和 `RELEASE_STATE.md` 必须一致，工作树必须干净。
+- Git clone 只恢复源码和文档，不包含被 `.gitignore` 排除的 `releases/2.7.14/`；四个 APK 与两份清单必须从该 E 盘归档取得并复算哈希。
+- 不要把 E 盘路径当作跨电脑固定盘符；迁移到新介质后仍按 manifest 和 SHA-256 识别，不按文件名猜测。
+
+### 8.3 依赖与验证
 
 - Git、GitHub CLI、PowerShell、JDK 17、Android SDK/Build Tools 36、PHP 8.1+（建议与 CI 一致使用 8.3）、MySQL 8、Node 22.13+、pnpm。
 - 优先使用短 ASCII 路径，例如 `C:\src\yiyunying-platform-source`。
@@ -163,12 +182,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\android\tools\verify.p
 ## 9. 绝对不要再踩的坑
 
 1. 不要在工作区根目录、旧 ZIP、发布副本或历史归档上改代码；只在规范 Git 仓库工作。
-2. 不要把本地构建候选写成线上已部署；版本、迁移、策略、APK、公网回读和真机证据必须分别记录。
+2. 不要把“线上 Debug 测试部署”写成“正式商用完成”；版本、迁移、策略、APK、公网回读和真机证据必须分别记录。
 3. 不要复用 `versionCode=58` 或 `59` 发布不同 APK；已公开版本必须单调递增且不可覆盖。
 4. 不要无参数运行 `android/tools/release.ps1`；必须显式 `-Bump none`，并传入发布脚本要求的签名指纹与生产配置。
 5. 不要把 Debug APK 称为正式 Release，也不要提交或公开 keystore。
 6. 不要只更新下载页面或只上传一个包；后端、数据库迁移、四包、四条策略和生命周期回读必须作为原子批次。
-7. 不要在无完整数据库备份和回读计划时执行迁移；本轮只应部署 2026-08-11 审核迁移，不要重跑或改写 2026-08-10 历史迁移。
+7. 不要在无完整数据库备份和回读计划时执行迁移；2026-08-11 审核迁移已经生效，不要手工撤销、重复改写或破坏其幂等性。
 8. 不要覆盖 `/downloads/2.7.13/` 或删除其恢复点；新包先全部隐藏暂存、校验，再一次性公开。
 9. 不要接受缺少包名、大小、SHA-256 或签名不连续的更新元数据；不要允许 HTTPS 跳转降级到 HTTP。
 10. 不要把下载完成等同于安装成功；只有替换广播或已安装版本对账确认后才能自动删除 APK。
@@ -190,4 +209,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\android\tools\verify.p
 
 ## 11. 当前准确口径
 
-> 易运盈源码和四端 Debug 本地候选已推进到 2.7.14（59），审核、聊天展示、二维码与弹层、相机焦点、媒体堆叠/GIF、评论操作及可恢复更新链路已完成自动化和制品校验；线上生产仍为 2.7.13（58）。2.7.14 的生产迁移、部署、四端回读、真机安装、最终提交/标签和 E 盘归档尚未完成，因此不能称为已推送或正式商用 Release。
+> 易运盈 2.7.14（59）四端非强制 Debug 测试更新已完成后端、审核迁移、APK/策略、静态下载中心部署和生产/公网回读；审核、聊天展示、二维码与弹层、相机焦点、媒体堆叠/GIF、评论操作及可恢复更新链路已通过自动化和制品校验。最终源码已由 `v2.7.14-debug` 固定，并完成 E 盘非覆盖归档与恢复演练。它仍使用 Debug 签名与 HTTP，真机覆盖安装尚未验收，不能称为正式商用 Release。
