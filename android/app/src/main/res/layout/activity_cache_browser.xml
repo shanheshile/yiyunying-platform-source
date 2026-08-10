@@ -143,6 +143,9 @@
             android:layout_height="50dp"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:text="删除" />
+            android:text="删除"
+            android:contentDescription="删除所选缓存"
+            app:icon="@drawable/ic_delete"
+            app:iconTint="@color/error" />
     </LinearLayout>
 </LinearLayout>

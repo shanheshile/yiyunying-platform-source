@@ -46,6 +46,7 @@ import xyz.jjmxg.yiyunying.domain.module.FieldSpec;
 import xyz.jjmxg.yiyunying.domain.module.FieldType;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.DynamicFormDialog;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
 import xyz.jjmxg.yiyunying.ui.upload.FilePickerActivity;
@@ -334,6 +335,7 @@ public final class DocumentEditorActivity extends xyz.jjmxg.yiyunying.ui.common.
 
             MaterialButton removeButton = new MaterialButton(this);
             removeButton.setText("移除");
+            ActionIconResolver.apply(removeButton, "移除附件 " + attachment.name, 0);
             int target = index;
             removeButton.setOnClickListener(view -> {
                 attachments.remove(target);
@@ -407,6 +409,8 @@ public final class DocumentEditorActivity extends xyz.jjmxg.yiyunying.ui.common.
         boolean visible = role == Role.USER && documentId > 0;
         binding.favoriteButton.setVisibility(visible ? View.VISIBLE : View.GONE);
         binding.favoriteButton.setText(favorited ? "取消收藏" : "收藏笔记");
+        ActionIconResolver.apply(binding.favoriteButton,
+            favorited ? "取消收藏这篇笔记" : "收藏这篇笔记", 0);
     }
     private void share() {
         if (role != Role.USER) return;
@@ -474,9 +478,12 @@ public final class DocumentEditorActivity extends xyz.jjmxg.yiyunying.ui.common.
 
     private void updateShareButton() {
         if (binding == null || role != Role.USER || documentId <= 0) return;
-        if (shareCode.isEmpty()) binding.shareButton.setText("创建固定分享码");
-        else if (shareActive) binding.shareButton.setText("查看固定分享码");
-        else binding.shareButton.setText("重新启用固定分享码");
+        String shareAction;
+        if (shareCode.isEmpty()) shareAction = "创建固定分享码";
+        else if (shareActive) shareAction = "查看固定分享码";
+        else shareAction = "重新启用固定分享码";
+        binding.shareButton.setText(shareAction);
+        ActionIconResolver.apply(binding.shareButton, shareAction, R.drawable.ic_forward);
     }
 
     private void showShareMenu() {

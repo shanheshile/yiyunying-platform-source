@@ -173,7 +173,7 @@
         android:paddingHorizontal="12dp"
         android:visibility="gone">
         <TextView android:id="@+id/batchCount" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="已选择 0 个文件" android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/batchDelete" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="批量删除" android:textColor="@color/error" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/batchDelete" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="批量删除" android:textColor="@color/error" android:contentDescription="删除所选文件" app:icon="@drawable/ic_delete" app:iconTint="@color/error" />
         <com.google.android.material.button.MaterialButton android:id="@+id/batchCancel" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="取消" />
     </LinearLayout>
 

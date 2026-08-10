@@ -905,6 +905,42 @@
                     android:text="存储、下载与缓存"
                     app:icon="@drawable/ic_file" />
 
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/autoDeleteUpdatePackages"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="安装成功后自动删除安装包" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="4dp"
+                    android:text="默认关闭。只在系统确认软件更新安装成功后删除 APK，取消安装或下载中断不会删除。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/updatePackageHistoryButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="start|center_vertical"
+                    android:text="历史安装包"
+                    app:icon="@drawable/ic_file" />
+
+                <TextView
+                    android:id="@+id/updatePackageHistorySummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="8dp"
+                    android:text="暂无本机安装包"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="@color/on_surface_variant" />
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/updateButton"
                     style="@style/Widget.Material3.Button.TextButton"

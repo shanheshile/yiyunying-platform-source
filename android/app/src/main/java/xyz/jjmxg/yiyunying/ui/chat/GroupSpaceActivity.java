@@ -64,6 +64,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityGroupSpaceBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemRecordBinding;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.QrShareDialog;
 import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 import xyz.jjmxg.yiyunying.ui.social.SocialDirectoryActivity;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
@@ -1197,28 +1198,21 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         String displayName = String.valueOf(binding.groupName.getText());
         try {
             Bitmap bitmap = new BarcodeEncoder().encodeBitmap(payload, BarcodeFormat.QR_CODE, 800, 800);
-            ImageView image = new ImageView(this);
-            image.setImageBitmap(bitmap);
-            int padding = dp(20);
-            image.setPadding(padding, padding, padding, padding);
-            new YiyunyingDialogBuilder(this)
-                .setTitle(displayName)
-                .setMessage(entityNumberLabel() + "：" + groupNumber + (groupCreatedAt.isEmpty() ? "" : "\n创建时间：" + groupCreatedAt))
-                .setView(image)
-                .setPositiveButton("分享", (dialog, which) -> {
+            String details = entityNumberLabel() + "：" + groupNumber
+                + (groupCreatedAt.isEmpty() ? "" : "\n创建时间：" + groupCreatedAt);
+            QrShareDialog.show(this, bitmap, displayName, details, "复制" + entityNumberLabel(),
+                (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_SEND);
                     intent.setType("text/plain");
                     intent.putExtra(Intent.EXTRA_TEXT, "邀请你加入" + entityLabel() + "「" + displayName + "」\n"
                         + entityNumberLabel() + "：" + groupNumber + "\n" + payload);
                     startActivity(Intent.createChooser(intent, "分享" + entityLabel()));
-                })
-                .setNeutralButton("复制" + entityNumberLabel(), (dialog, which) -> {
+                },
+                (dialog, which) -> {
                     ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                     clipboard.setPrimaryClip(ClipData.newPlainText("易运盈" + entityNumberLabel(), groupNumber));
                     toast(entityNumberLabel() + "已复制");
-                })
-                .setNegativeButton("关闭", null)
-                .show();
+                });
         } catch (Exception exception) {
             toast(entityLabel() + "二维码生成失败，请稍后重试");
         }

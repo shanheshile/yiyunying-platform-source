@@ -99,7 +99,7 @@ final class ChatRecordService
             [$conversationId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], (int) $user['id']]
         );
         if ($conversation === null) throw new HttpException('会话不存在或无权查看', 404, 404);
-        [$where, $query] = self::conditions($filters, 'm', 'private_message', "CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE 0 END", '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ?)');
+        [$where, $query] = self::conditions($filters, 'm', 'private_message', "CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE 0 END", '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ? OR viewer_friend.remark LIKE ?)');
         array_unshift($where, 'm.conversation_id = ?', 'm.status = 1', 'COALESCE(s.is_deleted, 0) = 0');
         array_unshift($query, $conversationId);
         $items = Database::all(
@@ -107,7 +107,9 @@ final class ChatRecordService
                     CASE WHEN recall.id IS NULL THEN m.content ELSE COALESCE(NULLIF(recall.notice_text, ''), '[消息已撤回]') END AS content,
                     m.created_at, COALESCE(s.is_favorite, 0) AS is_favorite,
                     (recall.id IS NOT NULL) AS recalled, recall.reason AS recall_reason, recall.notice_text AS recall_notice,
-                    COALESCE(NULLIF(p.nickname, ''), u.account,
+                    u.account AS sender_account, p.nickname AS sender_nickname,
+                    COALESCE(viewer_friend.remark, '') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account,
                       CASE m.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台' ELSE '用户' END) AS sender_name,
                     COALESCE(p.avatar, '') AS sender_avatar
              FROM messages m
@@ -115,42 +117,48 @@ final class ChatRecordService
              LEFT JOIN message_recalls recall ON recall.message_id = m.id
              LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE NULL END
              LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
              WHERE " . implode(' AND ', $where) . " ORDER BY m.id ASC LIMIT {$limit}",
-            array_merge([(int) $user['id']], $query)
+            array_merge([(int) $user['id'], (int) $user['id']], $query)
         );
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'private_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'private_message', (int) $user['app_id']);
-        return MessagePresentationService::hydrate($items, 'private');
+        return MessagePresentationService::hydrate($items, 'private', (int) $user['id']);
     }
 
     private static function groupRecords(array $user, int $roomId, array $filters, int $limit): array
     {
         $room = ChatRoomService::userRoom($user, $roomId, true);
         ChatRoomService::requireMember($user, $room);
-        [$where, $query] = self::conditions($filters, 'm', 'group_message', 'COALESCE(m.user_id, m.sender_admin_id, 0)', '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ?)');
+        [$where, $query] = self::conditions($filters, 'm', 'group_message', 'COALESCE(m.user_id, m.sender_admin_id, 0)', '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ? OR viewer_friend.remark LIKE ?)');
         array_unshift($where, 'm.room_id = ?', 'm.status = 1', 'COALESCE(s.is_deleted, 0) = 0');
         array_unshift($query, $roomId);
         $items = Database::all(
             "SELECT m.id, m.user_id, m.sender_type, m.sender_admin_id,
                     COALESCE(m.user_id, m.sender_admin_id, 0) AS sender_id,
                     m.content_type, m.content, m.tags_json, m.reply_to_message_id, m.created_at,
-                    COALESCE(NULLIF(p.nickname, ''), u.account,
+                    u.account AS sender_account, p.nickname AS sender_nickname,
+                    COALESCE(viewer_friend.remark, '') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account,
                       CASE m.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台' ELSE '群成员' END) AS sender_name,
                     COALESCE(p.avatar, '') AS sender_avatar, COALESCE(s.is_favorite, 0) AS is_favorite,
                     member.role
              FROM chat_room_messages m
              LEFT JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
              LEFT JOIN chat_room_members member ON member.room_id = m.room_id AND member.user_id = m.user_id
              LEFT JOIN communication_message_states s ON s.scope_type = 'group' AND s.message_id = m.id AND s.user_id = ?
              WHERE " . implode(' AND ', $where) . " ORDER BY m.id ASC LIMIT {$limit}",
-            array_merge([(int) $user['id']], $query)
+            array_merge([(int) $user['id'], (int) $user['id']], $query)
         );
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'group_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'group_message', (int) $user['app_id']);
-        return MessagePresentationService::hydrate($items, 'group');
+        return MessagePresentationService::hydrate($items, 'group', (int) $user['id']);
     }
 
     private static function serviceRecords(array $user, int $sessionId, array $filters, int $limit): array
@@ -190,7 +198,8 @@ final class ChatRecordService
         if ($filters['keyword'] !== '') {
             $like = '%' . $filters['keyword'] . '%';
             $keywordParts = [$keywordSql];
-            array_push($query, $like, $like, $like);
+            $keywordPlaceholderCount = max(1, substr_count($keywordSql, '?'));
+            for ($index = 0; $index < $keywordPlaceholderCount; $index++) $query[] = $like;
             if ($hasContentType) {
                 $keywordParts[] = "{$alias}.tags_json LIKE ?";
                 $query[] = $like;

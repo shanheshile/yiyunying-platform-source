@@ -585,17 +585,20 @@ final class CommunicationController
         }
         $keyword = trim((string) $request->input('keyword', ''));
         if ($keyword !== '') {
-            $where[] = '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ?)';
+            $where[] = '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ? OR viewer_friend.remark LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($query, $like, $like, $like);
+            array_push($query, $like, $like, $like, $like);
         }
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one(
             "SELECT COUNT(*) AS total FROM messages m
              LEFT JOIN message_user_states s ON s.message_id = m.id AND s.user_id = ?
-             LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE NULL END
-             LEFT JOIN user_profiles p ON p.user_id = u.id WHERE {$whereSql}",
-            array_merge([(int) $user['id']], $query)
+             LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' OR m.content_type = 'recall' THEN m.sender_id ELSE NULL END
+             LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
+             WHERE {$whereSql}",
+            array_merge([(int) $user['id'], (int) $user['id']], $query)
         )['total'] ?? 0);
         $items = Database::all(
             "SELECT m.id, m.sender_type, m.sender_id, m.receiver_user_id, m.title, m.content_type, m.tags_json,
@@ -605,7 +608,8 @@ final class CommunicationController
                     m.is_read, m.read_at, m.created_at, COALESCE(s.is_favorite, 0) AS is_favorite,
                     (r.id IS NOT NULL) AS recalled, r.reason AS recall_reason, r.notice_text AS recall_notice,
                     r.created_at AS recalled_at, u.account AS sender_account,
-                    COALESCE(NULLIF(p.nickname, ''), u.account,
+                    p.nickname AS sender_nickname, COALESCE(viewer_friend.remark, '') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account,
                       CASE m.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台'
                            WHEN 'system' THEN '系统' ELSE '用户' END) AS sender_name,
                     COALESCE(p.avatar, '') AS sender_avatar,
@@ -620,21 +624,23 @@ final class CommunicationController
                     COALESCE(call_callee_profile.avatar, '') AS call_callee_avatar
              FROM messages m LEFT JOIN message_user_states s ON s.message_id = m.id AND s.user_id = ?
              LEFT JOIN message_recalls r ON r.message_id = m.id
-             LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE NULL END
+             LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' OR m.content_type = 'recall' THEN m.sender_id ELSE NULL END
              LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
              LEFT JOIN voice_calls vc ON vc.private_message_id = m.id
              LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
              LEFT JOIN user_profiles call_caller_profile ON call_caller_profile.user_id = call_caller.id
              LEFT JOIN users call_callee ON call_callee.id = vc.callee_user_id
              LEFT JOIN user_profiles call_callee_profile ON call_callee_profile.user_id = call_callee.id
              WHERE {$whereSql} ORDER BY m.id " . ($sinceId > 0 ? 'ASC' : 'DESC') . " LIMIT {$limit} OFFSET {$offset}",
-            array_merge([(int) $user['id']], $query)
+            array_merge([(int) $user['id'], (int) $user['id']], $query)
         );
         if ($sinceId <= 0) $items = array_reverse($items);
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'private_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'private_message', (int) $user['app_id']);
-        $items = MessagePresentationService::hydrate($items, 'private');
+        $items = MessagePresentationService::hydrate($items, 'private', (int) $user['id']);
         $recallPolicy = AppService::messageRecallPolicy((int) $user['app_id']);
         $recallSeconds = (int) $recallPolicy['effective_seconds'];
         foreach ($items as &$item) {
@@ -812,7 +818,7 @@ final class CommunicationController
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'private_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'private_message', (int) $user['app_id']);
-        $items = MessagePresentationService::hydrate($items, 'private');
+        $items = MessagePresentationService::hydrate($items, 'private', (int) $user['id']);
         return $items[0] ?? [];
     }
 
@@ -1081,14 +1087,23 @@ final class CommunicationController
         $user = self::user($request, 'messages');
         $items = Database::all(
             "SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.receiver_user_id, m.content_type,
-                    CASE WHEN r.id IS NULL THEN m.content ELSE '[消息已撤回]' END AS content,
-                    m.created_at, s.updated_at AS favorited_at, (r.id IS NOT NULL) AS recalled,
-                    'private' AS scope_type, m.conversation_id AS target_id
+                     CASE WHEN r.id IS NULL THEN m.content ELSE '[消息已撤回]' END AS content,
+                     m.created_at, s.updated_at AS favorited_at, (r.id IS NOT NULL) AS recalled,
+                     'private' AS scope_type, m.conversation_id AS target_id,
+                     u.account AS sender_account, p.nickname AS sender_nickname,
+                     COALESCE(viewer_friend.remark, '') AS sender_remark,
+                     COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account, '用户') AS sender_name,
+                     COALESCE(p.avatar, '') AS sender_avatar
              FROM message_user_states s INNER JOIN messages m ON m.id = s.message_id
              LEFT JOIN message_recalls r ON r.message_id = m.id
+             LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' OR m.content_type = 'recall' THEN m.sender_id ELSE NULL END
+             LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = s.user_id
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
              WHERE s.user_id = ? AND s.is_favorite = 1 AND s.is_deleted = 0 AND m.app_id = ? ORDER BY s.updated_at DESC",
             [(int) $user['id'], (int) $user['app_id']]
         );
+        $items = MessagePresentationService::hydrate($items, 'private', (int) $user['id']);
         $otherStates = Database::all(
             'SELECT scope_type, target_id, message_id, updated_at AS favorited_at
              FROM communication_message_states
@@ -1099,22 +1114,39 @@ final class CommunicationController
             $scope = (string) $state['scope_type'];
             if ($scope === 'group') {
                 $row = Database::one(
-                    "SELECT id, room_id AS target_id, sender_type, COALESCE(user_id, sender_admin_id, 0) AS sender_id,
-                            content_type, content, created_at, 'group' AS scope_type
-                     FROM chat_room_messages WHERE id = ? AND room_id = ?",
-                    [(int) $state['message_id'], (int) $state['target_id']]
+                    "SELECT message.id, message.room_id AS target_id, message.sender_type,
+                            COALESCE(message.user_id, message.sender_admin_id, 0) AS sender_id,
+                            message.content_type, message.content, message.created_at, 'group' AS scope_type,
+                            sender.account AS sender_account, profile.nickname AS sender_nickname,
+                            COALESCE(viewer_friend.remark, '') AS sender_remark,
+                            COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(profile.nickname, ''), sender.account, '群成员') AS sender_name
+                     FROM chat_room_messages message
+                     LEFT JOIN users sender ON sender.id = message.user_id
+                     LEFT JOIN user_profiles profile ON profile.user_id = sender.id
+                     LEFT JOIN friends viewer_friend ON viewer_friend.app_id = message.app_id AND viewer_friend.user_id = ?
+                       AND viewer_friend.friend_user_id = sender.id AND viewer_friend.status = 1
+                     WHERE message.id = ? AND message.room_id = ?",
+                    [(int) $user['id'], (int) $state['message_id'], (int) $state['target_id']]
                 );
             } else {
                 $row = Database::one(
-                    "SELECT id, session_id AS target_id, sender_type, sender_id, 'text' AS content_type,
-                            content, created_at, 'service' AS scope_type
-                     FROM service_messages WHERE id = ? AND session_id = ?",
+                    "SELECT message.id, message.session_id AS target_id, message.sender_type, message.sender_id,
+                            'text' AS content_type, message.content, message.created_at, 'service' AS scope_type,
+                            CASE WHEN message.sender_type = 'user' THEN COALESCE(NULLIF(profile.nickname, ''), sender_user.account, '用户')
+                                 WHEN message.sender_type = 'admin' THEN COALESCE(NULLIF(sender_admin.nickname, ''), sender_admin.account, '客服')
+                                 ELSE '在线客服' END AS sender_name
+                     FROM service_messages message
+                     LEFT JOIN users sender_user ON message.sender_type = 'user' AND sender_user.id = message.sender_id
+                     LEFT JOIN user_profiles profile ON profile.user_id = sender_user.id
+                     LEFT JOIN admins sender_admin ON message.sender_type = 'admin' AND sender_admin.id = message.sender_id
+                     WHERE message.id = ? AND message.session_id = ?",
                     [(int) $state['message_id'], (int) $state['target_id']]
                 );
             }
             if ($row !== null) {
                 $row['favorited_at'] = $state['favorited_at'];
                 $row['recalled'] = (string) ($row['content_type'] ?? '') === 'recall';
+                $row = MessagePresentationService::hydrate([$row], $scope, (int) $user['id'])[0];
                 $items[] = $row;
             }
         }
@@ -1761,40 +1793,48 @@ final class CommunicationController
             self::conversation($user, $sourceId);
             $rows = Database::all(
                 "SELECT m.id, m.sender_type, m.sender_id, m.content_type, m.content, m.tags_json, m.created_at,
-                         p.nickname, u.account, COALESCE(NULLIF(p.nickname, ''), u.account, '用户') AS sender_name,
-                        COALESCE(p.avatar, '') AS sender_avatar
+                         u.account AS sender_account, p.nickname AS sender_nickname,
+                         COALESCE(viewer_friend.remark, '') AS sender_remark,
+                         COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account, '用户') AS sender_name,
+                         COALESCE(p.avatar, '') AS sender_avatar
                  FROM messages m LEFT JOIN message_recalls recall ON recall.message_id = m.id
                  LEFT JOIN users u ON u.id = CASE WHEN m.sender_type = 'user' THEN m.sender_id ELSE NULL END
                  LEFT JOIN user_profiles p ON p.user_id = u.id
+                 LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+                   AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
                  WHERE m.conversation_id = ? AND m.status = 1 AND recall.id IS NULL AND m.id IN ({$placeholders})
                  ORDER BY FIELD(m.id, {$order})",
-                array_merge([$sourceId], $ids)
+                array_merge([(int) $user['id'], $sourceId], $ids)
             );
             $rows = ContentTagService::hydrate($rows);
             $rows = MessageMediaService::hydrate($rows, 'private_message', (int) $user['app_id']);
             $rows = MessageForwardService::hydrate($rows, 'private_message', (int) $user['app_id']);
-            return MessagePresentationService::hydrate($rows, 'private');
+            return MessagePresentationService::hydrate($rows, 'private', (int) $user['id']);
         }
         if ($type === 'group') {
             $room = ChatRoomService::userRoom($user, $sourceId, true);
             ChatRoomService::requireMember($user, $room);
             $rows = Database::all(
                 "SELECT m.id, m.sender_type, COALESCE(m.user_id, m.sender_admin_id, 0) AS sender_id,
-                        m.content_type, m.content, m.tags_json, m.reply_to_message_id, m.created_at, p.nickname, u.account,
-                         COALESCE(NULLIF(p.nickname, ''), u.account,
+                        m.content_type, m.content, m.tags_json, m.reply_to_message_id, m.created_at,
+                         u.account AS sender_account, p.nickname AS sender_nickname,
+                         COALESCE(viewer_friend.remark, '') AS sender_remark,
+                         COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(p.nickname, ''), u.account,
                            CASE m.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台' ELSE '群成员' END) AS sender_name,
                         COALESCE(p.avatar, '') AS sender_avatar, member.role
                  FROM chat_room_messages m LEFT JOIN users u ON u.id = m.user_id
                  LEFT JOIN user_profiles p ON p.user_id = u.id
+                 LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+                   AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
                  LEFT JOIN chat_room_members member ON member.room_id = m.room_id AND member.user_id = m.user_id
                  WHERE m.room_id = ? AND m.status = 1 AND m.content_type <> 'recall' AND m.id IN ({$placeholders})
                  ORDER BY FIELD(m.id, {$order})",
-                array_merge([$sourceId], $ids)
+                array_merge([(int) $user['id'], $sourceId], $ids)
             );
             $rows = ContentTagService::hydrate($rows);
             $rows = MessageMediaService::hydrate($rows, 'group_message', (int) $user['app_id']);
             $rows = MessageForwardService::hydrate($rows, 'group_message', (int) $user['app_id']);
-            return MessagePresentationService::hydrate($rows, 'group');
+            return MessagePresentationService::hydrate($rows, 'group', (int) $user['id']);
         }
         $session = Database::one(
             'SELECT id FROM service_sessions WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ?',

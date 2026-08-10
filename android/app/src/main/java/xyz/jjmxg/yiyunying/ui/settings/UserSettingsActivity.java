@@ -43,6 +43,7 @@ import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
 import xyz.jjmxg.yiyunying.core.ThemeModeStore;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
+import xyz.jjmxg.yiyunying.data.update.UpdatePackageStore;
 import xyz.jjmxg.yiyunying.databinding.ActivityUserSettingsBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.ui.auth.ForgotPasswordActivity;
@@ -56,6 +57,7 @@ import xyz.jjmxg.yiyunying.ui.social.BlacklistActivity;
 import xyz.jjmxg.yiyunying.ui.social.SocialDirectoryActivity;
 import xyz.jjmxg.yiyunying.ui.upload.CacheManagementActivity;
 import xyz.jjmxg.yiyunying.ui.upload.MediaPickerActivity;
+import xyz.jjmxg.yiyunying.ui.upload.UpdatePackageHistoryActivity;
 
 public final class UserSettingsActivity extends SystemInsetActivity {
     private static final String EXTRA_SECTION = "section";
@@ -168,6 +170,18 @@ public final class UserSettingsActivity extends SystemInsetActivity {
                 ? "后续拍照和录像会保存到系统相册"
                 : "后续拍摄只用于发送，不会保存到系统相册", Snackbar.LENGTH_SHORT);
         });
+        UpdatePackageStore.reconcileInstalled(this);
+        binding.autoDeleteUpdatePackages.setChecked(UpdatePackageStore.autoDeleteAfterInstall(this));
+        binding.autoDeleteUpdatePackages.setOnCheckedChangeListener((button, checked) -> {
+            UpdatePackageStore.setAutoDeleteAfterInstall(this, checked);
+            showMessage(checked
+                ? "后续更新安装成功后会自动删除对应安装包"
+                : "后续更新安装成功后会保留安装包，可在历史中手动删除",
+                Snackbar.LENGTH_SHORT);
+        });
+        binding.updatePackageHistoryButton.setOnClickListener(view ->
+            UpdatePackageHistoryActivity.open(this));
+        renderUpdatePackageSummary();
         binding.saveButton.setOnClickListener(view -> save());
         binding.dynamicSaveButton.setOnClickListener(view -> save());
         binding.notificationSaveButton.setOnClickListener(view -> save());
@@ -281,6 +295,33 @@ public final class UserSettingsActivity extends SystemInsetActivity {
         super.onResume();
         updateAppearanceLabels();
         updatePermissionSummary();
+        UpdatePackageStore.reconcileInstalled(this);
+        renderUpdatePackageSummary();
+    }
+
+    private void renderUpdatePackageSummary() {
+        if (binding == null) return;
+        UpdatePackageStore.Summary summary = UpdatePackageStore.summary(this);
+        if (summary.packageCount == 0) {
+            binding.updatePackageHistorySummary.setText(summary.recordCount == 0
+                ? "暂无本机安装包"
+                : "当前没有保留的安装文件 · " + summary.recordCount + " 条安装历史");
+            return;
+        }
+        String detail = "本机安装包 " + summary.packageCount + " 个 · "
+            + updatePackageBytes(summary.totalBytes);
+        if (summary.partialCount > 0) detail += " · " + summary.partialCount + " 个可继续下载";
+        if (summary.readyCount > 0) detail += " · " + summary.readyCount + " 个可安装";
+        binding.updatePackageHistorySummary.setText(detail);
+    }
+
+    private static String updatePackageBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(Locale.CHINA, "%.1f KB", bytes / 1024d);
+        if (bytes < 1024L * 1024L * 1024L) {
+            return String.format(Locale.CHINA, "%.1f MB", bytes / 1024d / 1024d);
+        }
+        return String.format(Locale.CHINA, "%.2f GB", bytes / 1024d / 1024d / 1024d);
     }
 
     @Override protected void onSaveInstanceState(Bundle outState) {

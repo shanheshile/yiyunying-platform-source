@@ -1,13 +1,19 @@
 package xyz.jjmxg.yiyunying.ui.common;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.text.InputType;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
-import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
+import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
+import androidx.core.widget.TextViewCompat;
+
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
@@ -17,6 +23,7 @@ import com.google.gson.JsonObject;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.domain.module.ActionSpec;
 import xyz.jjmxg.yiyunying.domain.module.FieldSpec;
@@ -33,12 +40,14 @@ public final class DynamicFormDialog {
     public static void show(Context context, ActionSpec action, JsonObject item, Listener listener) {
         if (action.fields().isEmpty()) {
             if (action.confirmationRequired()) {
-                new YiyunyingDialogBuilder(context)
+                AlertDialog dialog = new YiyunyingDialogBuilder(context)
                     .setTitle(action.title())
                     .setMessage(action.destructive() ? "此操作会改变或删除数据，是否继续？" : "确认执行此操作？")
                     .setNegativeButton("取消", null)
-                    .setPositiveButton("确定", (dialog, which) -> listener.onSubmit(new JsonObject()))
-                    .show();
+                    .setPositiveButton("确定", (ignoredDialog, which) -> listener.onSubmit(new JsonObject()))
+                    .create();
+                dialog.setOnShowListener(ignored -> styleSubmit(dialog, action));
+                dialog.show();
             } else {
                 listener.onSubmit(new JsonObject());
             }
@@ -61,14 +70,15 @@ public final class DynamicFormDialog {
             controls.put(field, control);
         }
 
-        androidx.appcompat.app.AlertDialog dialog = new YiyunyingDialogBuilder(context)
+        AlertDialog dialog = new YiyunyingDialogBuilder(context)
             .setTitle(action.title())
             .setView(scroll)
             .setNegativeButton("取消", null)
             .setPositiveButton("确定", null)
             .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
-            .setOnClickListener(view -> {
+        dialog.setOnShowListener(ignored -> {
+            styleSubmit(dialog, action);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                 try {
                     JsonObject body = collect(controls);
                     dialog.dismiss();
@@ -76,8 +86,26 @@ public final class DynamicFormDialog {
                 } catch (IllegalArgumentException validationFailure) {
                     // collect() marks the exact invalid field; leaving the dialog open is intentional.
                 }
-            }));
+            });
+        });
         dialog.show();
+    }
+
+    private static void styleSubmit(AlertDialog dialog, ActionSpec action) {
+        Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (positive == null) return;
+        if (positive instanceof MaterialButton) {
+            ActionIconResolver.apply((MaterialButton) positive, action.title(), 0, true);
+            return;
+        }
+        ActionIconResolver.apply(positive, action.title(), 0);
+        if (ActionIconResolver.destructive(action.title())) {
+            positive.setBackgroundTintList(ColorStateList.valueOf(
+                ContextCompat.getColor(positive.getContext(), R.color.error)));
+            positive.setTextColor(ContextCompat.getColor(positive.getContext(), R.color.white));
+            TextViewCompat.setCompoundDrawableTintList(positive, ColorStateList.valueOf(
+                ContextCompat.getColor(positive.getContext(), R.color.white)));
+        }
     }
 
     private static View createControl(Context context, FieldSpec field, JsonObject item) {

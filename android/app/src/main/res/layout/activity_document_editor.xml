@@ -86,8 +86,10 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="10dp"
                 android:text="收藏笔记"
+                android:contentDescription="收藏这篇笔记"
                 android:visibility="gone"
-                app:icon="@drawable/ic_favorite" />
+                app:icon="@drawable/ic_favorite"
+                app:iconTint="@color/primary" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/shareButton"
                 style="@style/Widget.Material3.Button.OutlinedButton"
@@ -95,7 +97,10 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="10dp"
                 android:text="创建固定分享码"
-                android:visibility="gone" />
+                android:contentDescription="创建文档分享码"
+                android:visibility="gone"
+                app:icon="@drawable/ic_forward"
+                app:iconTint="@color/primary" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/deleteButton"
                 style="@style/Widget.Material3.Button.TextButton"
@@ -104,7 +109,10 @@
                 android:layout_marginTop="4dp"
                 android:text="@string/delete"
                 android:textColor="@color/error"
-                android:visibility="gone" />
+                android:contentDescription="删除这篇文档"
+                android:visibility="gone"
+                app:icon="@drawable/ic_delete"
+                app:iconTint="@color/error" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 </LinearLayout>

@@ -34,6 +34,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.checkbox.MaterialCheckBox;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.common.SafeTextInput;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.textfield.TextInputEditText;
@@ -287,6 +288,7 @@ public final class PollActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         MaterialButton remove = new MaterialButton(this);
         remove.setText("删除");
         remove.setContentDescription("删除这个选项");
+        ActionIconResolver.apply(remove, "删除这个选项", 0);
         remove.setOnClickListener(view -> {
             if (parent.getChildCount() <= 2) Snackbar.make(binding.getRoot(), "投票至少保留两个选项", Snackbar.LENGTH_SHORT).show();
             else parent.removeView(row);

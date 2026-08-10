@@ -108,6 +108,9 @@ Invoke-Api -Method PUT -Path "/api/admin/apps/$appId/versions" -Headers $adminHe
     version_name = '1.0.1'
     version_code = [int]($suffix % 2000000000)
     apk_url = 'https://example.com/demo.apk'
+    package_name = 'xyz.jjmxg.yiyunying.user.debug'
+    size_bytes = 1024
+    sha256 = ('a' * 64)
     update_content = 'Version endpoint is working.'
     force_update = $false
 } | Out-Null

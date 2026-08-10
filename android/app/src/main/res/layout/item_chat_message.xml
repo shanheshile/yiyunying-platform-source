@@ -215,6 +215,10 @@
                     android:paddingStart="5dp"
                     android:paddingEnd="7dp"
                     android:text="删除"
+                    android:contentDescription="删除这条系统消息"
+                    android:drawableStart="@drawable/ic_delete"
+                    android:drawablePadding="3dp"
+                    android:drawableTint="@color/error"
                     android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
                     android:textColor="@color/error"
                     android:visibility="gone" />

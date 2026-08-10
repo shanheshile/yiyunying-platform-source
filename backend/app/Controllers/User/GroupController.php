@@ -889,7 +889,7 @@ final class GroupController
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'group_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'group_message', (int) $user['app_id']);
-        $items = MessagePresentationService::hydrate($items, 'group');
+        $items = MessagePresentationService::hydrate($items, 'group', (int) $user['id']);
         return $items[0] ?? [];
     }
 
@@ -1499,14 +1499,15 @@ final class GroupController
         }
         $keyword = trim((string) $request->input('keyword', ''));
         if ($keyword !== '') {
-            $where[] = '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ?)';
+            $where[] = '(m.content LIKE ? OR u.account LIKE ? OR p.nickname LIKE ? OR viewer_friend.remark LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($query, $like, $like, $like);
+            array_push($query, $like, $like, $like, $like);
         }
         $items = Database::all(
             'SELECT m.id, m.user_id, m.sender_type, m.sender_admin_id, m.content_type, m.content, m.tags_json,
-                    m.reply_to_message_id, m.created_at, u.account,
-                    COALESCE(NULLIF(p.nickname, \'\'), u.account,
+                    m.reply_to_message_id, m.created_at, u.account AS sender_account,
+                    p.nickname AS sender_nickname, COALESCE(viewer_friend.remark, \'\') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, \'\'), NULLIF(p.nickname, \'\'), u.account,
                       CASE m.sender_type WHEN \'admin\' THEN \'管理员\' WHEN \'platform\' THEN \'平台\'
                            WHEN \'system\' THEN \'系统\' ELSE \'群成员\' END) AS nickname,
                     COALESCE(p.avatar, \'\') AS avatar, cm.role, COALESCE(state.is_favorite, 0) AS is_favorite,
@@ -1521,6 +1522,8 @@ final class GroupController
                     COALESCE(call_callee_profile.avatar, \'\') AS call_callee_avatar
              FROM chat_room_messages m LEFT JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = m.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = u.id AND viewer_friend.status = 1
              LEFT JOIN chat_room_members cm ON cm.room_id = m.room_id AND cm.user_id = m.user_id
              LEFT JOIN voice_calls vc ON vc.room_message_id = m.id
              LEFT JOIN users call_caller ON call_caller.id = vc.caller_user_id
@@ -1530,12 +1533,12 @@ final class GroupController
              LEFT JOIN communication_message_states state ON state.scope_type = \'group\'
                AND state.message_id = m.id AND state.user_id = ?
              WHERE ' . implode(' AND ', $where) . " ORDER BY m.id DESC LIMIT {$limit}",
-            array_merge([$userId], $query)
+            array_merge([$userId, $userId], $query)
         );
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'group_message', $appId);
         $items = MessageForwardService::hydrate($items, 'group_message', $appId);
-        $items = MessagePresentationService::hydrate($items, 'group');
+        $items = MessagePresentationService::hydrate($items, 'group', $userId);
         return array_reverse($items);
     }
 

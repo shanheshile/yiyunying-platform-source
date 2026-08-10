@@ -7,6 +7,7 @@ param(
     [switch] $SkipVerification,
     [switch] $SkipDownloadMetadata,
     [switch] $DryRun,
+    [string] $ExpectedSignerSha256,
     [string[]] $ReleaseNotes
 )
 
@@ -209,10 +210,27 @@ function Assert-Apk {
         throw "APK 版本号不一致：期望 $ExpectedVersionCode，实际 $($identity.versionCode)"
     }
 
-    & $ApkSignerPath verify --verbose --print-certs $Path | Out-Null
+    $signerOutput = @(& $ApkSignerPath verify --verbose --print-certs $Path 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw "APK 签名校验失败：$Path"
     }
+    $signerDigests = @($signerOutput | ForEach-Object {
+        $line = [string] $_
+        if ($line -match '^Signer #(?<SignerNumber>\d+) certificate SHA-256 digest:\s*(?<Digest>[0-9A-Fa-f]{64})\s*$') {
+            [pscustomobject]@{
+                SignerNumber = [int] $Matches['SignerNumber']
+                Digest = $Matches['Digest'].ToUpperInvariant()
+            }
+        }
+    })
+    if ($signerDigests.Count -ne 1 -or $signerDigests[0].SignerNumber -ne 1) {
+        throw "APK 必须恰好包含一个签名者：$Path"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSha256) -and
+        $signerDigests[0].Digest -ne $ExpectedSignerSha256.ToUpperInvariant()) {
+        throw "APK 签名证书不一致：期望 $($ExpectedSignerSha256.ToUpperInvariant())，实际 $($signerDigests[0].Digest)"
+    }
+    $identity['signerSha256'] = $signerDigests[0].Digest
     return $identity
 }
 
@@ -229,6 +247,9 @@ function Assert-ReleaseNotes([string[]] $Notes) {
 
 Assert-ApkIdentityParser
 Assert-DownloadRoot -Value $DownloadRootBase
+if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSha256) -and $ExpectedSignerSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+    throw 'ExpectedSignerSha256 必须是 64 位十六进制 SHA-256。'
+}
 $action = if ($Bump -eq 'none') { 'show' } else { $Bump }
 $version = Invoke-VersionCommand -Action $action -Preview:$DryRun
 if ($DryRun) {
@@ -255,6 +276,9 @@ $nativeValidationDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("yiyun
 $metadataBackup = $null
 
 try {
+    if (Test-Path -LiteralPath $releaseDirectory) {
+        throw "固定版本发布目录已存在，拒绝覆盖：$releaseDirectory"
+    }
     $env:JAVA_HOME = $JavaHome
     if ($SkipVerification) {
         Push-Location $projectRoot
@@ -352,6 +376,7 @@ try {
             sizeBytes = $file.Length
             size = Format-FileSize $file.Length
             sha256 = $hash
+            signerSha256 = $identity.signerSha256
             accent = $role.accent
         }
     }

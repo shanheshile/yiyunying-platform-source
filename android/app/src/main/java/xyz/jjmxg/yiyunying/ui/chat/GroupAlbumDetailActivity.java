@@ -44,6 +44,7 @@ import xyz.jjmxg.yiyunying.core.AppAccess;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
 import xyz.jjmxg.yiyunying.ui.upload.MediaPickerActivity;
@@ -362,6 +363,7 @@ public final class GroupAlbumDetailActivity extends SystemInsetActivity {
             MaterialButton remove = new MaterialButton(parent.getContext());
             remove.setText("删除");
             remove.setMinWidth(0);
+            ActionIconResolver.apply(remove, "删除这项相册媒体", 0);
             actions.addView(preview);
             actions.addView(remove);
             details.addView(title);

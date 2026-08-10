@@ -63,6 +63,7 @@ import xyz.jjmxg.yiyunying.domain.chat.ChatFeatureFlags;
 import xyz.jjmxg.yiyunying.domain.forum.ForumUnlockPolicy;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.SecureMediaClipboard;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
 import xyz.jjmxg.yiyunying.ui.upload.FilePickerActivity;
@@ -158,6 +159,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         watch(binding.paidPreviewInput);
         binding.addSectionButton.setOnClickListener(view -> showSectionEditor(-1));
         binding.submitButton.setText(post ? "发布帖子" : "发表评论");
+        ActionIconResolver.apply(binding.submitButton,
+            post ? "发布帖子" : "发表评论", R.drawable.ic_send, true);
         binding.addAttachmentButton.setOnClickListener(view -> showAttachmentMenu());
         binding.submitButton.setOnClickListener(view -> submit());
         MenuItem draft = binding.toolbar.getMenu().add("保存草稿");
@@ -478,6 +481,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         button.setMinWidth(0);
         button.setInsetTop(0);
         button.setInsetBottom(0);
+        ActionIconResolver.apply(button, text, 0);
         button.setOnClickListener(listener);
         return button;
     }
@@ -648,6 +652,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             MaterialButton remove = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
             remove.setText("移除");
             remove.setMinWidth(0);
+            ActionIconResolver.apply(remove, "移除这个" + typeLabel(attachment.type), 0);
             remove.setOnClickListener(view -> { attachments.remove(target); renderPending(); });
             row.addView(remove, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
             card.addView(row);
@@ -1237,6 +1242,8 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             binding.publishReadiness.setText(post ? "内容已就绪，发布后按板块规则进入展示或审核" : "评论内容已就绪");
         }
         binding.submitButton.setText(post ? "发布帖子" : "发表评论");
+        ActionIconResolver.apply(binding.submitButton,
+            post ? "发布帖子" : "发表评论", R.drawable.ic_send, true);
     }
 
     private String preview(String value) { return value.length() <= 42 ? value : value.substring(0, 42) + "…"; }

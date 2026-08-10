@@ -274,7 +274,9 @@
                     android:paddingEnd="2dp"
                     android:singleLine="true"
                     android:textSize="13sp"
-                    android:text="点赞" />
+                    android:text="点赞"
+                    android:contentDescription="点赞动态"
+                    app:icon="@drawable/ic_like" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/momentCommentButton"
@@ -296,7 +298,9 @@
                     android:paddingEnd="2dp"
                     android:singleLine="true"
                     android:textSize="13sp"
-                    android:text="评论" />
+                    android:text="评论"
+                    android:contentDescription="评论动态"
+                    app:icon="@drawable/ic_comment" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/momentFavoriteButton"
@@ -318,7 +322,9 @@
                     android:paddingEnd="2dp"
                     android:singleLine="true"
                     android:textSize="13sp"
-                    android:text="收藏" />
+                    android:text="收藏"
+                    android:contentDescription="收藏动态"
+                    app:icon="@drawable/ic_favorite" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/momentForwardButton"
@@ -340,7 +346,9 @@
                     android:paddingEnd="2dp"
                     android:singleLine="true"
                     android:textSize="13sp"
-                    android:text="转发" />
+                    android:text="转发"
+                    android:contentDescription="转发动态"
+                    app:icon="@drawable/ic_forward" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/moreButton"

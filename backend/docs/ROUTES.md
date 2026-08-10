@@ -2,7 +2,7 @@
 
 > 本文件由 `php tools/generate-reference.php` 从 `routes/api.php` 生成。功能说明与参数见 `API_FULL.md`。
 
-- 注册路由：761
+- 注册路由：769
 - 四级角色：1 级平台所有者、2 级授权平台、3 级 admin、4 级 user
 
 ## 平台治理接口（148）
@@ -158,7 +158,7 @@
 | `POST` | `/api/platform/exchanges/{exchange_id}/refund` | `Yiyunying\Controllers\Platform\ExchangeController::refund` |
 | `GET` | `/api/platform/balance-logs` | `Yiyunying\Controllers\Platform\ExchangeController::integralLogs` |
 
-## 管理员接口（257）
+## 管理员接口（264）
 
 | 方法 | 路径 | 处理器 |
 | --- | --- | --- |
@@ -348,8 +348,15 @@
 | `PUT` | `/api/admin/apps/{app_id}/forum-posts/{post_id}/audit` | `Yiyunying\Controllers\Admin\ForumController::audit` |
 | `DELETE` | `/api/admin/apps/{app_id}/forum-posts/{post_id}` | `Yiyunying\Controllers\Admin\ForumController::deletePost` |
 | `GET` | `/api/admin/apps/{app_id}/forum-comments` | `Yiyunying\Controllers\Admin\ForumController::comments` |
+| `GET` | `/api/admin/apps/{app_id}/forum-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ForumController::showComment` |
 | `PUT` | `/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit` | `Yiyunying\Controllers\Admin\ForumController::auditComment` |
 | `DELETE` | `/api/admin/apps/{app_id}/forum-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ForumController::deleteComment` |
+| `GET` | `/api/admin/apps/{app_id}/moments` | `Yiyunying\Controllers\Admin\ContentModerationController::moments` |
+| `GET` | `/api/admin/apps/{app_id}/moments/{moment_id}` | `Yiyunying\Controllers\Admin\ContentModerationController::showMoment` |
+| `PUT` | `/api/admin/apps/{app_id}/moments/{moment_id}/audit` | `Yiyunying\Controllers\Admin\ContentModerationController::auditMoment` |
+| `GET` | `/api/admin/apps/{app_id}/moment-comments` | `Yiyunying\Controllers\Admin\ContentModerationController::comments` |
+| `GET` | `/api/admin/apps/{app_id}/moment-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ContentModerationController::showComment` |
+| `PUT` | `/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit` | `Yiyunying\Controllers\Admin\ContentModerationController::auditComment` |
 | `GET` | `/api/admin/apps/{app_id}/forum-report-tags` | `Yiyunying\Controllers\Admin\ForumController::reportTags` |
 | `POST` | `/api/admin/apps/{app_id}/forum-report-tags` | `Yiyunying\Controllers\Admin\ForumController::createReportTag` |
 | `PUT` | `/api/admin/apps/{app_id}/forum-report-tags/{tag_id}` | `Yiyunying\Controllers\Admin\ForumController::updateReportTag` |
@@ -757,7 +764,7 @@
 | `GET` | `/api/user/ai/conversations/{conversation_id}/messages` | `Yiyunying\Controllers\User\AiConversationController::messages` |
 | `DELETE` | `/api/user/ai/conversations/{conversation_id}` | `Yiyunying\Controllers\User\AiConversationController::delete` |
 
-## 公开接口（22）
+## 公开接口（23）
 
 | 方法 | 路径 | 处理器 |
 | --- | --- | --- |
@@ -779,6 +786,7 @@
 | `GET` | `/api/public/forum-plates` | `Yiyunying\Controllers\PublicApi\ForumController::plates` |
 | `GET` | `/api/public/forum-posts` | `Yiyunying\Controllers\PublicApi\ForumController::posts` |
 | `GET` | `/api/public/forum-posts/{post_id}` | `Yiyunying\Controllers\PublicApi\ForumController::show` |
+| `GET` | `/api/public/forum-media/{attachment_id}` | `Yiyunying\Controllers\PublicApi\ForumMediaController::show` |
 | `GET` | `/api/public/remote-files/{file_id}` | `Yiyunying\Controllers\PublicApi\FileController::show` |
 | `POST` | `/api/public/captcha` | `Yiyunying\Controllers\PublicApi\CaptchaController::create` |
 | `POST` | `/api/public/verification-code/email` | `Yiyunying\Controllers\PublicApi\VerificationController::email` |
@@ -790,4 +798,3 @@
 | --- | --- | --- |
 | `GET` | `/` | `Yiyunying\Controllers\PublicApi\HealthController::show` |
 | `GET` | `/api/health` | `Yiyunying\Controllers\PublicApi\HealthController::show` |
-

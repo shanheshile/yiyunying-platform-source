@@ -5,6 +5,7 @@ namespace Yiyunying\Services;
 
 use Yiyunying\Core\Database;
 use Yiyunying\Core\HttpException;
+use Yiyunying\Core\Validator;
 
 final class LifecycleService
 {
@@ -57,11 +58,17 @@ final class LifecycleService
             "SELECT u.* FROM software_update_policies u
              WHERE u.issuer_type = 'platform' AND u.issuer_id IN ({$issuerPlaceholders})
                AND u.edition_code IN ('all', ?) AND u.status = 1
+               AND u.version_code > 0 AND u.download_url <> '' AND u.package_name <> ''
+               AND u.size_bytes > 0 AND CHAR_LENGTH(u.sha256) = 64
                AND (u.starts_at IS NULL OR u.starts_at <= NOW()) AND (u.ends_at IS NULL OR u.ends_at > NOW())
                AND ({$matchSql})
              ORDER BY u.issuer_level ASC, u.priority DESC, u.version_code DESC, u.id DESC",
             array_merge($issuerIds, [$edition], $matchParams)
         );
+        $updates = array_values(array_filter(
+            $updates,
+            static fn(array $candidate): bool => self::updatePackageMetadataComplete($candidate)
+        ));
         if ($edition === 'user' && $context['app_id'] !== null) {
             $appVersion = Database::one(
                 'SELECT id, admin_id AS issuer_id, 3 AS issuer_level, ? AS issuer_type, ? AS edition_code,
@@ -70,10 +77,12 @@ final class LifecycleService
                         update_content AS release_notes,
                         force_update, 0 AS priority, status, NULL AS starts_at, NULL AS ends_at, created_at, updated_at
                  FROM app_versions WHERE app_id = ? AND status = 1 AND deleted_at IS NULL
+                   AND version_code > 0 AND apk_url <> \'\' AND package_name <> \'\'
+                   AND size_bytes > 0 AND CHAR_LENGTH(sha256) = 64
                  ORDER BY version_code DESC, id DESC LIMIT 1',
                 ['admin', 'user', 'app', (int) $context['app_id']]
             );
-            if ($appVersion !== null) $updates[] = $appVersion;
+            if ($appVersion !== null && self::updatePackageMetadataComplete($appVersion)) $updates[] = $appVersion;
         }
         $update = self::selectUpdate($updates, $currentVersionCode);
 
@@ -146,7 +155,8 @@ final class LifecycleService
     {
         PlatformService::requireCapability($actor, 'software.manage');
         [$edition, $targetType, $targetId, $targetLevel] = self::validatePlatformTarget($actor, $data);
-        $versionCode = max(1, (int) ($data['version_code'] ?? 0));
+        $package = self::requireUpdatePackageMetadata($data);
+        $versionCode = $package['version_code'];
         $minCode = max(0, (int) ($data['min_supported_version_code'] ?? 0));
         if ($minCode > $versionCode) throw new HttpException('最低支持版本不能大于发布版本', 0, 422);
         return Database::insert(
@@ -158,13 +168,38 @@ final class LifecycleService
             [
                 'platform', (int) $actor['id'], (int) $actor['level'], $edition, $targetType, $targetId, $targetLevel,
                 mb_substr(trim((string) ($data['version_name'] ?? '')), 0, 40), $versionCode, $minCode,
-                mb_substr(trim((string) ($data['download_url'] ?? '')), 0, 1000),
-                self::packageName($data['package_name'] ?? ''), self::sha256($data['sha256'] ?? ''),
-                max(0, (int) ($data['size_bytes'] ?? 0)), (string) ($data['release_notes'] ?? ''),
+                $package['download_url'], $package['package_name'], $package['sha256'],
+                $package['size_bytes'], (string) ($data['release_notes'] ?? ''),
                 self::boolValue($data['force_update'] ?? false) ? 1 : 0, (int) ($data['priority'] ?? 0),
                 self::dateValue($data['starts_at'] ?? null), self::dateValue($data['ends_at'] ?? null),
             ]
         );
+    }
+
+    /**
+     * Validates the immutable identity required before an update policy can become active.
+     * Disabled legacy rows remain listable/deletable; public lifecycle selection filters them out.
+     *
+     * @return array{version_code:int,download_url:string,package_name:string,sha256:string,size_bytes:int}
+     */
+    public static function requireUpdatePackageMetadata(
+        array $data,
+        string $downloadField = 'download_url',
+        int $maxUrlLength = 1000
+    ): array {
+        Validator::required($data, ['version_code', $downloadField, 'package_name', 'sha256', 'size_bytes']);
+        $versionCode = Validator::integer($data['version_code'], 'version_code', 1, 2147483647);
+        $downloadUrl = Validator::string($data[$downloadField], $downloadField, 1, $maxUrlLength);
+        $packageName = self::packageName(Validator::string($data['package_name'], 'package_name', 1, 190));
+        $sha256 = self::sha256(Validator::string($data['sha256'], 'sha256', 64, 64));
+        $sizeBytes = Validator::integer($data['size_bytes'], 'size_bytes', 1, PHP_INT_MAX);
+        return [
+            'version_code' => $versionCode,
+            'download_url' => $downloadUrl,
+            'package_name' => $packageName,
+            'sha256' => $sha256,
+            'size_bytes' => $sizeBytes,
+        ];
     }
 
     public static function createPlatformMaintenance(array $actor, array $data): int
@@ -363,6 +398,16 @@ final class LifecycleService
             throw new HttpException('package_name 不是有效的 Android 包名', 0, 422);
         }
         return mb_substr($name, 0, 190);
+    }
+
+    private static function updatePackageMetadataComplete(array $candidate): bool
+    {
+        try {
+            self::requireUpdatePackageMetadata($candidate);
+            return true;
+        } catch (HttpException) {
+            return false;
+        }
     }
 
     private static function sha256($value): string

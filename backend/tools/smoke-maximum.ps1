@@ -212,7 +212,9 @@ Invoke-Api POST "/api/admin/apps/$appId/notices" $adminHeaders @{ title = 'Maxim
 Invoke-Api POST "/api/admin/apps/$appId/banners" $adminHeaders @{ title = 'Home Banner'; image_url = 'https://example.com/banner.png'; position = 'home'; sort_order = 10 } | Out-Null
 Invoke-Api PUT "/api/admin/apps/$appId/remote-configs" $adminHeaders @{ config_key = 'smoke.enabled'; config_value = $true; value_type = 'bool' } | Out-Null
 Invoke-Api PUT "/api/admin/apps/$appId/versions" $adminHeaders @{
-    version_name = '2.0.0'; version_code = [int]($suffix % 2000000000); apk_url = 'https://example.com/app.apk'; update_content = 'maximum loop'; force_update = $false
+    version_name = '2.0.0'; version_code = [int]($suffix % 2000000000); apk_url = 'https://example.com/app.apk';
+    package_name = 'xyz.jjmxg.yiyunying.user.debug'; size_bytes = 1024; sha256 = ('b' * 64);
+    update_content = 'maximum loop'; force_update = $false
 } | Out-Null
 $bootstrap = Invoke-Api GET "/api/public/bootstrap?app_key=$appKey"
 Assert-True (@($bootstrap.banners).Count -ge 1 -and @($bootstrap.features.PSObject.Properties).Count -ge 20) 'public bootstrap aggregation'

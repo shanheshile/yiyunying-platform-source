@@ -124,7 +124,8 @@
                     android:paddingEnd="8dp"
                     android:singleLine="true"
                     android:text="赞"
-                    app:icon="@drawable/ic_favorite" />
+                    android:contentDescription="点赞评论"
+                    app:icon="@drawable/ic_like" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/replyButton"
@@ -144,7 +145,9 @@
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
                     android:singleLine="true"
-                    android:text="回复" />
+                    android:text="回复"
+                    android:contentDescription="回复评论"
+                    app:icon="@drawable/ic_reply" />
             </LinearLayout>
         </LinearLayout>
         </LinearLayout>
@@ -183,8 +186,11 @@
                 android:minWidth="0dp"
                 android:paddingStart="8dp"
                 android:paddingEnd="8dp"
+                android:contentDescription="展开或收起评论回复"
                 android:textSize="12sp"
-                android:visibility="gone" />
+                android:visibility="gone"
+                app:icon="@drawable/ic_reply"
+                app:iconTint="@color/primary" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

@@ -1925,6 +1925,7 @@
 | `plate_id` | `BIGINT UNSIGNED NOT NULL` |
 | `category_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `client_draft_id` | `CHAR(36) DEFAULT NULL` |
 | `title` | `VARCHAR(200) NOT NULL` |
 | `content` | `LONGTEXT NOT NULL` |
 | `images_json` | `LONGTEXT` |
@@ -1952,6 +1953,7 @@
 
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_forum_posts_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
+- `UNIQUE KEY \`uk_forum_posts_client_draft\` (\`app_id\`, \`user_id\`, \`client_draft_id\`)`
 - `KEY \`idx_forum_posts_plate_order\` (\`app_id\`, \`plate_id\`, \`is_top\`, \`created_at\`)`
 - `KEY \`idx_forum_posts_category_order\` (\`app_id\`, \`category_id\`, \`created_at\`)`
 - `KEY \`idx_forum_posts_user\` (\`user_id\`, \`created_at\`)`
@@ -2974,7 +2976,7 @@
 | `creator_type` | `VARCHAR(20) NOT NULL DEFAULT 'user' COMMENT 'platform/admin/user/system'` |
 | `creator_id` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `packet_type` | `VARCHAR(20) NOT NULL DEFAULT 'random'` |
-| `packet_label` | `VARCHAR(30) NOT NULL DEFAULT '拼手气红�` |
+| `packet_label` | `VARCHAR(30) NOT NULL DEFAULT '拼手气红包'` |
 | `distribution_mode` | `VARCHAR(20) NOT NULL DEFAULT 'count_split' COMMENT 'count_split/random_grab'` |
 | `eligibility_mode` | `VARCHAR(20) NOT NULL DEFAULT 'selected' COMMENT 'context_all/selected'` |
 | `scene_type` | `VARCHAR(30) NOT NULL DEFAULT 'chat' COMMENT 'chat/forum_tip/bounty_tip/earned_reward/activity'` |
@@ -2994,7 +2996,6 @@
 
 **索引与约束**
 
-- `'`
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_red_packets_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_red_packets_tenant_status\` (\`admin_id\`, \`app_id\`, \`status\`, \`expired_at\`)`
@@ -4371,6 +4372,7 @@
 | `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
 | `post_id` | `BIGINT UNSIGNED NOT NULL` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
 | `preview_content` | `TEXT NOT NULL` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
@@ -4391,6 +4393,7 @@
 | `buyer_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `seller_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
@@ -4438,6 +4441,7 @@
 | `content` | `LONGTEXT NOT NULL` |
 | `tags_json` | `LONGTEXT` |
 | `price_balance` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
 | `unlock_at` | `DATETIME DEFAULT NULL` |
 | `preview_content` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
 | `sort_order` | `INT NOT NULL DEFAULT 0` |
@@ -4465,6 +4469,7 @@
 | `buyer_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `seller_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `price_balance` | `DECIMAL(18,2) NOT NULL` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
@@ -5105,6 +5110,10 @@
 | `visibility_user_ids_json` | `LONGTEXT DEFAULT NULL` |
 | `is_pinned` | `TINYINT(1) NOT NULL DEFAULT 0` |
 | `pin_order` | `INT UNSIGNED NOT NULL DEFAULT 0` |
+| `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'approved'` |
+| `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `audited_by` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `audited_at` | `DATETIME DEFAULT NULL` |
 | `edited_at` | `DATETIME DEFAULT NULL` |
 | `deleted_at` | `DATETIME DEFAULT NULL` |
 | `delete_expires_at` | `DATETIME DEFAULT NULL` |
@@ -5118,9 +5127,11 @@
 - `KEY \`idx_user_moments_feed\` (\`admin_id\`, \`app_id\`, \`status\`, \`deleted_at\`, \`created_at\`)`
 - `KEY \`idx_user_moments_owner\` (\`user_id\`, \`created_at\`)`
 - `KEY \`idx_user_moments_pinned\` (\`user_id\`, \`is_pinned\`, \`pin_order\`, \`created_at\`)`
+- `KEY \`idx_user_moments_moderation\` (\`admin_id\`, \`app_id\`, \`audit_status\`, \`status\`, \`deleted_at\`, \`created_at\`)`
 - `KEY \`idx_user_moments_purge\` (\`app_id\`, \`delete_expires_at\`)`
 - `CONSTRAINT \`fk_user_moments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`)`
 - `REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_user_moments_auditor\` FOREIGN KEY (\`audited_by\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
 
 ## `moment_likes`
 
@@ -5153,6 +5164,10 @@
 | `parent_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `sticker_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `content` | `VARCHAR(2000) NOT NULL` |
+| `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'approved'` |
+| `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `audited_by` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `audited_at` | `DATETIME DEFAULT NULL` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 | `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
@@ -5162,10 +5177,12 @@
 - `PRIMARY KEY (\`id\`)`
 - `KEY \`idx_moment_comments_feed\` (\`moment_id\`, \`status\`, \`id\`)`
 - `KEY \`idx_moment_comments_user\` (\`app_id\`, \`user_id\`, \`id\`)`
+- `KEY \`idx_moment_comments_moderation\` (\`admin_id\`, \`app_id\`, \`audit_status\`, \`status\`, \`created_at\`)`
 - `CONSTRAINT \`fk_moment_comments_moment\` FOREIGN KEY (\`moment_id\`) REFERENCES \`user_moments\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_comments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_comments_parent\` FOREIGN KEY (\`parent_id\`) REFERENCES \`moment_comments\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_moment_comments_sticker\` FOREIGN KEY (\`sticker_id\`) REFERENCES \`stickers\` (\`id\`) ON DELETE SET NULL`
+- `CONSTRAINT \`fk_moment_comments_auditor\` FOREIGN KEY (\`audited_by\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
 
 ## `moment_comment_likes`
 

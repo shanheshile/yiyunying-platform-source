@@ -62,6 +62,7 @@
 58. `migrations/upgrade_20260810_profile_space_avatar_controls.sql`
 59. `migrations/upgrade_20260810_forum_content_unlocks.sql`
 60. `migrations/upgrade_20260810_forum_data_consistency.sql`
+61. `migrations/upgrade_20260811_content_moderation_closure.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.

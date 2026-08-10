@@ -43,6 +43,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityResourceHallBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemForumBinding;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.upload.FilePreviewActivity;
@@ -463,7 +464,7 @@ public final class ResourceHallActivity extends SystemInsetActivity {
 
     private void updateFavoriteButton(MaterialButton button, boolean active) {
         button.setText(active ? "已收藏" : "收藏");
-        button.setContentDescription(active ? "取消收藏" : "加入收藏");
+        ActionIconResolver.apply(button, active ? "取消收藏" : "加入收藏", 0);
     }
 
     private void confirmPurchase(JsonObject item) {

@@ -30,7 +30,9 @@ $schema = [
 foreach ($tableMatches as $table) {
     $columns = [];
     $constraints = [];
-    foreach (preg_split('/\R/', (string) $table['body']) as $line) {
+    // The Unicode modifier prevents UTF-8 continuation bytes such as 0x85 from
+    // being mistaken for a standalone NEL line break inside Chinese text.
+    foreach (preg_split('/\R/u', (string) $table['body']) as $line) {
         $line = rtrim(trim($line), ',');
         if ($line === '') {
             continue;
@@ -57,7 +59,7 @@ foreach ($tableMatches as $table) {
     $schema[] = '';
 }
 
-file_put_contents($root . '/docs/SCHEMA.md', implode("\n", $schema) . "\n");
+file_put_contents($root . '/docs/SCHEMA.md', rtrim(implode("\n", $schema)) . "\n");
 
 /** @var Yiyunying\Core\Router $router */
 $router = require $root . '/routes/api.php';
@@ -111,7 +113,7 @@ foreach (['platform', 'admin', 'user', 'public', 'system'] as $group) {
     }
     $routeDoc[] = '';
 }
-file_put_contents($root . '/docs/ROUTES.md', implode("\n", $routeDoc) . "\n");
+file_put_contents($root . '/docs/ROUTES.md', rtrim(implode("\n", $routeDoc)) . "\n");
 
 echo 'Generated docs/SCHEMA.md (' . count($tableMatches) . " tables)\n";
 echo 'Generated docs/ROUTES.md (' . count($routes) . " routes)\n";

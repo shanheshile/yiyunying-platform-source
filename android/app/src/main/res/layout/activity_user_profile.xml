@@ -154,7 +154,9 @@
                     android:layout_height="48dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:text="点赞" />
+                    android:text="点赞"
+                    android:contentDescription="点赞该用户"
+                    app:icon="@drawable/ic_like" />
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton

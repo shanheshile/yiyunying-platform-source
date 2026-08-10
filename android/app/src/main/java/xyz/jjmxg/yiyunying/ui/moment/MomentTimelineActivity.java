@@ -1262,10 +1262,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                     | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         }
         dialog.show();
-        // GlassBottomSheet deliberately disables clipping on its content host so generic
-        // action sheets can draw shadows around their last row. A scrolling comment list is
-        // different: without restoring clipping, several vendor renderers let a scrolled
-        // comment child draw above the sticky title and even outside the rounded panel.
+        // Keep the feature-owned nested viewports explicit as well as the shared modal guard.
+        // This remains necessary on vendor renderers that restore child clipping during IME resize.
         sheetBinding.getRoot().setClipChildren(true);
         sheetBinding.getRoot().setClipToPadding(true);
         sheetBinding.commentsViewport.setClipChildren(true);
@@ -1443,7 +1441,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             ImageLoader.get().load(ImageLoader.get().absoluteUrl(this, stickerUrl),
                 row.sticker, R.drawable.ic_emoji);
         }
-        MediaViewRenderer.render(this, row.mediaContainer, Jsons.array(comment, "attachments"));
+        MediaViewRenderer.renderCommentMedia(
+            this, row.mediaContainer, Jsons.array(comment, "attachments"));
 
         long userId = Jsons.longValue(comment, "user_id");
         String avatarUrl = ImageLoader.get().absoluteUrl(this, Jsons.string(comment, "avatar"));

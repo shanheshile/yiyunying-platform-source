@@ -2154,6 +2154,12 @@
         "handler":  "AdminForum::comments"
     },
     {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/forum-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminForum::showComment"
+    },
+    {
         "method":  "PUT",
         "path":  "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
         "scope":  "admin",
@@ -2164,6 +2170,42 @@
         "path":  "/api/admin/apps/{app_id}/forum-comments/{comment_id}",
         "scope":  "admin",
         "handler":  "AdminForum::deleteComment"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/moments",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::moments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/moments/{moment_id}",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::showMoment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::auditMoment"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/moment-comments",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::comments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/moment-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::showComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::auditComment"
     },
     {
         "method":  "GET",

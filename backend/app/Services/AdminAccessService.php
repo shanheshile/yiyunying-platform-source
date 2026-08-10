@@ -232,7 +232,7 @@ final class AdminAccessService
             '#/documents(?:/|$)|/document-(?:shares|rules)#' => 'documents.manage',
             '#/(?:notices|versions|banners|remote-configs)(?:/|$)#' => 'content.manage',
             '#/(?:resource-categories|resources|store-categories|store-apps)(?:/|$)#' => 'resources.manage',
-            '#/(?:forum-plates|forum-posts|forum-comments|reports)(?:/|$)#' => 'forum.manage',
+            '#/(?:forum-plates|forum-posts|forum-comments|moments|moment-comments|reports)(?:/|$)#' => 'forum.manage',
             '#/(?:system-messages|messages|service-sessions|chat-rooms|chat-room-messages)(?:/|$)#' => 'communication.manage',
             '#/(?:card-batches|cards|card-redeem-logs)(?:/|$)#' => 'cards.manage',
             '#/(?:orders|payments|payment-channels|shop-goods|red-packets|lottery-prizes|votes)(?:/|$)#' => 'commerce.manage',

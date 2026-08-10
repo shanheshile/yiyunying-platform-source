@@ -28,6 +28,10 @@ final class StatisticsController
             'document_shares' => self::count('document_shares', $adminId, $appId, 'status = 1'),
             'resources' => self::count('resources', $adminId, $appId, 'deleted_at IS NULL'),
             'forum_posts' => self::count('forum_posts', $adminId, $appId, 'deleted_at IS NULL'),
+            'pending_forum_posts' => self::count('forum_posts', $adminId, $appId, "audit_status = 'pending' AND deleted_at IS NULL"),
+            'pending_forum_comments' => self::count('forum_comments', $adminId, $appId, "audit_status = 'pending' AND status = 1"),
+            'pending_moments' => self::count('user_moments', $adminId, $appId, "audit_status = 'pending' AND status = 1 AND deleted_at IS NULL"),
+            'pending_moment_comments' => self::count('moment_comments', $adminId, $appId, "audit_status = 'pending' AND status = 1"),
             'messages' => self::count('messages', $adminId, $appId),
             'service_open' => self::count('service_sessions', $adminId, $appId, "status = 'open'"),
             'card_redeems' => self::count('card_redeem_logs', $adminId, $appId),
@@ -154,7 +158,8 @@ final class StatisticsController
     private static function count(string $table, int $adminId, int $appId, string $extra = ''): int
     {
         $allowed = [
-            'users', 'documents', 'document_shares', 'resources', 'forum_posts', 'messages',
+            'users', 'documents', 'document_shares', 'resources', 'forum_posts', 'forum_comments',
+            'user_moments', 'moment_comments', 'messages',
             'service_sessions', 'card_redeem_logs', 'card_login_bindings', 'orders', 'feedbacks',
             'uploads', 'notices', 'app_versions',
         ];

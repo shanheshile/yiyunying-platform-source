@@ -2,6 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="capture_cache" path="captures/" />
     <cache-path name="update_cache" path="updates/" />
+    <files-path name="update_packages" path="update_packages/" />
     <cache-path name="clipboard_cache" path="clipboard/" />
     <cache-path name="resource_packages" path="resource_packages/" />
 </paths>

@@ -101,6 +101,15 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".service.UpdateInstallCleanupReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".ui.voice.VoiceCallActivity"
             android:configChanges="keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
@@ -212,6 +221,10 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.upload.DownloadsActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.upload.UpdatePackageHistoryActivity"
+            android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.upload.CacheBrowserActivity"

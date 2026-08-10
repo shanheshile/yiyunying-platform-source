@@ -31,6 +31,12 @@ import android.widget.Toast;
 import android.widget.VideoView;
 
 import com.google.android.material.button.MaterialButton;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.load.resource.gif.GifDrawable;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
 import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
@@ -60,6 +66,7 @@ public final class InlineMediaPreviewDialog {
         private final TextView title;
         private final MaterialButton original;
         private final MaterialButton animation;
+        private final MaterialButton animationLoop;
         private final TextView time;
         private final SeekBar seek;
         private final MaterialButton speed;
@@ -84,6 +91,7 @@ public final class InlineMediaPreviewDialog {
         private boolean prepared;
         private boolean temporaryFast;
         private boolean immersive;
+        private boolean animatedLoopEnabled = AnimatedImagePlaybackPolicy.DEFAULT_LOOP_ENABLED;
         private final float initialBrightness;
         private final int initialRequestedOrientation;
 
@@ -118,7 +126,11 @@ public final class InlineMediaPreviewDialog {
             animation = textButton("播放动图");
             animation.setVisibility(View.GONE);
             animation.setOnClickListener(view -> replayAnimatedImage());
-            toolbar.addView(animation, new LinearLayout.LayoutParams(dp(88), dp(48)));
+            toolbar.addView(animation, new LinearLayout.LayoutParams(dp(80), dp(48)));
+            animationLoop = textButton(AnimatedImagePlaybackPolicy.loopLabel(animatedLoopEnabled));
+            animationLoop.setVisibility(View.GONE);
+            animationLoop.setOnClickListener(view -> toggleAnimatedLoop());
+            toolbar.addView(animationLoop, new LinearLayout.LayoutParams(dp(80), dp(48)));
             MaterialButton info = iconButton(R.drawable.ic_file, "查看媒体信息");
             info.setOnClickListener(view -> showMediaInfo());
             toolbar.addView(info, new LinearLayout.LayoutParams(dp(52), dp(48)));
@@ -234,6 +246,7 @@ public final class InlineMediaPreviewDialog {
             original.setVisibility(View.GONE);
             animation.setText("播放动图");
             animation.setVisibility(View.GONE);
+            animationLoop.setVisibility(View.GONE);
             title.setText((index + 1) + " / " + items.size() + "  " + mediaTypeLabel(item));
             if (isVideo(item) || (isMotionPhoto(item) && !motionVideoUrl(item).isEmpty())) {
                 renderVideo(item);
@@ -264,7 +277,10 @@ public final class InlineMediaPreviewDialog {
                 originalLoaded = true;
                 animation.setText("重新播放");
                 animation.setVisibility(View.VISIBLE);
-                ImageLoader.get().load(absolute(source), image, R.drawable.ic_file);
+                animation.setContentDescription(AnimatedImagePlaybackPolicy.replayDescription());
+                animationLoop.setVisibility(View.VISIBLE);
+                updateAnimatedLoopControl();
+                loadAnimatedImage(source);
                 return;
             }
             boolean hasSeparateOriginal = !source.isEmpty() && !source.equals(preview);
@@ -686,8 +702,60 @@ public final class InlineMediaPreviewDialog {
             }
             String absoluteSource = absolute(source);
             ImageLoader.get().invalidate(absoluteSource);
-            ImageLoader.get().load(absoluteSource, currentImage, R.drawable.ic_file);
+            loadAnimatedImage(source);
             animation.setText("重新播放");
+            animation.setContentDescription(AnimatedImagePlaybackPolicy.replayDescription());
+        }
+
+        private void toggleAnimatedLoop() {
+            animatedLoopEnabled = AnimatedImagePlaybackPolicy.toggled(animatedLoopEnabled);
+            updateAnimatedLoopControl();
+            JsonObject item = items.get(index);
+            if (isAnimatedImage(item)) loadAnimatedImage(originalImageUrl(item));
+        }
+
+        private void updateAnimatedLoopControl() {
+            animationLoop.setText(AnimatedImagePlaybackPolicy.loopLabel(animatedLoopEnabled));
+            animationLoop.setContentDescription(
+                AnimatedImagePlaybackPolicy.loopDescription(animatedLoopEnabled));
+            animationLoop.setSelected(animatedLoopEnabled);
+        }
+
+        private void loadAnimatedImage(String source) {
+            if (currentImage == null) return;
+            String value = absolute(source);
+            if (value.isEmpty()) {
+                currentImage.setImageResource(R.drawable.ic_file);
+                return;
+            }
+            Glide.with(currentImage)
+                .asGif()
+                .load(value)
+                .listener(new RequestListener<GifDrawable>() {
+                    @Override public boolean onLoadFailed(
+                        GlideException error,
+                        Object model,
+                        Target<GifDrawable> target,
+                        boolean firstResource
+                    ) {
+                        return false;
+                    }
+
+                    @Override public boolean onResourceReady(
+                        GifDrawable resource,
+                        Object model,
+                        Target<GifDrawable> target,
+                        DataSource dataSource,
+                        boolean firstResource
+                    ) {
+                        resource.setLoopCount(animatedLoopEnabled ? GifDrawable.LOOP_FOREVER : 1);
+                        resource.startFromFirstFrame();
+                        return false;
+                    }
+                })
+                .placeholder(R.drawable.ic_file)
+                .error(R.drawable.ic_file)
+                .into(currentImage);
         }
 
         private String mediaType(JsonObject item) {

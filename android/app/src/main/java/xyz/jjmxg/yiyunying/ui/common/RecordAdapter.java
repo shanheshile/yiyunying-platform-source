@@ -107,9 +107,12 @@ public final class RecordAdapter extends RecyclerView.Adapter<RecordAdapter.Hold
         holder.binding.metadata.setVisibility(metadata.isEmpty() ? View.GONE : View.VISIBLE);
         RuntimeLanguage.setDynamicText(holder.binding.avatar, firstCharacter(title));
         holder.binding.moreButton.setVisibility(!selectionMode && !spec.itemActions().isEmpty() ? View.VISIBLE : View.GONE);
+        holder.binding.moreButton.setContentDescription("打开“" + title + "”的操作菜单");
         holder.binding.selectionCheck.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
         holder.binding.selectionCheck.setOnCheckedChangeListener(null);
         holder.binding.selectionCheck.setChecked(selectedRecords.contains(identity(item)));
+        holder.binding.selectionCheck.setContentDescription(
+            (holder.binding.selectionCheck.isChecked() ? "取消选择“" : "选择“") + title + "”");
         holder.binding.selectionCheck.setOnCheckedChangeListener((button, checked) -> listener.onRecordSelectionToggle(item));
         holder.binding.moreButton.setOnClickListener(view ->
             UiGuard.run(view, "列表操作/" + spec.id(), () -> listener.onRecordActions(view, item)));

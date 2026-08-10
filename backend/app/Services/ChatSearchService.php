@@ -102,8 +102,10 @@ final class ChatSearchService
              LEFT JOIN message_user_states state ON state.message_id = message.id AND state.user_id = ?
              LEFT JOIN users sender ON sender.id = CASE WHEN message.sender_type = 'user' THEN message.sender_id ELSE NULL END
              LEFT JOIN user_profiles profile ON profile.user_id = sender.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = message.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = sender.id AND viewer_friend.status = 1
              WHERE message.conversation_id = ? AND message.status = 1 AND COALESCE(state.is_deleted, 0) = 0
-               AND (message.content LIKE ? OR message.tags_json LIKE ? OR sender.account LIKE ? OR profile.nickname LIKE ?
+               AND (message.content LIKE ? OR message.tags_json LIKE ? OR sender.account LIKE ? OR profile.nickname LIKE ? OR viewer_friend.remark LIKE ?
                     OR EXISTS (SELECT 1 FROM media_attachments media
                                WHERE media.app_id = ? AND media.target_type = ? AND media.target_id = message.id
                                  AND (media.file_name LIKE ? OR media.mime_type LIKE ? OR media.media_type LIKE ?))
@@ -113,7 +115,7 @@ final class ChatSearchService
                                  AND forward_link.target_id = message.id AND forward_bundle.snapshot_json LIKE ?))
              ORDER BY message.id DESC LIMIT {$limit}",
             [
-                (int) $user['id'], $conversationId, $like, $like, $like, $like,
+                (int) $user['id'], (int) $user['id'], $conversationId, $like, $like, $like, $like, $like,
                 (int) $user['app_id'], 'private_message', $like, $like, $like,
                 (int) $user['app_id'], 'private_message', $like,
             ]
@@ -127,20 +129,24 @@ final class ChatSearchService
             "SELECT message.id, message.sender_type, message.sender_id, message.receiver_user_id, message.title,
                     message.content_type, message.tags_json, message.content, message.created_at,
                     COALESCE(state.is_favorite, 0) AS is_favorite,
-                    COALESCE(NULLIF(profile.nickname, ''), sender.account,
+                    sender.account AS sender_account, profile.nickname AS sender_nickname,
+                    COALESCE(viewer_friend.remark, '') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(profile.nickname, ''), sender.account,
                       CASE message.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台' ELSE '用户' END) AS sender_name,
                     COALESCE(profile.avatar, '') AS sender_avatar
              FROM messages message
              LEFT JOIN message_user_states state ON state.message_id = message.id AND state.user_id = ?
              LEFT JOIN users sender ON sender.id = CASE WHEN message.sender_type = 'user' THEN message.sender_id ELSE NULL END
              LEFT JOIN user_profiles profile ON profile.user_id = sender.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = message.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = sender.id AND viewer_friend.status = 1
              WHERE message.id IN ({$placeholders}) ORDER BY message.id ASC",
-            array_merge([(int) $user['id']], $ids)
+            array_merge([(int) $user['id'], (int) $user['id']], $ids)
         );
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'private_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'private_message', (int) $user['app_id']);
-        $items = MessagePresentationService::hydrate($items, 'private');
+        $items = MessagePresentationService::hydrate($items, 'private', (int) $user['id']);
         return ['target_id' => $conversationId, 'match_count' => count($matchIds), 'items' => self::markMatches($items, $matchIds, $keyword)];
     }
 
@@ -153,10 +159,12 @@ final class ChatSearchService
             "SELECT message.id FROM chat_room_messages message
              LEFT JOIN users sender ON sender.id = message.user_id
              LEFT JOIN user_profiles profile ON profile.user_id = sender.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = message.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = sender.id AND viewer_friend.status = 1
              LEFT JOIN communication_message_states state ON state.scope_type = 'group'
                AND state.message_id = message.id AND state.user_id = ?
              WHERE message.room_id = ? AND message.status = 1 AND COALESCE(state.is_deleted, 0) = 0
-               AND (message.content LIKE ? OR message.tags_json LIKE ? OR sender.account LIKE ? OR profile.nickname LIKE ?
+               AND (message.content LIKE ? OR message.tags_json LIKE ? OR sender.account LIKE ? OR profile.nickname LIKE ? OR viewer_friend.remark LIKE ?
                     OR EXISTS (SELECT 1 FROM media_attachments media
                                WHERE media.app_id = ? AND media.target_type = ? AND media.target_id = message.id
                                  AND (media.file_name LIKE ? OR media.mime_type LIKE ? OR media.media_type LIKE ?))
@@ -166,7 +174,7 @@ final class ChatSearchService
                                  AND forward_link.target_id = message.id AND forward_bundle.snapshot_json LIKE ?))
              ORDER BY message.id DESC LIMIT {$limit}",
             [
-                (int) $user['id'], $roomId, $like, $like, $like, $like,
+                (int) $user['id'], (int) $user['id'], $roomId, $like, $like, $like, $like, $like,
                 (int) $user['app_id'], 'group_message', $like, $like, $like,
                 (int) $user['app_id'], 'group_message', $like,
             ]
@@ -180,23 +188,27 @@ final class ChatSearchService
             "SELECT message.id, message.user_id, message.sender_type, message.sender_admin_id,
                     COALESCE(message.user_id, message.sender_admin_id, 0) AS sender_id,
                     message.content_type, message.content, message.tags_json, message.reply_to_message_id, message.created_at,
-                    COALESCE(NULLIF(profile.nickname, ''), sender.account,
+                    sender.account AS sender_account, profile.nickname AS sender_nickname,
+                    COALESCE(viewer_friend.remark, '') AS sender_remark,
+                    COALESCE(NULLIF(viewer_friend.remark, ''), NULLIF(profile.nickname, ''), sender.account,
                       CASE message.sender_type WHEN 'admin' THEN '管理员' WHEN 'platform' THEN '平台' ELSE '群成员' END) AS sender_name,
                     COALESCE(profile.avatar, '') AS sender_avatar, COALESCE(state.is_favorite, 0) AS is_favorite,
                     member.role
              FROM chat_room_messages message
              LEFT JOIN users sender ON sender.id = message.user_id
              LEFT JOIN user_profiles profile ON profile.user_id = sender.id
+             LEFT JOIN friends viewer_friend ON viewer_friend.app_id = message.app_id AND viewer_friend.user_id = ?
+               AND viewer_friend.friend_user_id = sender.id AND viewer_friend.status = 1
              LEFT JOIN chat_room_members member ON member.room_id = message.room_id AND member.user_id = message.user_id
              LEFT JOIN communication_message_states state ON state.scope_type = 'group'
                AND state.message_id = message.id AND state.user_id = ?
              WHERE message.id IN ({$placeholders}) ORDER BY message.id ASC",
-            array_merge([(int) $user['id']], $ids)
+            array_merge([(int) $user['id'], (int) $user['id']], $ids)
         );
         $items = ContentTagService::hydrate($items);
         $items = MessageMediaService::hydrate($items, 'group_message', (int) $user['app_id']);
         $items = MessageForwardService::hydrate($items, 'group_message', (int) $user['app_id']);
-        $items = MessagePresentationService::hydrate($items, 'group');
+        $items = MessagePresentationService::hydrate($items, 'group', (int) $user['id']);
         return ['target_id' => $roomId, 'match_count' => count($matchIds), 'items' => self::markMatches($items, $matchIds, $keyword)];
     }
 

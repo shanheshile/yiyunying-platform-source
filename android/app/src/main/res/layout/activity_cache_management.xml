@@ -121,6 +121,7 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="8dp"
                 android:text="查看与选择清理缓存"
+                android:contentDescription="查看并选择要清理的缓存"
                 app:icon="@drawable/ic_file" />
 
             <TextView
@@ -161,7 +162,10 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="10dp"
                 android:text="清理可自动删除的缓存"
-                app:icon="@drawable/ic_refresh" />
+                android:textColor="@color/error"
+                android:contentDescription="删除可自动清理的缓存"
+                app:icon="@drawable/ic_delete"
+                app:iconTint="@color/error" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/downloadsButton"
@@ -179,7 +183,10 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="20dp"
                 android:text="清除全部应用数据"
-                android:textColor="@color/error" />
+                android:textColor="@color/error"
+                android:contentDescription="清除全部应用数据"
+                app:icon="@drawable/ic_delete"
+                app:iconTint="@color/error" />
 
             <TextView
                 android:layout_width="match_parent"

@@ -71,7 +71,11 @@
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
-                android:text="清空历史" />
+                android:text="清空历史"
+                android:textColor="@color/error"
+                android:contentDescription="清空聊天搜索历史"
+                app:icon="@drawable/ic_delete"
+                app:iconTint="@color/error" />
         </LinearLayout>
         <TextView
             android:id="@+id/searchSummary"
@@ -308,9 +312,9 @@
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingHorizontal="8dp">
-            <com.google.android.material.button.MaterialButton android:id="@+id/selectionForward" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="转发" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/selectionFavorite" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="收藏" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/selectionDelete" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="本地删除" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionForward" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="转发" android:contentDescription="转发所选消息" app:icon="@drawable/ic_forward" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionFavorite" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="收藏" android:contentDescription="收藏所选消息" app:icon="@drawable/ic_favorite" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/selectionDelete" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="本地删除" android:contentDescription="从本机删除所选消息" app:icon="@drawable/ic_delete" app:iconTint="@color/error" />
             <com.google.android.material.button.MaterialButton android:id="@+id/selectionStart" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="从这里开始" android:visibility="gone" />
             <com.google.android.material.button.MaterialButton android:id="@+id/selectionEnd" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="选择到这里" android:visibility="gone" />
             <com.google.android.material.button.MaterialButton android:id="@+id/selectionMore" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="更多" />

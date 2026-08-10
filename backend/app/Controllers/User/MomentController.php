@@ -27,8 +27,11 @@ final class MomentController
         self::purgeExpired((int) $user['app_id']);
         $page = $request->page();
         $limit = $request->limit();
-        $where = ['m.admin_id = ?', 'm.app_id = ?', 'm.status = 1', 'm.deleted_at IS NULL'];
-        $params = [(int) $user['admin_id'], (int) $user['app_id']];
+        $where = [
+            'm.admin_id = ?', 'm.app_id = ?', 'm.status = 1', 'm.deleted_at IS NULL',
+            "(m.audit_status = 'approved' OR m.user_id = ?)",
+        ];
+        $params = [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']];
         $targetUserId = max(0, (int) $request->input('user_id', 0));
         if ((int) $request->input('mine', 0) === 1) $targetUserId = (int) $user['id'];
         if ($targetUserId > 0) {
@@ -86,19 +89,22 @@ final class MomentController
             (int) $user['app_id'],
             (int) $user['id']
         );
+        $auditStatus = AppService::setting((int) $user['app_id'], 'moment_post_audit', false)
+            ? 'pending' : 'approved';
         $momentId = Database::transaction(static function () use (
             $user, $content, $locationName, $latitude, $longitude, $payload,
-            $visibilityMode, $visibleDays, $visibilityUserIds
+            $visibilityMode, $visibleDays, $visibilityUserIds, $auditStatus
         ): int {
             $id = Database::insert(
                 'INSERT INTO user_moments
                  (admin_id, app_id, user_id, content, location_name, latitude, longitude,
-                  visibility_mode, visible_days, visibility_user_ids_json, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                  visibility_mode, visible_days, visibility_user_ids_json, audit_status, audit_reason,
+                  status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'\', 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], $content,
                     $locationName, $latitude, $longitude, $visibilityMode, $visibleDays,
-                    MomentVisibilityService::encodeIds($visibilityUserIds),
+                    MomentVisibilityService::encodeIds($visibilityUserIds), $auditStatus,
                 ]
             );
             MessageMediaService::save('moment', $id, $payload);
@@ -108,8 +114,13 @@ final class MomentController
             'media_count' => count($payload['attachments']),
             'visibility_mode' => $visibilityMode,
             'visible_days' => $visibleDays,
+            'audit_status' => $auditStatus,
         ]);
-        return Response::success(['moment' => self::find($user, $momentId, false)], '动态发布成功', 201);
+        return Response::success(
+            ['moment' => self::find($user, $momentId, false), 'audit_status' => $auditStatus],
+            $auditStatus === 'pending' ? '动态已提交审核，通过后对其他用户展示' : '动态发布成功',
+            201
+        );
     }
 
     public static function update(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -137,19 +148,22 @@ final class MomentController
         $visibilityUserIds = array_key_exists('visibility_user_ids', $data)
             ? MomentVisibilityService::normalizeUserIds($data['visibility_user_ids'], (int) $user['app_id'], (int) $user['id'])
             : MomentVisibilityService::decodeIds($before['visibility_user_ids'] ?? []);
+        $auditStatus = AppService::setting((int) $user['app_id'], 'moment_post_audit', false)
+            ? 'pending' : 'approved';
         Database::transaction(static function () use (
             $user, $momentId, $content, $locationName, $latitude, $longitude, $payload,
-            $visibilityMode, $visibleDays, $visibilityUserIds
+            $visibilityMode, $visibleDays, $visibilityUserIds, $auditStatus
         ): void {
             $affected = Database::execute(
-                'UPDATE user_moments
+                "UPDATE user_moments
                  SET content = ?, location_name = ?, latitude = ?, longitude = ?, visibility_mode = ?,
-                     visible_days = ?, visibility_user_ids_json = ?, edited_at = NOW(), updated_at = NOW()
+                     visible_days = ?, visibility_user_ids_json = ?, audit_status = ?, audit_reason = '',
+                     audited_by = NULL, audited_at = NULL, edited_at = NOW(), updated_at = NOW()
                  WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND deleted_at IS NULL
-                   AND created_at >= DATE_SUB(NOW(), INTERVAL 120 SECOND)',
+                   AND created_at >= DATE_SUB(NOW(), INTERVAL 120 SECOND)",
                 [
                     $content, $locationName, $latitude, $longitude, $visibilityMode, $visibleDays,
-                    MomentVisibilityService::encodeIds($visibilityUserIds), $momentId,
+                    MomentVisibilityService::encodeIds($visibilityUserIds), $auditStatus, $momentId,
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
                 ]
             );
@@ -157,7 +171,10 @@ final class MomentController
             if ($payload !== null) MessageMediaService::replace('moment', $momentId, $payload);
         });
         LogService::userOperation($request, $user, 'moment', 'update', $momentId);
-        return Response::success(['moment' => self::find($user, $momentId, false)], '动态已更新');
+        return Response::success(
+            ['moment' => self::find($user, $momentId, false), 'audit_status' => $auditStatus],
+            $auditStatus === 'pending' ? '动态已更新并重新提交审核' : '动态已更新'
+        );
     }
 
     public static function updateVisibility(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -270,6 +287,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $existing = Database::one('SELECT id FROM moment_likes WHERE moment_id = ? AND user_id = ?', [(int) $moment['id'], (int) $user['id']]);
         if ($existing !== null) {
             Database::execute('DELETE FROM moment_likes WHERE id = ?', [(int) $existing['id']]);
@@ -298,6 +316,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $page = $request->page();
         $limit = $request->limit();
         $presentation = self::likePresentation($moment, $user, $limit, ($page - 1) * $limit);
@@ -316,12 +335,14 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
         $total = (int) (Database::one(
-            'SELECT COUNT(*) AS total FROM moment_comments WHERE moment_id = ? AND status = 1',
-            [(int) $moment['id']]
+            "SELECT COUNT(*) AS total FROM moment_comments
+             WHERE moment_id = ? AND status = 1 AND (audit_status = 'approved' OR user_id = ?)",
+            [(int) $moment['id'], (int) $user['id']]
         )['total'] ?? 0);
         $items = Database::all(
             "SELECT c.*, u.uid, u.account, p.nickname, p.avatar,
@@ -333,13 +354,15 @@ final class MomentController
              FROM moment_comments c
              INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
-             LEFT JOIN moment_comments pc ON pc.id = c.parent_id
+             LEFT JOIN moment_comments pc ON pc.id = c.parent_id AND pc.moment_id = c.moment_id
+               AND pc.status = 1 AND (pc.audit_status = 'approved' OR pc.user_id = ?)
              LEFT JOIN users pu ON pu.id = pc.user_id
              LEFT JOIN user_profiles pp ON pp.user_id = pc.user_id
              LEFT JOIN stickers s ON s.id = c.sticker_id AND s.status = 1
              WHERE c.moment_id = ? AND c.status = 1
+               AND (c.audit_status = 'approved' OR c.user_id = ?)
              ORDER BY c.id ASC LIMIT {$limit} OFFSET {$offset}",
-            [(int) $user['id'], (int) $moment['id']]
+            [(int) $user['id'], (int) $user['id'], (int) $moment['id'], (int) $user['id']]
         );
         foreach ($items as &$item) self::decorateComment($item, $moment, (int) $user['id']);
         unset($item);
@@ -351,6 +374,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $content = trim((string) $request->input('content', ''));
         $stickerId = max(0, (int) $request->input('sticker_id', 0));
         $rawAttachments = $request->input('attachments', []);
@@ -385,21 +409,47 @@ final class MomentController
             if ($sticker === null) throw new HttpException('选择的表情包不存在或无权使用', 0, 422);
         }
         $parentId = max(0, (int) $request->input('parent_id', 0));
-        $parent = null;
-        if ($parentId > 0) {
-            $parent = Database::one('SELECT * FROM moment_comments WHERE id = ? AND moment_id = ? AND status = 1', [$parentId, (int) $moment['id']]);
-            if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
-        }
-        $commentId = Database::transaction(static function () use (
-            $user, $moment, $parentId, $stickerId, $content, $mediaPayload
-        ): int {
+        $auditStatus = AppService::setting((int) $user['app_id'], 'moment_comment_audit', false)
+            ? 'pending' : 'approved';
+        [$commentId, $parent] = Database::transaction(static function () use (
+            $user, $moment, $parentId, $stickerId, $content, $mediaPayload, $auditStatus
+        ): array {
+            $lockedMoment = Database::one(
+                "SELECT id, audit_status FROM user_moments
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                   AND deleted_at IS NULL FOR UPDATE",
+                [(int) $moment['id'], (int) $user['admin_id'], (int) $user['app_id']]
+            );
+            if ($lockedMoment === null || (string) $lockedMoment['audit_status'] !== 'approved') {
+                throw new HttpException('动态尚未审核通过，暂不能评论', 403, 403);
+            }
+            $parent = null;
+            if ($parentId > 0) {
+                $parent = Database::one(
+                    "SELECT * FROM moment_comments
+                     WHERE id = ? AND moment_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                       AND (audit_status = 'approved' OR user_id = ?) FOR UPDATE",
+                    [
+                        $parentId, (int) $moment['id'], (int) $user['admin_id'],
+                        (int) $user['app_id'], (int) $user['id'],
+                    ]
+                );
+                if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
+                if ($auditStatus === 'approved') {
+                    self::assertApprovedMomentParentChain(
+                        (int) $moment['id'], $parent, (int) $user['admin_id'], (int) $user['app_id']
+                    );
+                }
+            }
             $id = Database::insert(
-                'INSERT INTO moment_comments (admin_id, app_id, moment_id, user_id, parent_id, sticker_id, content, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-                [(int) $user['admin_id'], (int) $user['app_id'], (int) $moment['id'], (int) $user['id'], $parentId > 0 ? $parentId : null, $stickerId > 0 ? $stickerId : null, $content]
+                'INSERT INTO moment_comments
+                 (admin_id, app_id, moment_id, user_id, parent_id, sticker_id, content,
+                  audit_status, audit_reason, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, \'\', 1, NOW(), NOW())',
+                [(int) $user['admin_id'], (int) $user['app_id'], (int) $moment['id'], (int) $user['id'], $parentId > 0 ? $parentId : null, $stickerId > 0 ? $stickerId : null, $content, $auditStatus]
             );
             if ($mediaPayload !== null) MessageMediaService::save('moment_comment', $id, $mediaPayload);
-            return $id;
+            return [$id, $parent];
         });
         $visibleComment = $content !== '' ? $content : ($stickerId > 0 ? '[表情包]' : '[语音]');
         $notificationData = [
@@ -408,8 +458,8 @@ final class MomentController
             'comment_content' => mb_substr($visibleComment, 0, 160),
             'location_hint' => '将打开这条动态并定位到对应评论',
         ];
-        self::notifyOwner($moment, $user, 'moment_comment', '动态收到评论', self::displayName($user) . '评论了你的动态', $notificationData);
-        if ($parent !== null && (int) $parent['user_id'] !== (int) $moment['user_id'] && (int) $parent['user_id'] !== (int) $user['id']) {
+        if ($auditStatus === 'approved') self::notifyOwner($moment, $user, 'moment_comment', '动态收到评论', self::displayName($user) . '评论了你的动态', $notificationData);
+        if ($auditStatus === 'approved' && $parent !== null && (int) $parent['user_id'] !== (int) $moment['user_id'] && (int) $parent['user_id'] !== (int) $user['id']) {
             self::notifyUser((int) $parent['user_id'], $user, $moment, 'moment_reply', '评论收到回复', self::displayName($user) . '回复了你的评论', array_merge($notificationData, [
                 'reply_content' => mb_substr($visibleComment, 0, 160),
                 'parent_comment_id' => (int) $parent['id'],
@@ -417,7 +467,7 @@ final class MomentController
             ]));
         }
         $item = Database::one(
-            'SELECT c.*, u.uid, u.account, p.nickname, p.avatar,
+            "SELECT c.*, u.uid, u.account, p.nickname, p.avatar,
                     pu.uid AS parent_uid, pu.account AS parent_account, pp.nickname AS parent_nickname,
                     pc.content AS parent_content,
                     s.name AS sticker_name, s.image_url AS sticker_url, s.thumbnail_url AS sticker_thumbnail_url,
@@ -425,28 +475,34 @@ final class MomentController
              FROM moment_comments c
              INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
-             LEFT JOIN moment_comments pc ON pc.id = c.parent_id
+             LEFT JOIN moment_comments pc ON pc.id = c.parent_id AND pc.moment_id = c.moment_id
+               AND pc.status = 1 AND (pc.audit_status = 'approved' OR pc.user_id = ?)
              LEFT JOIN users pu ON pu.id = pc.user_id
              LEFT JOIN user_profiles pp ON pp.user_id = pc.user_id
              LEFT JOIN stickers s ON s.id = c.sticker_id AND s.status = 1
-             WHERE c.id = ?',
-            [$commentId]
+             WHERE c.id = ?",
+            [(int) $user['id'], $commentId]
         );
         self::decorateComment($item, $moment, (int) $user['id']);
         $item = MessageMediaService::hydrate([$item], 'moment_comment', (int) $user['app_id'])[0];
-        return Response::success(['comment' => $item], '评论成功', 201);
+        return Response::success(
+            ['comment' => $item, 'audit_status' => $auditStatus],
+            $auditStatus === 'pending' ? '评论已提交审核，通过后对其他用户展示' : '评论成功',
+            201
+        );
     }
 
     public static function toggleCommentLike(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $commentId = (int) $params['comment_id'];
         $comment = Database::one(
-            'SELECT c.*, u.account, p.nickname FROM moment_comments c
+            "SELECT c.*, u.account, p.nickname FROM moment_comments c
              INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
-             WHERE c.id = ? AND c.moment_id = ? AND c.status = 1',
+             WHERE c.id = ? AND c.moment_id = ? AND c.status = 1 AND c.audit_status = 'approved'",
             [$commentId, (int) $moment['id']]
         );
         if ($comment === null) throw new HttpException('评论不存在', 404, 404);
@@ -500,6 +556,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $existing = Database::one('SELECT id FROM moment_favorites WHERE moment_id = ? AND user_id = ?', [(int) $moment['id'], (int) $user['id']]);
         if ($existing !== null) {
             Database::execute('DELETE FROM moment_favorites WHERE id = ?', [(int) $existing['id']]);
@@ -521,6 +578,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
+        self::ensureApprovedForInteraction($moment);
         $targetType = strtolower(trim((string) $request->input('target_type', 'external')));
         if ($targetType === 'room') $targetType = 'group';
         if (!in_array($targetType, ['private', 'group', 'chat_room', 'service', 'forum', 'bounty', 'external'], true)) {
@@ -708,8 +766,9 @@ final class MomentController
             "SELECT m.*, u.uid, u.account, p.nickname, p.avatar, p.title AS user_title
              FROM user_moments m INNER JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = m.user_id
-             WHERE m.id = ? AND m.admin_id = ? AND m.app_id = ? AND m.status = 1{$deleted}",
-            [$momentId, (int) $user['admin_id'], (int) $user['app_id']]
+             WHERE m.id = ? AND m.admin_id = ? AND m.app_id = ? AND m.status = 1
+               AND (m.audit_status = 'approved' OR m.user_id = ?){$deleted}",
+            [$momentId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
         );
         if ($row === null || !MomentVisibilityService::canView($row, $user, true)) throw new HttpException('动态不存在或你无权查看', 404, 404);
         $row = MessageMediaService::hydrate([$row], 'moment', (int) $user['app_id'])[0];
@@ -783,6 +842,45 @@ final class MomentController
         }
     }
 
+    private static function ensureApprovedForInteraction(array $moment): void
+    {
+        if ((string) ($moment['audit_status'] ?? 'approved') !== 'approved') {
+            throw new HttpException('动态尚未审核通过，暂不能互动或转发', 403, 403, [
+                'audit_status' => (string) ($moment['audit_status'] ?? 'pending'),
+                'audit_reason' => (string) ($moment['audit_reason'] ?? ''),
+            ]);
+        }
+    }
+
+    private static function assertApprovedMomentParentChain(
+        int $momentId, array $parent, int $adminId, int $appId
+    ): void {
+        $current = $parent;
+        $visited = [];
+        for ($depth = 0; $depth < 64; $depth++) {
+            $currentId = (int) ($current['id'] ?? 0);
+            if ($currentId <= 0 || isset($visited[$currentId])) {
+                throw new HttpException('评论回复关系异常，暂不能公开回复', 0, 409);
+            }
+            $visited[$currentId] = true;
+            if ((int) ($current['status'] ?? 0) !== 1
+                || (string) ($current['audit_status'] ?? '') !== 'approved') {
+                throw new HttpException('上级评论尚未审核通过，暂不能公开回复', 0, 409);
+            }
+            $nextId = (int) ($current['parent_id'] ?? 0);
+            if ($nextId <= 0) return;
+            $current = Database::one(
+                'SELECT id, parent_id, audit_status, status FROM moment_comments
+                 WHERE id = ? AND moment_id = ? AND admin_id = ? AND app_id = ? FOR UPDATE',
+                [$nextId, $momentId, $adminId, $appId]
+            );
+            if ($current === null) {
+                throw new HttpException('上级评论不存在，暂不能公开回复', 0, 409);
+            }
+        }
+        throw new HttpException('评论回复层级过深，暂不能公开回复', 0, 409);
+    }
+
     private static function decorate(array &$item, array $viewer): void
     {
         foreach (['id', 'admin_id', 'app_id', 'user_id'] as $key) $item[$key] = (int) $item[$key];
@@ -791,6 +889,7 @@ final class MomentController
         $owner = (int) $item['user_id'] === $viewerId;
         $withinWindow = time() - $created->getTimestamp() <= self::EDIT_WINDOW_SECONDS;
         $item['display_name'] = trim((string) ($item['nickname'] ?? '')) !== '' ? (string) $item['nickname'] : (string) $item['account'];
+        $item['audit_status_name'] = self::auditStatusName((string) ($item['audit_status'] ?? 'approved'));
         $item['is_edited'] = !empty($item['edited_at']);
         $item['can_edit'] = $owner && $withinWindow && empty($item['deleted_at']);
         $item['can_edit_visibility'] = $owner && empty($item['deleted_at']);
@@ -812,7 +911,9 @@ final class MomentController
         $item['like_count'] = (int) $likePresentation['visibility']['total_count'];
         $item['visible_likers'] = $likePresentation['items'];
         $item['like_visibility'] = $likePresentation['visibility'];
-        $item['comment_count'] = self::count('moment_comments', (int) $item['id'], ' AND status = 1');
+        $item['comment_count'] = self::count(
+            'moment_comments', (int) $item['id'], " AND status = 1 AND audit_status = 'approved'"
+        );
         $item['favorite_count'] = self::count('moment_favorites', (int) $item['id']);
         $item['forward_count'] = self::count('moment_forwards', (int) $item['id']);
         $item['is_liked'] = Database::one('SELECT id FROM moment_likes WHERE moment_id = ? AND user_id = ? LIMIT 1', [(int) $item['id'], $viewerId]) !== null;
@@ -916,6 +1017,7 @@ final class MomentController
         $item['like_count'] = (int) ($item['like_count'] ?? 0);
         $item['is_liked'] = (bool) ($item['is_liked'] ?? false);
         $item['display_name'] = trim((string) ($item['nickname'] ?? '')) !== '' ? (string) $item['nickname'] : (string) $item['account'];
+        $item['audit_status_name'] = self::auditStatusName((string) ($item['audit_status'] ?? 'approved'));
         $item['parent_display_name'] = trim((string) ($item['parent_nickname'] ?? '')) !== ''
             ? (string) $item['parent_nickname']
             : (string) ($item['parent_account'] ?? '');
@@ -927,6 +1029,15 @@ final class MomentController
         $allowed = ['moment_likes', 'moment_comments', 'moment_favorites', 'moment_forwards'];
         if (!in_array($table, $allowed, true)) return 0;
         return (int) (Database::one("SELECT COUNT(*) AS total FROM {$table} WHERE moment_id = ?{$extra}", [$momentId])['total'] ?? 0);
+    }
+
+    private static function auditStatusName(string $status): string
+    {
+        return [
+            'pending' => '待审核',
+            'approved' => '审核通过',
+            'rejected' => '审核未通过',
+        ][$status] ?? '待审核';
     }
 
     private static function notifyOwner(array $moment, array $actor, string $type, string $title, string $content, array $extra = []): void

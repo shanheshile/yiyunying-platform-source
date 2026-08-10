@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.widget.TextViewCompat;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.button.MaterialButton;
@@ -193,6 +194,7 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
             styleWindow(window, decor);
             styleCard(decor);
             styleButtons(dialog);
+            ModalLayerGuard.protectAlertDialog(decor, context);
             protectBusinessText(decor);
             RuntimeLanguage.applyTree(context, decor);
             AppearanceStyleStore.applyFontTree(context, decor);
@@ -301,7 +303,10 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
         if (panel == null) return;
         GradientDrawable background = new GradientDrawable();
         int surface = ContextCompat.getColor(context, R.color.surface_container_high);
-        background.setColor((surface & 0x00FFFFFF) | 0xEE000000);
+        // The dialog card is intentionally opaque. Blur belongs behind the card; allowing the
+        // app page or a scrolling row to remain visible through the title makes the fixed layer
+        // look broken in both themes.
+        background.setColor(surface);
         background.setCornerRadii(new float[]{
             dp(18), dp(18), dp(18), dp(18), dp(18), dp(18), dp(18), dp(18)
         });
@@ -356,13 +361,27 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
         button.setTextColor(primary ? ThemeColors.onPrimary(context) : ThemeColors.primary(context));
         if (button instanceof MaterialButton) {
             GlassBottomSheet.styleActionButton((MaterialButton) button, context, primary, 16);
+            ActionIconResolver.apply((MaterialButton) button,
+                button.getText() == null ? "" : button.getText().toString(), 0, primary);
         } else {
             GradientDrawable background = new GradientDrawable();
-            background.setColor(primary ? ThemeColors.primary(context) : Color.TRANSPARENT);
+            boolean destructive = ActionIconResolver.destructive(
+                button.getText() == null ? "" : button.getText().toString());
+            background.setColor(primary
+                ? (destructive ? ContextCompat.getColor(context, R.color.error)
+                    : ThemeColors.primary(context))
+                : Color.TRANSPARENT);
             background.setCornerRadius(dp(16));
             if (!primary) background.setStroke(dp(1), ContextCompat.getColor(context, R.color.outline_variant));
             button.setBackgroundTintList(null);
             button.setBackground(background);
+            ActionIconResolver.apply(button,
+                button.getText() == null ? "" : button.getText().toString(), 0);
+            if (primary && destructive) {
+                button.setTextColor(ContextCompat.getColor(context, R.color.white));
+                TextViewCompat.setCompoundDrawableTintList(button,
+                    ColorStateList.valueOf(ContextCompat.getColor(context, R.color.white)));
+            }
         }
         ViewGroup.LayoutParams raw = button.getLayoutParams();
         if (raw instanceof LinearLayout.LayoutParams) {
@@ -394,8 +413,7 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
     }
 
     private View findPanel(View root, String name) {
-        int id = context.getResources().getIdentifier(name, "id", "android");
-        return id == 0 ? null : root.findViewById(id);
+        return ModalLayerGuard.findAlertPanel(root, name);
     }
 
     private int dp(int value) {

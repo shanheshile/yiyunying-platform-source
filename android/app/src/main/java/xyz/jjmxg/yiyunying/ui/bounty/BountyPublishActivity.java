@@ -42,6 +42,7 @@ import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityBountyPublishBinding;
 import xyz.jjmxg.yiyunying.ui.common.GlassBottomSheet;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.SystemInsetActivity;
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
@@ -348,6 +349,7 @@ public final class BountyPublishActivity extends SystemInsetActivity {
             remove.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
                 android.graphics.Color.TRANSPARENT));
             remove.setText("移除");
+            ActionIconResolver.apply(remove, "移除附件 " + info.name, 0);
             remove.setMinWidth(dp(64));
             int position = i;
             remove.setOnClickListener(view -> {

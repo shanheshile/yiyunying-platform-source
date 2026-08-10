@@ -171,11 +171,15 @@ public final class ModuleRegistry {
                 req("target_type", "目标 global/level/platform/admin/app"), integer("target_id", "目标 ID"),
                 integer("target_level", "目标等级"), req("version_name", "版本名"), integerRequired("version_code", "版本号"),
                 integer("min_supported_version_code", "最低可用版本"), req("download_url", "下载地址"),
+                req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
+                req("sha256", "安装包 SHA-256（64 位）"),
                 multilineRequired("release_notes", "更新说明"), bool("force_update", "强制更新"), integer("priority", "优先级")))
             .action(itemAction("编辑更新", "PUT", "/api/platform/software-updates/{policy_id}",
                 req("edition_code", "适用软件包"), req("target_type", "发布范围"), integer("target_id", "指定对象 ID"),
                 integer("target_level", "适用等级"), req("version_name", "版本名称"), integerRequired("version_code", "版本号"),
                 integer("min_supported_version_code", "最低支持版本"), req("download_url", "安装包地址"),
+                req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
+                req("sha256", "安装包 SHA-256（64 位）"),
                 multilineRequired("release_notes", "更新内容"), bool("force_update", "是否强制更新"), integer("priority", "显示优先级")))
             .action(confirmItem("删除", "DELETE", "/api/platform/software-updates/{policy_id}", true)).build());
         result.add(ModuleSpec.builder("maintenances", "维护管理", role).group("生命周期")
@@ -346,11 +350,15 @@ public final class ModuleRegistry {
             .create(action("发布版本", "PUT", "/api/admin/apps/{app_id}/versions",
                 req("version_name", "版本名称"), integerRequired("version_code", "版本代码"),
                 integer("min_supported_version_code", "最低可用版本"), req("apk_url", "安装包地址"),
-                multiline("update_content", "更新内容"), bool("force_update", "强制更新")))
+                req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
+                req("sha256", "安装包 SHA-256（64 位）"),
+                multilineRequired("update_content", "更新内容"), bool("force_update", "强制更新")))
             .action(itemAction("编辑版本", "PUT", "/api/admin/apps/{app_id}/versions",
                 req("version_name", "版本名称"), integerRequired("version_code", "版本号"),
                 integer("min_supported_version_code", "最低支持版本"), req("apk_url", "安装包地址"),
-                multiline("update_content", "更新说明"), bool("force_update", "是否强制更新"))).build());
+                req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
+                req("sha256", "安装包 SHA-256（64 位）"),
+                multilineRequired("update_content", "更新说明"), bool("force_update", "是否强制更新"))).build());
         result.add(ModuleSpec.builder("maintenances", "用户端维护", role).group("内容").requiresApp()
             .path("/api/admin/apps/{app_id}/maintenances").dataKey("items")
             .primary("title", "id").secondary("forced", "starts_at", "ends_at", "status")
@@ -432,11 +440,13 @@ public final class ModuleRegistry {
             .secondary("uid", "status", "created_at", "updated_at")
             .action(itemAction("启用版主", "PUT", "/api/admin/apps/{app_id}/forum-moderators/{moderator_id}").fixed("status", "1"))
             .action(itemAction("停用版主", "PUT", "/api/admin/apps/{app_id}/forum-moderators/{moderator_id}").fixed("status", "0")).build());
-        result.add(ModuleSpec.builder("forum_posts", "论坛帖子", role).group("社区").requiresApp()
+        result.add(ModuleSpec.builder("forum_posts", "论坛帖子审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-posts").paged().searchable("keyword").primary("title", "id")
-            .secondary("account", "audit_status_name", "audit_reason", "is_top", "is_essence", "is_locked", "created_at")
-            .action(itemAction("审核帖子", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
-                req("audit_status", "审核结果 approved/rejected"), multiline("reason", "审核说明")))
+            .secondary("account", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "is_top", "is_essence", "is_locked", "created_at")
+            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
             .action(itemAction("编辑帖子", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}",
                 field("title", "帖子标题"), multiline("content", "帖子内容"), integer("plate_id", "板块编号"),
                 integer("category_id", "二级分类编号，0 表示清除"), json("tags", "标签数组"), integer("status", "状态 1正常/0停用")))
@@ -444,12 +454,32 @@ public final class ModuleRegistry {
             .action(itemAction("加精设置", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/essence", bool("enabled", "加精")))
             .action(itemAction("锁定设置", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/lock", bool("enabled", "锁定")))
             .action(confirmItem("删除", "DELETE", "/api/admin/apps/{app_id}/forum-posts/{post_id}", true)).build());
-        result.add(ModuleSpec.builder("forum_comments", "论坛评论审核", role).group("社区").requiresApp()
+        result.add(ModuleSpec.builder("forum_comments", "论坛评论审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-comments").paged().searchable("keyword")
-            .primary("content", "nickname", "id").secondary("post_title", "audit_status_name", "audit_reason", "created_at")
-            .action(itemAction("审核评论", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
-                req("audit_status", "审核结果 approved/rejected"), multiline("reason", "审核说明")))
+            .primary("content", "nickname", "id").secondary("post_title", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "created_at")
+            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
             .action(confirmItem("删除评论", "DELETE", "/api/admin/apps/{app_id}/forum-comments/{comment_id}", true)).build());
+        result.add(ModuleSpec.builder("moments", "动态审核", role).group("审核").requiresApp()
+            .path("/api/admin/apps/{app_id}/moments").paged().searchable("keyword")
+            .primary("content", "display_name", "id")
+            .secondary("audit_status_name", "audit_reason", "reviewer_name", "audited_at", "pending_comment_count", "created_at")
+            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .build());
+        result.add(ModuleSpec.builder("moment_comments", "动态评论审核", role).group("审核").requiresApp()
+            .path("/api/admin/apps/{app_id}/moment-comments").paged().searchable("keyword")
+            .primary("content", "display_name", "id")
+            .secondary("moment_excerpt", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "created_at")
+            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .build());
         result.add(ModuleSpec.builder("reports", "举报处理", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/reports").paged().primary("reason", "report_tag_name", "id")
             .secondary("target_type_name", "target_summary", "reporter_account", "status_name", "created_at")

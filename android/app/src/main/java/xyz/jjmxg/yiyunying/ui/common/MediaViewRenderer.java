@@ -6,7 +6,9 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -48,6 +50,52 @@ public final class MediaViewRenderer {
         PrivateMediaRefreshListener privateMediaRefreshListener
     ) {
         render(context, container, attachments, new boolean[]{false}, privateMediaRefreshListener);
+    }
+
+    /**
+     * Compact comment renderer: image and video attachments stay in separate
+     * card stacks while voice/audio keeps the draggable progress player.
+     */
+    public static void renderCommentMedia(
+        Context context,
+        LinearLayout container,
+        JsonArray attachments,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
+        container.removeAllViews();
+        if (attachments == null || attachments.isEmpty()) {
+            container.setVisibility(View.GONE);
+            return;
+        }
+        container.setVisibility(View.VISIBLE);
+        List<JsonObject> images = new ArrayList<>();
+        List<JsonObject> videos = new ArrayList<>();
+        List<JsonObject> stickers = new ArrayList<>();
+        List<JsonObject> others = new ArrayList<>();
+        for (JsonElement element : attachments) {
+            if (!element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            if ("sticker".equals(mediaType(item))) stickers.add(item);
+            else if (isVideo(item)) videos.add(item);
+            else if (isVisual(item)) images.add(item);
+            else others.add(item);
+        }
+        addCommentVisualGroup(context, container, images, false, privateMediaRefreshListener);
+        addCommentVisualGroup(context, container, videos, true, privateMediaRefreshListener);
+        for (JsonObject sticker : stickers) {
+            container.addView(stickerCard(context, sticker, privateMediaRefreshListener));
+        }
+        for (JsonObject attachment : others) {
+            container.addView(fileCard(context, attachment, privateMediaRefreshListener));
+        }
+    }
+
+    public static void renderCommentMedia(
+        Context context,
+        LinearLayout container,
+        JsonArray attachments
+    ) {
+        renderCommentMedia(context, container, attachments, null);
     }
 
     private static void render(
@@ -110,6 +158,221 @@ public final class MediaViewRenderer {
         for (JsonObject attachment : others) {
             container.addView(fileCard(context, attachment, privateMediaRefreshListener));
         }
+    }
+
+    private static void addCommentVisualGroup(
+        Context context,
+        LinearLayout container,
+        List<JsonObject> media,
+        boolean videos,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
+        if (media.isEmpty()) return;
+        if (media.size() == 1) {
+            container.addView(visualCard(context, media, 0, privateMediaRefreshListener));
+            return;
+        }
+        container.addView(commentMediaStack(
+            context, media, videos, privateMediaRefreshListener));
+    }
+
+    private static View commentMediaStack(
+        Context context,
+        List<JsonObject> media,
+        boolean videos,
+        PrivateMediaRefreshListener privateMediaRefreshListener
+    ) {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(0, dp(context, 5), 0, dp(context, 7));
+        int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
+        int stageWidth = Math.max(dp(context, 158),
+            Math.min(dp(context, 212), screenWidth - dp(context, 202)));
+        int stageHeight = videos ? dp(context, 142) : dp(context, 172);
+        int offsetX = dp(context, 12);
+        int offsetY = dp(context, 10);
+        int depth = Math.min(3, media.size());
+
+        LinearLayout heading = new LinearLayout(context);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView type = new TextView(context);
+        type.setText(videos ? "视频附件" : "图片附件");
+        type.setTextColor(context.getColor(R.color.on_surface_variant));
+        type.setTextSize(11.5f);
+        TextView position = new TextView(context);
+        position.setTextColor(ThemeColors.primary(context));
+        position.setTextSize(11.5f);
+        position.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        heading.addView(type, new LinearLayout.LayoutParams(0, dp(context, 28), 1f));
+        heading.addView(position, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, 28)));
+        root.addView(heading, new LinearLayout.LayoutParams(
+            stageWidth + (depth - 1) * offsetX, dp(context, 28)));
+
+        FrameLayout stage = new FrameLayout(context);
+        root.addView(stage, new LinearLayout.LayoutParams(
+            stageWidth + (depth - 1) * offsetX,
+            stageHeight + (depth - 1) * offsetY));
+        int[] current = {0};
+        boolean[] dragging = {false};
+        boolean[] animating = {false};
+        float[] down = new float[2];
+        int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        renderCommentStackLayers(context, stage, media, current[0], stageWidth, stageHeight,
+            offsetX, offsetY);
+        updateCommentStackDescription(root, position, current[0], media.size(), videos);
+
+        stage.setOnClickListener(view -> {
+            JsonObject attachment = media.get(current[0]);
+            if (requestPrivateMediaRefresh(attachment, privateMediaRefreshListener)) return;
+            InlineMediaPreviewDialog.show(context, media, current[0]);
+        });
+        stage.setOnTouchListener((view, event) -> {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                if (animating[0]) return true;
+                down[0] = event.getX();
+                down[1] = event.getY();
+                dragging[0] = false;
+                stage.animate().cancel();
+                stage.setTranslationX(0f);
+                if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            float deltaX = event.getX() - down[0];
+            float deltaY = event.getY() - down[1];
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (!dragging[0] && Math.abs(deltaX) > touchSlop
+                    && Math.abs(deltaX) > Math.abs(deltaY) * 1.08f) {
+                    dragging[0] = true;
+                }
+                if (dragging[0]) {
+                    if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
+                    float maximum = dp(context, 52);
+                    stage.setTranslationX(Math.max(-maximum, Math.min(maximum, deltaX * 0.48f)));
+                } else if (Math.abs(deltaY) > touchSlop && view.getParent() != null) {
+                    view.getParent().requestDisallowInterceptTouchEvent(false);
+                }
+                return true;
+            }
+            if (action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) return true;
+            if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
+            if (!dragging[0] || action == MotionEvent.ACTION_CANCEL) {
+                stage.animate().translationX(0f).setDuration(100L).start();
+                if (action == MotionEvent.ACTION_UP
+                    && Math.abs(deltaX) <= touchSlop && Math.abs(deltaY) <= touchSlop) {
+                    view.performClick();
+                }
+                return true;
+            }
+            boolean next = deltaX < 0;
+            int target = Math.max(0, Math.min(media.size() - 1,
+                current[0] + (next ? 1 : -1)));
+            if (Math.abs(deltaX) < dp(context, 28)) target = current[0];
+            if (target == current[0]) {
+                stage.animate().translationX(next ? -dp(context, 9) : dp(context, 9))
+                    .setDuration(65L)
+                    .withEndAction(() -> stage.animate().translationX(0f).setDuration(85L).start())
+                    .start();
+                return true;
+            }
+            int from = current[0];
+            int finalTarget = target;
+            float carriedTranslation = stage.getTranslationX();
+            stage.setTranslationX(0f);
+            animating[0] = true;
+            MediaStackTransitionPolicy.Transition transition =
+                MediaStackTransitionPolicy.transition(media.size(), from, finalTarget, 3,
+                    offsetX, offsetY);
+            MediaStackAnimator.animate(stage, transition, carriedTranslation, 220L,
+                itemIndex -> commentStackCard(context, media.get(itemIndex),
+                    stageWidth, stageHeight, -1),
+                () -> {
+                    current[0] = finalTarget;
+                    renderCommentStackLayers(context, stage, media, current[0],
+                        stageWidth, stageHeight, offsetX, offsetY);
+                    updateCommentStackDescription(root, position, current[0], media.size(), videos);
+                    animating[0] = false;
+                });
+            return true;
+        });
+        return root;
+    }
+
+    private static void updateCommentStackDescription(
+        View root,
+        TextView position,
+        int current,
+        int count,
+        boolean videos
+    ) {
+        String unit = videos ? "段" : "张";
+        String label = videos ? "视频" : "图片";
+        position.setText("第 " + (current + 1) + "/" + count + " " + unit);
+        root.setContentDescription(label + "附件，当前第 " + (current + 1) + " " + unit
+            + "，共 " + count + " " + unit + "；左右滑动切换，点击预览");
+    }
+
+    private static void renderCommentStackLayers(
+        Context context,
+        FrameLayout stage,
+        List<JsonObject> media,
+        int current,
+        int stageWidth,
+        int stageHeight,
+        int offsetX,
+        int offsetY
+    ) {
+        stage.removeAllViews();
+        List<Integer> order = MediaStackTransitionPolicy.order(media.size(), current, 3);
+        for (int layer = order.size() - 1; layer >= 0; layer--) {
+            int itemIndex = order.get(layer);
+            MaterialCardView card = commentStackCard(
+                context, media.get(itemIndex), stageWidth, stageHeight, layer);
+            card.setTag(itemIndex);
+            MediaStackAnimator.applyPose(card,
+                MediaStackTransitionPolicy.pose(layer, 3, offsetX, offsetY),
+                context.getResources().getDisplayMetrics().density);
+            stage.addView(card);
+        }
+    }
+
+    private static MaterialCardView commentStackCard(
+        Context context,
+        JsonObject attachment,
+        int width,
+        int height,
+        int layer
+    ) {
+        MaterialCardView card = baseCard(context);
+        card.setRadius(dp(context, 8));
+        card.setStrokeColor(layer == 0
+            ? ThemeColors.primary(context) : context.getColor(R.color.outline_variant));
+        card.setLayoutParams(new FrameLayout.LayoutParams(width, height));
+        FrameLayout frame = new FrameLayout(context);
+        frame.addView(previewImage(context, attachment));
+        boolean video = isVideo(attachment);
+        if (video) {
+            MaterialButton play = new MaterialButton(
+                context, null, com.google.android.material.R.attr.materialIconButtonStyle);
+            play.setIconResource(R.drawable.ic_play);
+            play.setIconTint(ColorStateList.valueOf(Color.WHITE));
+            play.setBackgroundTintList(ColorStateList.valueOf(Color.argb(174, 0, 0, 0)));
+            play.setContentDescription("播放视频");
+            frame.addView(play, new FrameLayout.LayoutParams(
+                dp(context, 48), dp(context, 48), Gravity.CENTER));
+        }
+        if (isAnimated(attachment)) {
+            TextView tag = badge(context, "动图");
+            FrameLayout.LayoutParams tagParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, 27), Gravity.START | Gravity.TOP);
+            tagParams.leftMargin = dp(context, 7);
+            tagParams.topMargin = dp(context, 7);
+            frame.addView(tag, tagParams);
+        }
+        card.addView(frame);
+        return card;
     }
 
     private static View visualCard(
@@ -422,15 +685,9 @@ public final class MediaViewRenderer {
 
     private static String mediaMeta(JsonObject attachment) {
         long bytes = Jsons.longValue(attachment, "size_bytes");
-        String name = attachmentName(attachment);
-        boolean generic = "未命名文件".equals(name);
-        StringBuilder text = new StringBuilder();
-        if (!generic) text.append(name);
-        if (bytes > 0) {
-            if (text.length() > 0) text.append("  ·  ");
-            text.append(size(bytes));
-        }
-        return text.toString();
+        // Published visual media intentionally hides the uploader's raw local
+        // filename. A size hint is useful; the original device path/name is not.
+        return bytes > 0 ? size(bytes) : "";
     }
 
     private static void previewFile(Context context, JsonObject attachment) {

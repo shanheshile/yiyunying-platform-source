@@ -139,8 +139,11 @@ public final class GlassBottomSheet {
             child.setClipToOutline(false);
             if (child instanceof ViewGroup) {
                 ViewGroup content = (ViewGroup) child;
-                content.setClipToPadding(false);
-                content.setClipChildren(false);
+                // The panel host remains unclipped for its shadow, but the feature's actual
+                // content must clip its scrolling descendants. Otherwise a RecyclerView row can
+                // be rendered across a fixed title/action region on several vendor builds.
+                content.setClipToPadding(true);
+                content.setClipChildren(true);
                 content.setPadding(
                     content.getPaddingLeft(),
                     content.getPaddingTop(),
@@ -150,6 +153,7 @@ public final class GlassBottomSheet {
             }
             contentHost.addView(child, new android.widget.LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ModalLayerGuard.protectBottomSheet(child, context);
         }
 
         // Do not use MaterialCardView here. Some Xiaomi/vivo Android 16 builds restore its
@@ -158,7 +162,8 @@ public final class GlassBottomSheet {
         // independent from Material's shape/outline lifecycle.
         FrameLayout panel = new FrameLayout(context);
         GradientDrawable panelBackground = new GradientDrawable();
-        panelBackground.setColor(context.getColor(R.color.glass_surface_strong));
+        // Opaque theme surface keeps fixed sheet chrome readable while window blur is active.
+        panelBackground.setColor(context.getColor(R.color.surface_container_high));
         panelBackground.setCornerRadius(dp(context, 22));
         panelBackground.setStroke(dp(context, 1), context.getColor(R.color.glass_outline));
         panel.setBackground(panelBackground);

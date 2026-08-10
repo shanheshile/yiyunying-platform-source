@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -165,6 +164,7 @@ public final class RecordDetailDialog {
             button.setGravity(Gravity.CENTER);
             button.setPadding(dp(context, 8), 0, dp(context, 8), 0);
             GlassBottomSheet.styleActionButton(button, context, action.primary, 14);
+            ActionIconResolver.apply(button, action.label, 0, action.primary);
             button.setOnClickListener(view -> {
                 if (action.callback != null && !actionHandled.compareAndSet(false, true)) return;
                 if (activity != null && (activity.isFinishing() || activity.isDestroyed())) return;

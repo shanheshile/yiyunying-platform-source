@@ -13,6 +13,7 @@ use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
 use Yiyunying\Services\ContentTagService;
 use Yiyunying\Services\ForumExperienceService;
+use Yiyunying\Services\ForumCommentNotificationService;
 use Yiyunying\Services\ForumModeratorService;
 use Yiyunying\Services\ForumTaxonomyService;
 use Yiyunying\Services\ForumVisibilityService;
@@ -195,6 +196,8 @@ final class ForumController
              FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
              LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
+               AND parent_comment.status = 1
+               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
              LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
              LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
              LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
@@ -203,7 +206,10 @@ final class ForumController
                AND favorite.target_type = 'comment' AND favorite.target_id = c.id
              WHERE c.post_id = ? AND c.status = 1 AND (c.audit_status = ? OR c.user_id = ?)
              ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT 500",
-            [(int) $user['id'], (int) $user['id'], (int) $post['id'], 'approved', (int) $user['id']]
+            [
+                (int) $user['id'], (int) $user['id'], (int) $user['id'],
+                (int) $post['id'], 'approved', (int) $user['id'],
+            ]
         );
         $post['comments'] = self::hydrateCommentRoots($post['comments']);
         $post['comments'] = ContentTagService::hydrate($post['comments']);
@@ -249,7 +255,11 @@ final class ForumController
             $mediaData['content'] = (string) $request->input('content', $post['content']);
             $payload = MessageMediaService::userPayload($user, $mediaData);
         }
-        $audit = $isOwner && AppService::setting((int) $user['app_id'], 'forum_post_audit', false) ? 'pending' : 'approved';
+        // Every user-side edit must re-enter moderation when the switch is enabled.
+        // A plate moderator may edit content, but only the administrator review
+        // endpoint is allowed to promote it back to approved.
+        $audit = AppService::setting((int) $user['app_id'], 'forum_post_audit', false)
+            ? 'pending' : 'approved';
         Database::transaction(static function () use (
             $request, $user, $post, $postId, $categoryId, $images, $tagsJson, $payload, $audit,
             $rightsSensitiveUpdate
@@ -321,6 +331,7 @@ final class ForumController
         $user = self::user($request);
         AuthService::ensureNotBanned($user, ['all', 'forum', 'comment']);
         $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
+        self::ensureApprovedForInteraction($post);
         if ((int) $post['is_locked'] === 1) {
             throw new HttpException('帖子已锁定，不能评论', 403, 403);
         }
@@ -343,28 +354,53 @@ final class ForumController
         $tagsJson = ContentTagService::encode($request->input('tags', []));
         $parentId = (int) $request->input('parent_id', 0);
         $audit = AppService::setting((int) $user['app_id'], 'forum_comment_audit', false) ? 'pending' : 'approved';
-        $receiverId = (int) ($post['user_id'] ?? 0);
-        $rootCommentId = null;
-        $parent = null;
-        if ($parentId > 0) {
-            $parent = Database::one(
-                'SELECT id, parent_id, root_comment_id, user_id, content FROM forum_comments
-                 WHERE id = ? AND post_id = ? AND status = 1 AND (audit_status = ? OR user_id = ?)',
-                [$parentId, (int) $post['id'], 'approved', (int) $user['id']]
+        $mentionsJson = ForumCommentNotificationService::encodeMentions(
+            $request->input('mentions', []), (int) $user['id']
+        );
+        [$id, $rootCommentId] = Database::transaction(static function () use (
+            $user, $post, $payload, $parentId, $audit, $tagsJson, $mentionsJson
+        ): array {
+            $lockedPost = Database::one(
+                'SELECT id, audit_status, status, deleted_at, is_locked FROM forum_posts
+                 WHERE id = ? AND admin_id = ? AND app_id = ? FOR UPDATE',
+                [(int) $post['id'], (int) $user['admin_id'], (int) $user['app_id']]
             );
-            if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
-            $receiverId = (int) $parent['user_id'];
-            $rootCommentId = self::resolveStoredCommentRoot((int) $post['id'], $parent);
-        }
-        $id = Database::transaction(static function () use ($user, $post, $payload, $parentId, $rootCommentId, $audit, $tagsJson): int {
+            if ($lockedPost === null || (int) $lockedPost['status'] !== 1
+                || $lockedPost['deleted_at'] !== null || (string) $lockedPost['audit_status'] !== 'approved') {
+                throw new HttpException('帖子尚未审核通过，暂不能评论', 403, 403);
+            }
+            if ((int) $lockedPost['is_locked'] === 1) {
+                throw new HttpException('帖子已锁定，不能评论', 403, 403);
+            }
+            $rootCommentId = null;
+            if ($parentId > 0) {
+                $parent = Database::one(
+                    'SELECT id, parent_id, root_comment_id, user_id, content, audit_status, status
+                     FROM forum_comments
+                     WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                       AND (audit_status = ? OR user_id = ?) FOR UPDATE',
+                    [
+                        $parentId, (int) $post['id'], (int) $user['admin_id'],
+                        (int) $user['app_id'], 'approved', (int) $user['id'],
+                    ]
+                );
+                if ($parent === null) throw new HttpException('回复的评论不存在', 404, 404);
+                if ($audit === 'approved') {
+                    self::assertApprovedForumParentChain(
+                        (int) $post['id'], $parent, (int) $user['admin_id'], (int) $user['app_id']
+                    );
+                }
+                $rootCommentId = self::resolveStoredCommentRoot((int) $post['id'], $parent);
+            }
             $id = Database::insert(
                 'INSERT INTO forum_comments
-                 (admin_id, app_id, post_id, parent_id, root_comment_id, user_id, content, tags_json, audit_status, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                 (admin_id, app_id, post_id, parent_id, root_comment_id, user_id, content,
+                  tags_json, mentions_json, audit_status, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $post['id'],
                     $parentId > 0 ? $parentId : null, $rootCommentId, (int) $user['id'],
-                    (string) $payload['content'], $tagsJson, $audit,
+                    (string) $payload['content'], $tagsJson, $mentionsJson, $audit,
                 ]
             );
             MessageMediaService::save('forum_comment', $id, $payload);
@@ -374,76 +410,22 @@ final class ForumController
                     [(int) $post['id']]
                 );
             }
-            return $id;
+            return [$id, $rootCommentId];
         });
         ForumExperienceService::refreshHeat((int) $post['id'], (int) $user['app_id']);
-        $senderName = trim((string) ($user['nickname'] ?? $user['account'] ?? '用户'));
-        if ($senderName === '') $senderName = '用户';
-        $commentSummary = trim((string) $payload['content']);
-        if ($commentSummary === '') $commentSummary = MessageMediaService::summary($payload['attachments']);
-        if ($commentSummary === '') $commentSummary = '[评论]';
-        $commentSummary = mb_substr($commentSummary, 0, 180);
-        $parentSummary = '';
-        if (is_array($parent)) {
-            $parentSummary = trim((string) ($parent['content'] ?? ''));
-            if ($parentSummary === '') {
-                $parentSummary = MessageMediaService::summary(
-                    MessageMediaService::attachments('forum_comment', (int) $parent['id'], (int) $user['app_id'])
-                );
-            }
-            $parentSummary = mb_substr($parentSummary, 0, 180);
-        }
-        if ($audit === 'approved' && $receiverId > 0 && $receiverId !== (int) $user['id']) {
-            $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $receiverId);
-            if ($receiver !== null) NotificationService::send(
-                $receiver, $parentId > 0 ? 'forum_reply' : 'forum_comment',
-                $parentId > 0 ? '论坛评论收到回复' : '帖子收到新评论',
-                $senderName . ($parentId > 0 ? ' 回复你：' : ' 评论：') . $commentSummary,
+        if ($audit === 'approved') {
+            ForumCommentNotificationService::notifyParticipants(
+                (int) $user['admin_id'],
+                (int) $user['app_id'],
                 [
+                    'id' => $id,
                     'post_id' => (int) $post['id'],
-                    'post_title' => (string) $post['title'],
-                    'comment_id' => $id,
-                    'comment_content' => $commentSummary,
-                    'parent_comment_id' => $parentId > 0 ? $parentId : null,
-                    'parent_comment_content' => $parentSummary,
-                    'actor_user_id' => (int) $user['id'],
-                    'actor_name' => $senderName,
-                    'focus' => 'comment',
-                    'location_hint' => '《' . (string) $post['title'] . '》评论区 · '
-                        . ($parentId > 0 ? '这条回复' : '这条评论'),
+                    'parent_id' => $parentId > 0 ? $parentId : null,
+                    'user_id' => (int) $user['id'],
+                    'content' => (string) $payload['content'],
+                    'mentions_json' => $mentionsJson,
                 ]
             );
-        }
-        if ($audit === 'approved') {
-            $mentions = $request->input('mentions', []);
-            if (!is_array($mentions)) $mentions = [];
-            $mentionIds = array_values(array_unique(array_filter(array_map('intval', $mentions),
-                static fn (int $mentionedId): bool => $mentionedId > 0
-                    && $mentionedId !== (int) $user['id'] && $mentionedId !== $receiverId)));
-            foreach ($mentionIds as $mentionedId) {
-                $mentioned = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $mentionedId);
-                if ($mentioned === null) continue;
-                NotificationService::send(
-                    $mentioned,
-                    'forum_mention',
-                    '论坛中有人提到你',
-                    ($senderName === '' ? '用户' : $senderName) . ' 在《' . (string) $post['title'] . '》中提到了你',
-                    [
-                        'post_id' => (int) $post['id'],
-                        'post_title' => (string) $post['title'],
-                        'comment_id' => $id,
-                        'comment_content' => $commentSummary,
-                        'parent_comment_id' => $parentId > 0 ? $parentId : null,
-                        'parent_comment_content' => $parentSummary,
-                        'focus' => 'comment',
-                        'location_hint' => '《' . (string) $post['title'] . '》评论区 · 提到你的这条评论',
-                        'sender_user_id' => (int) $user['id'],
-                        'sender_name' => $senderName,
-                        'actor_user_id' => (int) $user['id'],
-                        'actor_name' => $senderName,
-                    ]
-                );
-            }
         }
         $rewardResult = null;
         if ($audit === 'approved') {
@@ -480,6 +462,7 @@ final class ForumController
     {
         $user = self::user($request);
         $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
+        self::ensureApprovedForInteraction($post);
         $liked = ForumExperienceService::toggleLike($user, 'post', (int) $post['id']);
         if ($liked && (int) ($post['user_id'] ?? 0) > 0 && (int) $post['user_id'] !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $post['user_id']);
@@ -495,6 +478,7 @@ final class ForumController
     {
         $user = self::user($request);
         $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
+        self::ensureApprovedForInteraction($post);
         $favorited = ForumExperienceService::toggleFavorite($user, 'post', (int) $post['id']);
         if ($favorited && (int) ($post['user_id'] ?? 0) > 0 && (int) $post['user_id'] !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $post['user_id']);
@@ -554,6 +538,8 @@ final class ForumController
              FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
              LEFT JOIN user_profiles p ON p.user_id = c.user_id
              LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
+               AND parent_comment.status = 1
+               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
              LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
              LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
              LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
@@ -561,7 +547,7 @@ final class ForumController
              LEFT JOIN forum_content_favorites favorite ON favorite.app_id = c.app_id AND favorite.user_id = ?
                AND favorite.target_type = 'comment' AND favorite.target_id = c.id
              WHERE {$whereSql} ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT {$limit} OFFSET {$offset}",
-            array_merge([(int) $user['id'], (int) $user['id']], $query)
+            array_merge([(int) $user['id'], (int) $user['id'], (int) $user['id']], $query)
         );
         $items = self::hydrateCommentRoots($items);
         $items = ContentTagService::hydrate($items);
@@ -574,6 +560,7 @@ final class ForumController
     {
         $user = self::user($request);
         $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
+        self::ensureApprovedForInteraction($post);
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
@@ -717,14 +704,14 @@ final class ForumController
         $user = self::user($request);
         if (!AppService::setting((int) $user['app_id'], 'forum_reward_enabled', true)) throw new HttpException('管理员已关闭论坛打赏', 403, 403);
         $post = self::post((int) $user['app_id'], (int) $params['post_id'], (int) $user['id']);
+        self::ensureApprovedForInteraction($post);
         $amount = Validator::integer($request->input('balance'), 'balance', 1, 1000000000);
         $targetType = trim((string) $request->input('target_type', 'post')); $targetId = (int) $request->input('target_id', $post['id']); $toUserId = (int) $post['user_id'];
         if ($targetType === 'comment') {
             $comment = Database::one(
                 "SELECT user_id FROM forum_comments
-                 WHERE id = ? AND post_id = ? AND status = 1
-                   AND (audit_status = 'approved' OR user_id = ?)",
-                [$targetId, (int) $post['id'], (int) $user['id']]
+                 WHERE id = ? AND post_id = ? AND status = 1 AND audit_status = 'approved'",
+                [$targetId, (int) $post['id']]
             );
             if ($comment === null) throw new HttpException('评论不存在', 404, 404); $toUserId = (int) $comment['user_id'];
         } elseif ($targetType !== 'post') throw new HttpException('target_type 仅支持 post 或 comment', 0, 422);
@@ -1246,7 +1233,8 @@ final class ForumController
     private static function assertContentVisible(array $user, string $targetType, int $targetId): void
     {
         if ($targetType === 'post') {
-            self::post((int) $user['app_id'], $targetId, (int) $user['id']);
+            $post = self::post((int) $user['app_id'], $targetId, (int) $user['id']);
+            self::ensureApprovedForInteraction($post);
             return;
         }
         if ($targetType !== 'comment') throw new HttpException('target_type 仅支持 post 或 comment', 0, 422);
@@ -1255,11 +1243,51 @@ final class ForumController
              INNER JOIN forum_posts post ON post.id = comment.post_id
              WHERE comment.id = ? AND comment.app_id = ? AND comment.status = 1
                AND post.status = 1 AND post.deleted_at IS NULL
-               AND (comment.audit_status = 'approved' OR comment.user_id = ?)
-               AND (post.audit_status = 'approved' OR post.user_id = ?)",
-            [$targetId, (int) $user['app_id'], (int) $user['id'], (int) $user['id']]
+               AND comment.audit_status = 'approved'
+               AND post.audit_status = 'approved'",
+            [$targetId, (int) $user['app_id']]
         );
         if ($comment === null) throw new HttpException('评论或回复不存在', 404, 404);
+    }
+
+    private static function ensureApprovedForInteraction(array $post): void
+    {
+        if ((string) ($post['audit_status'] ?? 'pending') !== 'approved') {
+            throw new HttpException('帖子尚未审核通过，暂不能评论、点赞、收藏、转发或打赏', 403, 403, [
+                'audit_status' => (string) ($post['audit_status'] ?? 'pending'),
+                'audit_reason' => (string) ($post['audit_reason'] ?? ''),
+            ]);
+        }
+    }
+
+    private static function assertApprovedForumParentChain(
+        int $postId, array $parent, int $adminId, int $appId
+    ): void {
+        $current = $parent;
+        $visited = [];
+        for ($depth = 0; $depth < 64; $depth++) {
+            $currentId = (int) ($current['id'] ?? 0);
+            if ($currentId <= 0 || isset($visited[$currentId])) {
+                throw new HttpException('评论回复关系异常，暂不能公开回复', 0, 409);
+            }
+            $visited[$currentId] = true;
+            if ((int) ($current['status'] ?? 0) !== 1
+                || (string) ($current['audit_status'] ?? '') !== 'approved') {
+                throw new HttpException('上级评论尚未审核通过，暂不能公开回复', 0, 409);
+            }
+            $nextId = (int) ($current['parent_id'] ?? 0);
+            if ($nextId <= 0) return;
+            $current = Database::one(
+                'SELECT id, parent_id, root_comment_id, user_id, content, audit_status, status
+                 FROM forum_comments
+                 WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? FOR UPDATE',
+                [$nextId, $postId, $adminId, $appId]
+            );
+            if ($current === null) {
+                throw new HttpException('上级评论不存在，暂不能公开回复', 0, 409);
+            }
+        }
+        throw new HttpException('评论回复层级过深，暂不能公开回复', 0, 409);
     }
 
     /**

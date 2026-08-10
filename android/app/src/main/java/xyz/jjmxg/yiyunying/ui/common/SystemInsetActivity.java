@@ -80,6 +80,13 @@ public abstract class SystemInsetActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        // If the user just enabled "install unknown apps", continue the exact verified APK
+        // that requested the permission. The store makes this idempotent across every role.
+        try {
+            AppUpdateInstaller.resumePendingInstall(this);
+        } catch (RuntimeException exception) {
+            xyz.jjmxg.yiyunying.core.CrashReporter.record("恢复软件更新安装", exception);
+        }
         if (ensureAppearanceIsCurrent()) return;
         showSystemBars();
         View content = findViewById(android.R.id.content);

@@ -292,6 +292,8 @@ final class AppService
             'profile_edit_enabled' => true,
             'profile_public_default' => true,
             'moment_like_non_friend_visible' => false,
+            'moment_post_audit' => false,
+            'moment_comment_audit' => false,
             'profile_like_per_action_limit' => 10,
             'profile_like_daily_limit' => 50,
             'sign_enabled' => true,

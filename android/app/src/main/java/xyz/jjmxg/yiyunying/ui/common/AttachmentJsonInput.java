@@ -309,11 +309,10 @@ public final class AttachmentJsonInput extends LinearLayout {
 
         MaterialButton remove = new MaterialButton(getContext());
         remove.setText("");
-        remove.setIconResource(R.drawable.ic_close);
+        ActionIconResolver.apply(remove, "移除附件 " + item.name, R.drawable.ic_delete);
         remove.setIconPadding(0);
         remove.setMinWidth(dp(44));
         remove.setMinimumWidth(dp(44));
-        remove.setContentDescription("移除附件 " + item.name);
         remove.setOnClickListener(view -> remove(item));
         row.addView(remove, new LinearLayout.LayoutParams(dp(44), dp(44)));
         card.addView(row);

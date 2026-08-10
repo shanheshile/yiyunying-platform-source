@@ -31,7 +31,7 @@ final class RolePermissionService
         ['code' => 'documents.manage', 'title' => '文档管理', 'group' => '内容管理', 'description' => '新增、查询、编辑和删除远程文档。'],
         ['code' => 'content.manage', 'title' => '公告与版本', 'group' => '内容管理', 'description' => '管理公告、版本、维护和远程配置。'],
         ['code' => 'resources.manage', 'title' => '资源与商店', 'group' => '内容管理', 'description' => '管理应用、源码、商品、分类和订单。'],
-        ['code' => 'forum.manage', 'title' => '论坛与审核', 'group' => '社区管理', 'description' => '管理板块、帖子、评论、标签和审核。'],
+        ['code' => 'forum.manage', 'title' => '社区内容与审核', 'group' => '社区管理', 'description' => '管理动态、帖子、评论、板块、标签和内容审核。'],
         ['code' => 'communication.manage', 'title' => '聊天与群组', 'group' => '社区管理', 'description' => '查看并管理私聊、群聊、聊天室和客服会话。'],
         ['code' => 'activities.manage', 'title' => '活动管理', 'group' => '运营管理', 'description' => '管理红包、抽奖、投票、悬赏和奖励。'],
         ['code' => 'commerce.manage', 'title' => '交易与订单', 'group' => '运营管理', 'description' => '管理余额、支付、商品订单和交易追踪。'],

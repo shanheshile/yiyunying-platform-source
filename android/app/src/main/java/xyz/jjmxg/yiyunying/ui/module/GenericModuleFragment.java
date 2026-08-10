@@ -41,6 +41,7 @@ import xyz.jjmxg.yiyunying.domain.module.ActionSpec;
 import xyz.jjmxg.yiyunying.domain.module.ModuleSpec;
 import xyz.jjmxg.yiyunying.domain.module.PathResolver;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
+import xyz.jjmxg.yiyunying.ui.common.ActionIconResolver;
 import xyz.jjmxg.yiyunying.ui.common.DynamicFormDialog;
 import xyz.jjmxg.yiyunying.ui.common.RecordAdapter;
 import xyz.jjmxg.yiyunying.ui.common.RecordDetailDialog;
@@ -427,6 +428,10 @@ public final class GenericModuleFragment extends BaseFragment {
             ChatActivity.openAdminService(context, Jsons.longValue(snapshot, "id"), "客服 · " + title);
             return;
         }
+        if (app().session().role() == Role.ADMIN && isModerationModule()) {
+            loadModerationDetail(snapshot);
+            return;
+        }
         long authorUserId = recordUserId(snapshot);
         if (app().session().role() == Role.USER && authorUserId > 0) {
             RecordDetailDialog.show(context, spec.title(), snapshot, "查看发布者", () -> {
@@ -445,6 +450,57 @@ public final class GenericModuleFragment extends BaseFragment {
         }
         JsonObject author = Jsons.object(item, "author");
         return Jsons.longValue(author, "user_id");
+    }
+
+    private boolean isModerationModule() {
+        return "forum_posts".equals(spec.id()) || "forum_comments".equals(spec.id())
+            || "moments".equals(spec.id()) || "moment_comments".equals(spec.id());
+    }
+
+    private void loadModerationDetail(JsonObject item) {
+        Context context = activeContext();
+        if (context == null || binding == null) return;
+        long id = Jsons.longValue(item, "id");
+        if (id <= 0) {
+            message(binding.getRoot(), "审核记录编号无效");
+            return;
+        }
+        String segment;
+        String dataKey;
+        if ("forum_posts".equals(spec.id())) {
+            segment = "forum-posts";
+            dataKey = "post";
+        } else if ("forum_comments".equals(spec.id())) {
+            segment = "forum-comments";
+            dataKey = "comment";
+        } else if ("moments".equals(spec.id())) {
+            segment = "moments";
+            dataKey = "moment";
+        } else {
+            segment = "moment-comments";
+            dataKey = "comment";
+        }
+        long appId = app().session().selectedAppId();
+        if (appId <= 0) {
+            host().requestAppSelection();
+            return;
+        }
+        binding.progress.setVisibility(View.VISIBLE);
+        String path = "/api/admin/apps/" + appId + "/" + segment + "/" + id;
+        track(app().repository().get(path, new LinkedHashMap<>(), result -> {
+            Context current = activeContext();
+            if (current == null || binding == null) return;
+            binding.progress.setVisibility(View.GONE);
+            if (handleFailure(result, binding.getRoot())) return;
+            JsonObject data = result.dataObject();
+            JsonObject detail = data.has(dataKey) && data.get(dataKey).isJsonObject()
+                ? data.getAsJsonObject(dataKey) : data;
+            RecordDetailDialog.show(current, spec.title() + "详情", detail,
+                spec.itemActions().isEmpty() ? null : "审核操作",
+                spec.itemActions().isEmpty() ? null : () -> {
+                    if (activeContext() != null) showActionDialog(item);
+                });
+        }));
     }
 
     private boolean supportsEntityProfile() {
@@ -573,11 +629,12 @@ public final class GenericModuleFragment extends BaseFragment {
 
     private static int actionIcon(String title) {
         String value = title == null ? "" : title;
+        int semantic = ActionIconResolver.resolve(value, 0);
+        if (semantic != 0) return semantic;
         if (value.contains("头像")) return R.drawable.ic_person;
-        if (value.contains("评论") || value.contains("投稿")) return R.drawable.ic_chat;
+        if (value.contains("投稿")) return R.drawable.ic_chat;
         if (value.contains("购买") || value.contains("余额")) return R.drawable.ic_wallet;
-        if (value.contains("收藏")) return R.drawable.ic_favorite;
-        if (value.contains("删除") || value.contains("取消")) return R.drawable.ic_close;
+        if (value.contains("取消")) return R.drawable.ic_close;
         if (value.contains("编辑") || value.contains("审核")) return R.drawable.ic_document;
         return R.drawable.ic_more;
     }

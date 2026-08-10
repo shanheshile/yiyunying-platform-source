@@ -212,12 +212,13 @@ final class FavoriteController
              INNER JOIN user_moments moment ON moment.id = favorite.moment_id
              INNER JOIN users author ON author.id = moment.user_id
              LEFT JOIN user_profiles profile ON profile.user_id = moment.user_id
-             WHERE favorite.admin_id = ? AND favorite.app_id = ? AND favorite.user_id = ?
-               AND moment.admin_id = ? AND moment.app_id = ?
-               AND moment.status = 1 AND moment.deleted_at IS NULL",
+              WHERE favorite.admin_id = ? AND favorite.app_id = ? AND favorite.user_id = ?
+                AND moment.admin_id = ? AND moment.app_id = ?
+                AND moment.status = 1 AND moment.deleted_at IS NULL
+                AND (moment.audit_status = 'approved' OR moment.user_id = ?)",
             [
                 (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
-                (int) $user['admin_id'], (int) $user['app_id'],
+                (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
             ]
         );
         $items = MessageMediaService::hydrate($items, 'moment', (int) $user['app_id']);

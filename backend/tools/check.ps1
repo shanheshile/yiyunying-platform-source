@@ -64,6 +64,7 @@ $required = @(
     'database\migrations\upgrade_20260810_profile_space_avatar_controls.sql',
     'database\migrations\upgrade_20260810_forum_content_unlocks.sql',
     'database\migrations\upgrade_20260810_forum_data_consistency.sql',
+    'database\migrations\upgrade_20260811_content_moderation_closure.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -76,6 +77,7 @@ $required = @(
     'docs\JIANYUN_CAPABILITY_MAPPING.md',
     'docs\FORUM_EXPERIENCE.md',
     'docs\COMMUNICATION_TAKEOVER.md',
+    'docs\CONTENT_MODERATION.md',
     'docs\REQUIREMENT_VERIFICATION_20260721.md',
     'tools\smoke-maximum.ps1',
     'tools\smoke-platform.ps1',
@@ -108,6 +110,9 @@ $required = @(
     'tools\test-private-forum-media-contract.php',
     'tools\test-forum-data-consistency.php',
     'tools\test-purchased-content-immutability.php',
+    'tools\test-content-moderation-contract.php',
+    'tools\test-message-presentation.php',
+    'tools\test-update-package-metadata-contract.php',
     'tools\generate-requirement-verification.php',
     'tools\generate-reference.php',
     'tools\generate-api-html.php',
@@ -280,6 +285,21 @@ exit($invalid === [] ? 0 : 1);
         throw "Purchased-content immutability contract checks failed.`n$purchasedContentOutput"
     }
     Write-Host "Purchased-content immutability contract checks: passed"
+    $contentModerationOutput = & $php.Source (Join-Path $root 'tools\test-content-moderation-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Content moderation contract checks failed.`n$contentModerationOutput"
+    }
+    Write-Host "Content moderation contract checks: passed"
+    $messagePresentationOutput = & $php.Source (Join-Path $root 'tools\test-message-presentation.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Message presentation contract checks failed.`n$messagePresentationOutput"
+    }
+    Write-Host "Message presentation contract checks: passed"
+    $updateMetadataOutput = & $php.Source (Join-Path $root 'tools\test-update-package-metadata-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Update package metadata contract checks failed.`n$updateMetadataOutput"
+    }
+    Write-Host "Update package metadata contract checks: passed"
     Write-Host "PHP lint: passed ($($phpFiles.Count) files)"
 } else {
     Write-Host 'PHP is not in PATH; php -l was skipped.'

@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -22,273 +23,614 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
 
 import com.google.gson.JsonObject;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import xyz.jjmxg.yiyunying.core.CrashReporter;
 import xyz.jjmxg.yiyunying.core.NotificationIconResolver;
-import xyz.jjmxg.yiyunying.data.api.ApiClient;
+import xyz.jjmxg.yiyunying.BuildConfig;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
+import xyz.jjmxg.yiyunying.data.update.UpdatePackageStore;
+import xyz.jjmxg.yiyunying.ui.upload.UpdatePackageHistoryActivity;
 
+/** Downloads, verifies and installs the application update selected by the lifecycle service. */
 public final class AppUpdateInstaller {
     private static final String UPDATE_CHANNEL = "software_updates";
     private static final int UPDATE_NOTIFICATION_ID = 27150;
+    private static final ConcurrentHashMap<String, DownloadSession> ACTIVE_DOWNLOADS =
+        new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, VerificationSession> ACTIVE_VERIFICATIONS =
+        new ConcurrentHashMap<>();
+    private static final Object OPERATION_LOCK = new Object();
+    private static final OkHttpClient UPDATE_HTTP_CLIENT = new OkHttpClient.Builder()
+        .cache(null)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.MINUTES)
+        .writeTimeout(25, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .retryOnConnectionFailure(true)
+        .build();
 
     private AppUpdateInstaller() { }
 
     public static void install(Activity activity, JsonObject update, boolean forced, Runnable onContinue) {
         if (!usable(activity)) return;
         JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
-        File directory = new File(activity.getCacheDir(), "updates");
-        if (!directory.exists() && !directory.mkdirs()) {
-            showFailure(activity, snapshot, forced, onContinue, "无法创建更新缓存目录。");
-            return;
-        }
-        File temporary = new File(directory, "update.part.apk");
-        File apk = new File(directory, "update.apk");
-        String expectedHash = Jsons.string(snapshot, "sha256").trim().toLowerCase(Locale.ROOT);
-        String expectedPackage = Jsons.string(snapshot, "package_name").trim();
-        if (expectedPackage.isEmpty()) expectedPackage = activity.getPackageName();
-        long expectedVersionCode = Jsons.longValue(snapshot, "version_code");
-        long expectedSize = Jsons.longValue(snapshot, "size_bytes");
-
-        if (apk.isFile()) {
-            String requiredPackage = expectedPackage;
-            Thread verifier = new Thread(() -> {
-                boolean reusable = cachedPackageMatches(activity, apk, requiredPackage, expectedVersionCode,
-                    expectedSize, expectedHash);
-                activity.runOnUiThread(() -> {
-                    if (!usable(activity)) return;
-                    if (reusable) {
-                        notifyReady(activity, apk);
-                        requestInstall(activity, apk, forced, onContinue);
-                        return;
-                    }
-                    deleteQuietly(apk);
-                    deleteQuietly(temporary);
-                    downloadAndInstall(activity, snapshot, forced, onContinue);
-                });
-            }, "update-cache-verifier");
-            verifier.start();
-            return;
-        }
-        deleteQuietly(temporary);
-        downloadAndInstall(activity, snapshot, forced, onContinue);
-    }
-
-    private static void downloadAndInstall(
-        Activity activity,
-        JsonObject update,
-        boolean forced,
-        Runnable onContinue
-    ) {
-        if (!usable(activity)) return;
-        JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
-        String rawUrl = Jsons.string(snapshot, "download_url");
+        String rawUrl = Jsons.string(snapshot, "download_url").trim();
         String url = ImageLoader.get().absoluteUrl(activity, rawUrl);
         if (url.isEmpty() && (rawUrl.startsWith("http://") || rawUrl.startsWith("https://"))) url = rawUrl;
-        if (url.isEmpty()) {
+        if (!UpdateTransportPolicy.allows(url, url, BuildConfig.ALLOW_HTTP_ENDPOINTS)) {
             showFailure(activity, snapshot, forced, onContinue, "后台没有配置有效的 APK 下载地址。");
             return;
         }
 
-        LinearLayout progressContent = new LinearLayout(activity);
-        progressContent.setOrientation(LinearLayout.VERTICAL);
-        int horizontalPadding = Math.round(24f * activity.getResources().getDisplayMetrics().density);
-        progressContent.setPadding(horizontalPadding, 0, horizontalPadding, horizontalPadding / 2);
-        TextView progressText = new TextView(activity);
-        progressText.setText("正在连接下载服务器…");
-        progressText.setGravity(Gravity.CENTER_HORIZONTAL);
-        ProgressBar progressBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setIndeterminate(true);
-        progressBar.setMax(100);
-        progressContent.addView(progressText, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        progressParams.topMargin = horizontalPadding / 2;
-        progressContent.addView(progressBar, progressParams);
-        AlertDialog progress = new YiyunyingDialogBuilder(activity)
-            .setTitle("正在下载更新")
-            .setView(progressContent)
-            .setCancelable(false)
-            .create();
-        progress.setCanceledOnTouchOutside(false);
-        ensureNotificationChannel(activity);
-        notifyProgress(activity, 0L, -1L);
+        UpdatePackageStore.Entry entry;
         try {
-            progress.show();
+            entry = UpdatePackageStore.prepare(activity, snapshot, url);
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            showFailure(activity, snapshot, forced, onContinue,
+                exception.getMessage() == null ? "更新信息不完整，已阻止下载。" : exception.getMessage());
+            return;
+        }
+        DownloadSession activeDownload;
+        VerificationSession activeVerification;
+        synchronized (OPERATION_LOCK) {
+            activeDownload = ACTIVE_DOWNLOADS.get(entry.id);
+            activeVerification = ACTIVE_VERIFICATIONS.get(entry.id);
+            if (activeDownload != null) activeDownload.attach(activity, forced, onContinue);
+            else if (activeVerification != null) activeVerification.attach(activity, forced, onContinue);
+        }
+        if (activeDownload != null || activeVerification != null) {
+            showAlreadyDownloading(activity, forced, onContinue);
+            return;
+        }
+        File apk = UpdatePackageStore.apkFile(activity, entry.id);
+        if (apk.isFile()) {
+            verifyThenInstall(activity, entry, forced, onContinue, true);
+            return;
+        }
+        File part = UpdatePackageStore.partFile(activity, entry.id);
+        if (part.isFile() && part.length() == entry.expectedSize) {
+            verifyCompletePartThenInstall(activity, entry, forced, onContinue);
+            return;
+        }
+        if (part.isFile() && part.length() > entry.expectedSize) {
+            deleteQuietly(part, "清理越界更新分片");
+            persistProgress(activity, entry, "", "", 0L);
+        }
+        startDownload(activity, entry, forced, onContinue);
+    }
+
+    /** Resumes the exact update represented by a package-history row. */
+    public static void resumeStoredDownload(Activity activity, String recordId) {
+        UpdatePackageStore.Entry entry = UpdatePackageStore.find(activity, recordId);
+        if (entry == null) {
+            showFailure(activity, new JsonObject(), false, null, "找不到这条安装包记录。");
+            return;
+        }
+        install(activity, entry.snapshot(), entry.forced, null);
+    }
+
+    /** Revalidates a persisted APK before opening Android's package installer. */
+    public static void installStoredPackage(Activity activity, String recordId) {
+        UpdatePackageStore.Entry entry = UpdatePackageStore.find(activity, recordId);
+        if (entry == null || !entry.hasApk) {
+            showFailure(activity, new JsonObject(), false, null, "安装包不存在或尚未下载完成。");
+            return;
+        }
+        verifyThenInstall(activity, entry, entry.forced, null, false);
+    }
+
+    /** Called by the shared activity base after returning from the unknown-sources settings page. */
+    public static void resumePendingInstall(Activity activity) {
+        if (!usable(activity)) return;
+        UpdatePackageStore.Entry entry = UpdatePackageStore.newestPermissionPending(activity);
+        if (entry == null || !entry.hasApk) return;
+        requestInstall(activity, entry, entry.forced, null);
+    }
+
+    /** Requests cancellation without racing deletion against the active response stream. */
+    public static boolean cancelDownload(String recordId) {
+        DownloadSession session = recordId == null ? null : ACTIVE_DOWNLOADS.get(recordId);
+        if (session != null) {
+            session.paused.set(true);
+            Call call = session.call;
+            if (call != null) call.cancel();
+            return true;
+        }
+        VerificationSession verification = recordId == null
+            ? null : ACTIVE_VERIFICATIONS.get(recordId);
+        if (verification == null) return false;
+        verification.paused.set(true);
+        return true;
+    }
+
+    public static boolean isDownloadActive(String recordId) {
+        return recordId != null && (ACTIVE_DOWNLOADS.containsKey(recordId)
+            || ACTIVE_VERIFICATIONS.containsKey(recordId));
+    }
+
+    private static void verifyThenInstall(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        boolean forced,
+        Runnable onContinue,
+        boolean redownloadOnFailure
+    ) {
+        VerificationSession verification = new VerificationSession(
+            activity, entry, forced, onContinue);
+        DownloadSession activeDownload;
+        VerificationSession activeVerification;
+        synchronized (OPERATION_LOCK) {
+            activeDownload = ACTIVE_DOWNLOADS.get(entry.id);
+            activeVerification = ACTIVE_VERIFICATIONS.get(entry.id);
+            if (activeDownload == null && activeVerification == null) {
+                ACTIVE_VERIFICATIONS.put(entry.id, verification);
+            } else if (activeDownload != null) {
+                activeDownload.attach(activity, forced, onContinue);
+            } else {
+                activeVerification.attach(activity, forced, onContinue);
+            }
+        }
+        if (activeDownload != null || activeVerification != null) {
+            showAlreadyDownloading(activity, forced, onContinue);
+            return;
+        }
+        Thread verifier = new Thread(() -> {
+            boolean reusable = false;
+            try {
+                File apk = UpdatePackageStore.apkFile(activity, entry.id);
+                reusable = verifiedPackageMatches(activity, apk, entry);
+            } catch (RuntimeException exception) {
+                CrashReporter.record("校验历史更新安装包", exception);
+            }
+            boolean verified = reusable;
+            activity.runOnUiThread(() -> {
+                ACTIVE_VERIFICATIONS.remove(entry.id, verification);
+                Activity host = verification.activity;
+                if (host == null) host = activity;
+                if (verified) {
+                    notifyReady(host, entry);
+                    if (verification.paused.get()) {
+                        if (usable(host) && !verification.forced) runContinue(verification.onContinue);
+                        return;
+                    }
+                    if (foregroundUsable(host)) requestInstall(host, entry,
+                        verification.forced, verification.onContinue);
+                    return;
+                }
+                deleteQuietly(UpdatePackageStore.apkFile(host, entry.id),
+                    "清理失效更新安装包");
+                persistProgress(host, entry, "", "", 0L);
+                if (verification.paused.get()) {
+                    notifyFailure(host, "安装包校验未通过，已停止自动重试");
+                    if (usable(host) && !verification.forced) runContinue(verification.onContinue);
+                } else if (redownloadOnFailure && usable(host)) {
+                    startDownload(host, entry, verification.forced, verification.onContinue);
+                } else if (usable(host)) showFailure(host, entry.snapshot(),
+                    verification.forced, verification.onContinue,
+                    "安装包校验失败，已从历史中移除，请重新下载。");
+            });
+        }, "update-package-verifier");
+        verifier.start();
+    }
+
+    private static void verifyCompletePartThenInstall(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        boolean forced,
+        Runnable onContinue
+    ) {
+        VerificationSession verification = new VerificationSession(
+            activity, entry, forced, onContinue);
+        DownloadSession activeDownload;
+        VerificationSession activeVerification;
+        synchronized (OPERATION_LOCK) {
+            activeDownload = ACTIVE_DOWNLOADS.get(entry.id);
+            activeVerification = ACTIVE_VERIFICATIONS.get(entry.id);
+            if (activeDownload == null && activeVerification == null) {
+                ACTIVE_VERIFICATIONS.put(entry.id, verification);
+            } else if (activeDownload != null) {
+                activeDownload.attach(activity, forced, onContinue);
+            } else {
+                activeVerification.attach(activity, forced, onContinue);
+            }
+        }
+        if (activeDownload != null || activeVerification != null) {
+            showAlreadyDownloading(activity, forced, onContinue);
+            return;
+        }
+        Thread verifier = new Thread(() -> {
+            String failure;
+            try {
+                failure = verifyAndPromote(activity, entry);
+            } catch (RuntimeException exception) {
+                CrashReporter.record("提交完整更新分片", exception);
+                failure = "无法校验已下载的安装包。";
+            }
+            String result = failure;
+            activity.runOnUiThread(() -> {
+                ACTIVE_VERIFICATIONS.remove(entry.id, verification);
+                Activity host = verification.activity;
+                if (host == null) host = activity;
+                if (result == null) {
+                    UpdatePackageStore.Entry complete = UpdatePackageStore.find(host, entry.id);
+                    UpdatePackageStore.Entry ready = complete == null ? entry : complete;
+                    notifyReady(host, ready);
+                    if (verification.paused.get()) {
+                        if (usable(host) && !verification.forced) runContinue(verification.onContinue);
+                    } else if (foregroundUsable(host)) {
+                        requestInstall(host, ready, verification.forced, verification.onContinue);
+                    }
+                } else if (verification.paused.get()) {
+                    notifyFailure(host, "安装包校验已暂停，可稍后继续下载");
+                    if (usable(host) && !verification.forced) runContinue(verification.onContinue);
+                } else if (usable(host)) {
+                    startDownload(host, entry, verification.forced, verification.onContinue);
+                }
+            });
+        }, "update-part-verifier");
+        verifier.start();
+    }
+
+    private static void startDownload(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        boolean forced,
+        Runnable onContinue
+    ) {
+        if (!usable(activity)) return;
+        DownloadSession session = new DownloadSession(activity, entry, forced, onContinue);
+        boolean downloadStarted;
+        DownloadSession active;
+        VerificationSession verification;
+        synchronized (OPERATION_LOCK) {
+            verification = ACTIVE_VERIFICATIONS.get(entry.id);
+            downloadStarted = verification == null
+                && ACTIVE_DOWNLOADS.putIfAbsent(entry.id, session) == null;
+            active = ACTIVE_DOWNLOADS.get(entry.id);
+            if (!downloadStarted && active == null && verification != null) {
+                verification.attach(activity, forced, onContinue);
+            }
+        }
+        if (!downloadStarted) {
+            if (active != null) active.attach(activity, forced, onContinue);
+            showAlreadyDownloading(activity, forced, onContinue);
+            return;
+        }
+        if (!showProgress(session)) {
+            ACTIVE_DOWNLOADS.remove(entry.id, session);
+            return;
+        }
+        File part = UpdatePackageStore.partFile(activity, entry.id);
+        long offset = UpdateResumePolicy.resumableOffset(part.isFile() ? part.length() : 0L,
+            entry.expectedSize);
+        if (part.isFile() && offset == 0L && part.length() > 0L) deleteQuietly(part, "重置无效更新分片");
+        updateProgressUi(session, offset, entry.expectedSize);
+        executeRequest(session, offset, true);
+    }
+
+    private static boolean showProgress(DownloadSession session) {
+        Activity activity = session.activity;
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(24f * activity.getResources().getDisplayMetrics().density);
+        content.setPadding(padding, 0, padding, padding / 2);
+        session.progressText = new TextView(activity);
+        session.progressText.setText("正在连接下载服务器…");
+        session.progressText.setGravity(Gravity.CENTER_HORIZONTAL);
+        session.progressBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
+        session.progressBar.setIndeterminate(true);
+        session.progressBar.setMax(100);
+        content.addView(session.progressText, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = padding / 2;
+        content.addView(session.progressBar, params);
+        session.progressDialog = new YiyunyingDialogBuilder(activity)
+            .setTitle("正在下载更新")
+            .setView(content)
+            .setCancelable(false)
+            .setNegativeButton("暂停下载", null)
+            .create();
+        session.progressDialog.setCanceledOnTouchOutside(false);
+        ensureNotificationChannel(activity);
+        try {
+            session.progressDialog.show();
+            session.progressDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
+                if (!session.paused.compareAndSet(false, true)) return;
+                Call call = session.call;
+                if (call != null) call.cancel();
+                else finishPaused(session);
+            });
+            return true;
         } catch (RuntimeException | LinkageError exception) {
             CrashReporter.record("显示更新下载进度", exception);
             notifyFailure(activity, "无法显示下载进度，请稍后重试");
-            if (!forced) runContinue(onContinue);
+            if (!session.forced) runContinue(session.onContinue);
+            return false;
+        }
+    }
+
+    private static void executeRequest(DownloadSession session, long offset, boolean allowCleanRetry) {
+        if (session.paused.get()) {
+            finishPaused(session);
             return;
         }
-
-        File directory = new File(activity.getCacheDir(), "updates");
-        if (!directory.exists() && !directory.mkdirs()) {
-            safeDismiss(progress);
-            showFailure(activity, snapshot, forced, onContinue, "无法创建更新缓存目录。");
+        UpdatePackageStore.Entry latest = UpdatePackageStore.find(session.activity, session.entry.id);
+        if (latest == null) {
+            finishFailure(session, "安装包记录已被删除。", false);
             return;
         }
-        File temporary = new File(directory, "update.part.apk");
-        File apk = new File(directory, "update.apk");
-        String expectedHash = Jsons.string(snapshot, "sha256").trim().toLowerCase(Locale.ROOT);
-        String expectedPackage = Jsons.string(snapshot, "package_name").trim();
-        long expectedVersionCode = Jsons.longValue(snapshot, "version_code");
-        long expectedSize = Jsons.longValue(snapshot, "size_bytes");
-
-        OkHttpClient client = ApiClient.defaultHttpClient(activity).newBuilder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .readTimeout(5, TimeUnit.MINUTES)
-            .callTimeout(8, TimeUnit.MINUTES)
-            .build();
-        Request request = new Request.Builder().url(url)
-            .header("Accept", "application/vnd.android.package-archive,*/*").build();
-        client.newCall(request).enqueue(new Callback() {
-            @Override public void onFailure(Call call, IOException exception) {
-                notifyFailure(activity, "下载更新失败，请检查网络后重试");
-                activity.runOnUiThread(() -> {
-                    if (usable(activity)) {
-                        safeDismiss(progress);
-                        showFailure(activity, snapshot, forced, onContinue, "下载更新失败，请检查网络后重试。");
-                    }
-                });
+        Call call = UPDATE_HTTP_CLIENT.newCall(UpdateRequestPolicy.build(
+            latest.downloadUrl, offset, latest.etag, latest.lastModified));
+        session.call = call;
+        if (session.paused.get()) {
+            call.cancel();
+            finishPaused(session);
+            return;
+        }
+        call.enqueue(new Callback() {
+            @Override public void onFailure(Call ignored, IOException exception) {
+                persistCurrentProgress(session);
+                if (session.paused.get() || call.isCanceled()) finishPaused(session);
+                else finishFailure(session, "下载更新失败，已保存当前进度，请检查网络后继续。", false);
             }
 
-            @Override public void onResponse(Call call, Response response) {
-                String failure = null;
-                try (Response safeResponse = response) {
-                    if (!safeResponse.isSuccessful()) {
-                        failure = "下载服务器返回 HTTP " + safeResponse.code() + "。";
-                    } else {
-                        ResponseBody body = safeResponse.body();
-                        if (body == null) failure = "下载服务器没有返回安装包内容。";
-                        else failure = saveAndVerify(activity, body, temporary, apk, expectedSize, expectedHash,
-                            expectedPackage, expectedVersionCode, (downloaded, totalBytes) -> {
-                                notifyProgress(activity, downloaded, totalBytes);
-                                activity.runOnUiThread(() -> {
-                                    if (activity.isFinishing() || activity.isDestroyed()) return;
-                                    if (totalBytes <= 0L) {
-                                        progressBar.setIndeterminate(true);
-                                        progressText.setText("已下载 " + readableBytes(downloaded));
-                                    } else {
-                                        int percent = (int) Math.min(100L, downloaded * 100L / totalBytes);
-                                        progressBar.setIndeterminate(false);
-                                        progressBar.setProgress(percent);
-                                        progressText.setText("已下载 " + percent + "%  ·  "
-                                            + readableBytes(downloaded) + " / " + readableBytes(totalBytes));
-                                    }
-                                });
-                            });
-                    }
-                } catch (IOException exception) {
-                    failure = "保存安装包失败，请检查设备存储空间。";
-                }
-                String result = failure;
-                if (result == null) notifyReady(activity, apk);
-                else notifyFailure(activity, result);
-                activity.runOnUiThread(() -> {
-                    if (!usable(activity)) return;
-                    safeDismiss(progress);
-                    if (result != null) showFailure(activity, snapshot, forced, onContinue, result);
-                    else requestInstall(activity, apk, forced, onContinue);
-                });
+            @Override public void onResponse(Call ignored, Response response) {
+                handleResponse(session, response, offset, allowCleanRetry);
             }
         });
     }
 
-    private static String saveAndVerify(
-        Activity activity,
-        ResponseBody body,
-        File temporary,
-        File apk,
-        long expectedSize,
-        String expectedHash,
-        String expectedPackage,
-        long expectedVersionCode,
-        ProgressCallback progress
-    ) throws IOException {
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException exception) {
-            return "当前系统不支持 SHA-256 校验。";
-        }
-        long total = 0L;
-        long contentLength = body.contentLength();
-        long lastProgressAt = 0L;
-        byte[] buffer = new byte[64 * 1024];
-        try (InputStream input = body.byteStream(); FileOutputStream output = new FileOutputStream(temporary, false)) {
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                output.write(buffer, 0, read);
-                digest.update(buffer, 0, read);
-                total += read;
-                long now = android.os.SystemClock.elapsedRealtime();
-                if (now - lastProgressAt >= 180L) {
-                    progress.onProgress(total, contentLength);
-                    lastProgressAt = now;
-                }
+    private static void handleResponse(
+        DownloadSession session,
+        Response response,
+        long requestedOffset,
+        boolean allowCleanRetry
+    ) {
+        try (Response safeResponse = response) {
+            String finalUrl = safeResponse.request().url().toString();
+            if (!UpdateTransportPolicy.allows(
+                session.entry.downloadUrl, finalUrl, BuildConfig.ALLOW_HTTP_ENDPOINTS)) {
+                finishFailure(session, "下载地址发生了不安全的协议降级，已阻止更新。", false);
+                return;
             }
-            output.getFD().sync();
+            ResponseBody body = safeResponse.body();
+            long contentLength = body == null ? -1L : body.contentLength();
+            UpdateResumePolicy.Decision decision = UpdateResumePolicy.decide(
+                requestedOffset,
+                session.entry.expectedSize,
+                safeResponse.code(),
+                safeResponse.header("Content-Range"),
+                contentLength
+            );
+            if (decision.action == UpdateResumePolicy.Action.FAIL) {
+                finishFailure(session, decision.reason + "。", false);
+                return;
+            }
+            if (decision.action == UpdateResumePolicy.Action.VERIFY_LOCAL) {
+                completeFromPart(session);
+                return;
+            }
+            if (decision.action == UpdateResumePolicy.Action.RESTART && safeResponse.code() == 416) {
+                if (!allowCleanRetry) {
+                    finishFailure(session, "服务器无法接受重新下载请求。", false);
+                    return;
+                }
+                resetPartial(session);
+                executeRequest(session, 0L, false);
+                return;
+            }
+            if (body == null) {
+                finishFailure(session, "下载服务器没有返回安装包内容。", false);
+                return;
+            }
+            boolean append = decision.action == UpdateResumePolicy.Action.APPEND;
+            long start = append ? requestedOffset : 0L;
+            if (!append && contentLength >= 0L && contentLength != session.entry.expectedSize) {
+                finishFailure(session, "下载服务器返回的安装包大小与更新信息不一致。", false);
+                return;
+            }
+            String etag = value(safeResponse.header("ETag"));
+            String lastModified = value(safeResponse.header("Last-Modified"));
+            persistProgress(session.activity, session.entry, etag, lastModified, start);
+            String failure = writeBody(session, body, start, append, etag, lastModified);
+            if (failure != null) {
+                finishFailure(session, failure, session.paused.get());
+                return;
+            }
+            completeFromPart(session);
+        } catch (IOException exception) {
+            persistCurrentProgress(session);
+            if (session.paused.get()) finishPaused(session);
+            else finishFailure(session, "保存安装包失败，当前进度已保留，请检查存储空间。", false);
         }
-        progress.onProgress(total, contentLength);
-        if (expectedSize > 0L && total != expectedSize) {
-            temporary.delete();
-            return "安装包大小校验失败，已阻止安装。";
+    }
+
+    private static String writeBody(
+        DownloadSession session,
+        ResponseBody body,
+        long start,
+        boolean append,
+        String etag,
+        String lastModified
+    ) throws IOException {
+        File part = UpdatePackageStore.partFile(session.activity, session.entry.id);
+        final long[] lastUiAt = {0L};
+        final long[] lastStoreAt = {0L};
+        long total;
+        try {
+            total = UpdateDownloadIo.copy(body.byteStream(), part, append, start,
+                session.entry.expectedSize, session.paused::get, downloaded -> {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (now - lastUiAt[0] >= 180L) {
+                        updateProgressUi(session, downloaded, session.entry.expectedSize);
+                        lastUiAt[0] = now;
+                    }
+                    if (now - lastStoreAt[0] >= 1000L) {
+                        persistProgress(session.activity, session.entry, etag, lastModified, downloaded);
+                        lastStoreAt[0] = now;
+                    }
+                });
+        } catch (UpdateDownloadIo.SizeLimitException exception) {
+            deleteQuietly(part, "清理越界更新下载");
+            persistProgress(session.activity, session.entry, "", "", 0L);
+            return "安装包超过预期大小，已阻止安装。";
         }
-        String actualHash = hex(digest.digest());
-        if (!expectedHash.isEmpty() && !expectedHash.equals(actualHash)) {
-            temporary.delete();
-            return "安装包完整性校验失败，已阻止安装。";
+        persistProgress(session.activity, session.entry, etag, lastModified, total);
+        updateProgressUi(session, total, session.entry.expectedSize);
+        if (total < session.entry.expectedSize) {
+            return "下载连接提前结束，已保存当前进度，可继续下载。";
         }
-        PackageInfo archiveInfo = archiveInfo(activity, temporary);
-        String archivePackage = archiveInfo == null || archiveInfo.packageName == null
-            ? "" : archiveInfo.packageName;
-        if (archivePackage.isEmpty()) {
-            temporary.delete();
-            return "下载内容不是有效的 Android 安装包。";
-        }
-        String requiredPackage = expectedPackage.isEmpty() ? activity.getPackageName() : expectedPackage;
-        if (!requiredPackage.equals(archivePackage)) {
-            temporary.delete();
-            return "安装包应用标识不匹配，已阻止安装。";
-        }
-        if (expectedVersionCode > 0L && archiveVersionCode(archiveInfo) != expectedVersionCode) {
-            temporary.delete();
-            return "安装包版本与更新信息不匹配，已阻止安装。";
-        }
-        if (apk.exists() && !apk.delete()) return "无法替换旧的更新缓存。";
-        if (!temporary.renameTo(apk)) return "无法提交已校验的安装包。";
         return null;
+    }
+
+    private static void completeFromPart(DownloadSession session) {
+        if (session.paused.get()) {
+            finishPaused(session);
+            return;
+        }
+        String failure = verifyAndPromote(session.activity, session.entry);
+        if (failure != null) {
+            finishFailure(session, failure, false);
+            return;
+        }
+        UpdatePackageStore.Entry complete = UpdatePackageStore.find(session.activity, session.entry.id);
+        UpdatePackageStore.Entry ready = complete == null ? session.entry : complete;
+        if (session.paused.get()) finishReadyWithoutInstall(session, ready);
+        else finishSuccess(session, ready);
+    }
+
+    private static String verifyAndPromote(Activity activity, UpdatePackageStore.Entry entry) {
+        File part = UpdatePackageStore.partFile(activity, entry.id);
+        if (!verifiedPackageMatches(activity, part, entry)) {
+            deleteQuietly(part, "清理校验失败的更新分片");
+            persistProgress(activity, entry, "", "", 0L);
+            return "安装包完整性、身份或签名校验失败，已阻止安装。";
+        }
+        File apk = UpdatePackageStore.apkFile(activity, entry.id);
+        if (apk.exists() && !apk.delete()) return "无法替换旧的更新安装包。";
+        if (!part.renameTo(apk)) return "无法提交已校验的安装包。";
+        try {
+            UpdatePackageStore.markComplete(activity, entry.id);
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            return exception.getMessage() == null ? "无法保存安装包完成状态。" : exception.getMessage();
+        }
+        return null;
+    }
+
+    private static boolean verifiedPackageMatches(
+        Activity activity,
+        File apk,
+        UpdatePackageStore.Entry entry
+    ) {
+        if (activity == null || apk == null || entry == null || !apk.isFile()) return false;
+        try {
+            PackageInfo archive = archiveInfo(activity, apk);
+            String archivePackage = archive == null || archive.packageName == null ? "" : archive.packageName;
+            boolean metadataMatches = UpdatePackagePolicy.matches(
+                entry.packageName,
+                entry.versionCode,
+                entry.expectedSize,
+                entry.sha256,
+                archivePackage,
+                archiveVersionCode(archive),
+                apk.length(),
+                sha256(apk)
+            );
+            return metadataMatches && signingCertificatesMatch(activity, archive);
+        } catch (IOException | PackageManager.NameNotFoundException | RuntimeException exception) {
+            CrashReporter.record("校验已下载更新", exception);
+            return false;
+        }
     }
 
     private static PackageInfo archiveInfo(Activity activity, File apk) {
         PackageManager manager = activity.getPackageManager();
         if (Build.VERSION.SDK_INT >= 33) {
-            return manager.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.PackageInfoFlags.of(0));
+            return manager.getPackageArchiveInfo(apk.getAbsolutePath(),
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES));
+        }
+        //noinspection deprecation
+        return manager.getPackageArchiveInfo(apk.getAbsolutePath(), Build.VERSION.SDK_INT >= 28
+            ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES);
+    }
+
+    private static PackageInfo installedInfo(Activity activity) throws PackageManager.NameNotFoundException {
+        PackageManager manager = activity.getPackageManager();
+        if (Build.VERSION.SDK_INT >= 33) {
+            return manager.getPackageInfo(activity.getPackageName(),
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES));
+        }
+        //noinspection deprecation
+        return manager.getPackageInfo(activity.getPackageName(), Build.VERSION.SDK_INT >= 28
+            ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES);
+    }
+
+    private static boolean signingCertificatesMatch(Activity activity, PackageInfo archive)
+        throws PackageManager.NameNotFoundException, IOException {
+        Set<String> installedCurrent = currentSignerHashes(installedInfo(activity));
+        Set<String> candidateCurrent = currentSignerHashes(archive);
+        Set<String> candidateHistory = signingHistoryHashes(archive);
+        return UpdateSigningPolicy.allows(installedCurrent, candidateCurrent, candidateHistory);
+    }
+
+    private static Set<String> currentSignerHashes(PackageInfo info) throws IOException {
+        Set<String> hashes = new HashSet<>();
+        if (info == null) return hashes;
+        List<Signature> signatures = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 28 && info.signingInfo != null) {
+            Signature[] values = info.signingInfo.getApkContentsSigners();
+            if (values != null) java.util.Collections.addAll(signatures, values);
         } else {
             //noinspection deprecation
-            return manager.getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+            if (info.signatures != null) java.util.Collections.addAll(signatures, info.signatures);
         }
+        for (Signature signature : signatures) {
+            if (signature != null) hashes.add(sha256(signature.toByteArray()));
+        }
+        return hashes;
+    }
+
+    private static Set<String> signingHistoryHashes(PackageInfo info) throws IOException {
+        if (Build.VERSION.SDK_INT < 28 || info == null || info.signingInfo == null
+            || info.signingInfo.hasMultipleSigners()) {
+            return currentSignerHashes(info);
+        }
+        Set<String> hashes = new HashSet<>();
+        Signature[] history = info.signingInfo.getSigningCertificateHistory();
+        if (history != null) {
+            for (Signature signature : history) {
+                if (signature != null) hashes.add(sha256(signature.toByteArray()));
+            }
+        }
+        return hashes;
     }
 
     private static long archiveVersionCode(PackageInfo info) {
@@ -298,41 +640,8 @@ public final class AppUpdateInstaller {
         return info.versionCode;
     }
 
-    private static boolean cachedPackageMatches(
-        Activity activity,
-        File apk,
-        String expectedPackage,
-        long expectedVersionCode,
-        long expectedSize,
-        String expectedHash
-    ) {
-        if (activity == null || apk == null || !apk.isFile()) return false;
-        try {
-            PackageInfo info = archiveInfo(activity, apk);
-            String actualPackage = info == null ? "" : info.packageName;
-            return UpdatePackagePolicy.matches(
-                expectedPackage,
-                expectedVersionCode,
-                expectedSize,
-                expectedHash,
-                actualPackage,
-                archiveVersionCode(info),
-                apk.length(),
-                sha256(apk)
-            );
-        } catch (IOException | RuntimeException exception) {
-            CrashReporter.record("校验已下载更新", exception);
-            return false;
-        }
-    }
-
     private static String sha256(File file) throws IOException {
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IOException("SHA-256 unavailable", exception);
-        }
+        MessageDigest digest = digest();
         byte[] buffer = new byte[64 * 1024];
         try (InputStream input = new FileInputStream(file)) {
             int read;
@@ -341,64 +650,262 @@ public final class AppUpdateInstaller {
         return hex(digest.digest());
     }
 
-    private static void deleteQuietly(File file) {
-        if (file != null && file.exists() && !file.delete()) {
-            CrashReporter.record("清理失效更新缓存", new IOException(file.getAbsolutePath()));
+    private static String sha256(byte[] value) throws IOException {
+        MessageDigest digest = digest();
+        digest.update(value == null ? new byte[0] : value);
+        return hex(digest.digest());
+    }
+
+    private static MessageDigest digest() throws IOException {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 unavailable", exception);
         }
     }
 
-    private static void requestInstall(Activity activity, File apk, boolean forced, Runnable onContinue) {
-        if (!usable(activity)) return;
+    private static void requestInstall(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        boolean forced,
+        Runnable onContinue
+    ) {
+        if (!usable(activity) || entry == null || !entry.hasApk) return;
         if (Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
             try {
                 new YiyunyingDialogBuilder(activity)
                     .setTitle("允许安装更新")
-                    .setMessage("请在系统设置中允许易运盈安装更新，返回后再次点击立即更新。")
+                    .setMessage("请在系统设置中允许易运盈安装更新；返回软件后会自动继续，不需要再次下载或点击。")
                     .setCancelable(!forced)
                     .setPositiveButton("打开设置", (dialog, which) -> {
                         if (!usable(activity)) return;
-                        Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:" + activity.getPackageName()));
-                        activity.startActivity(intent);
+                        try {
+                            UpdatePackageStore.markPermissionPending(activity, entry.id, forced);
+                            Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:" + activity.getPackageName()));
+                            if (intent.resolveActivity(activity.getPackageManager()) == null) {
+                                throw new IllegalStateException("系统没有安装权限设置入口");
+                            }
+                            activity.startActivity(intent);
+                        } catch (RuntimeException exception) {
+                            CrashReporter.record("打开更新安装权限", exception);
+                            try { UpdatePackageStore.markComplete(activity, entry.id); }
+                            catch (RuntimeException ignored) { }
+                            showFailure(activity, entry.snapshot(), forced, onContinue,
+                                "无法打开安装权限设置。");
+                        }
                     })
                     .setNegativeButton(forced ? "退出" : "稍后", (dialog, which) -> {
+                        try { UpdatePackageStore.markComplete(activity, entry.id); }
+                        catch (RuntimeException ignored) { }
                         if (!usable(activity)) return;
                         if (forced) activity.finishAffinity(); else runContinue(onContinue);
                     })
                     .show();
             } catch (RuntimeException | LinkageError exception) {
                 CrashReporter.record("显示更新安装权限提示", exception);
-                if (!forced) runContinue(onContinue);
+                try { UpdatePackageStore.markComplete(activity, entry.id); }
+                catch (RuntimeException ignored) { }
+                notifyFailure(activity, "无法显示安装权限提示，安装包已保留。" );
+                if (forced) activity.finishAffinity(); else runContinue(onContinue);
             }
             return;
         }
-        Uri content = FileProvider.getUriForFile(activity, activity.getPackageName() + ".capture-files", apk);
-        Intent install = installIntent(content);
+        File apk = UpdatePackageStore.apkFile(activity, entry.id);
+        Uri content;
         try {
-            activity.startActivity(install);
+            content = FileProvider.getUriForFile(activity,
+                activity.getPackageName() + ".capture-files", apk);
+        } catch (RuntimeException exception) {
+            CrashReporter.record("准备更新安装包", exception);
+            try { UpdatePackageStore.markComplete(activity, entry.id); }
+            catch (RuntimeException ignored) { }
+            showFailure(activity, entry.snapshot(), forced, onContinue, "无法准备安装包。" );
+            return;
+        }
+        dispatchInstall(activity, entry, content, forced, onContinue);
+    }
+
+    static void dispatchInstall(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        Uri content,
+        boolean forced,
+        Runnable onContinue
+    ) {
+        try {
+            UpdatePackageStore.markInstallRequested(activity, entry.id);
+            activity.startActivity(installIntent(content));
             if (!forced) runContinue(onContinue);
         } catch (RuntimeException exception) {
-            showFailure(activity, new JsonObject(), forced, onContinue, "系统没有可用的安装器。");
+            try { UpdatePackageStore.markComplete(activity, entry.id); }
+            catch (RuntimeException ignored) { }
+            showFailure(activity, entry.snapshot(), forced, onContinue, "系统没有可用的安装器。");
         }
     }
 
-    private static Intent installIntent(Uri content) {
+    static Intent installIntent(Uri content) {
         return new Intent(Intent.ACTION_VIEW)
             .setDataAndType(content, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
     }
 
-    private static void showFailure(Activity activity, JsonObject update, boolean forced, Runnable onContinue,
-                                    String message) {
+    static OkHttpClient updateHttpClientForTest() {
+        return UPDATE_HTTP_CLIENT;
+    }
+
+    private static void finishSuccess(DownloadSession session, UpdatePackageStore.Entry entry) {
+        if (!session.finished.compareAndSet(false, true)) return;
+        notifyReady(session.activity, entry);
+        session.activity.runOnUiThread(() -> {
+            ACTIVE_DOWNLOADS.remove(session.entry.id, session);
+            safeDismiss(session.progressDialog);
+            if (session.paused.get()) {
+                if (!usable(session.activity)) return;
+                if (session.forced) {
+                    showFailure(session.activity, entry.snapshot(), true, session.onContinue,
+                        "安装包已下载并校验通过；自动安装已暂停，可点击继续安装。");
+                } else {
+                    runContinue(session.onContinue);
+                }
+                return;
+            }
+            if (foregroundUsable(session.activity)) requestInstall(
+                session.activity, entry, session.forced, session.onContinue);
+        });
+    }
+
+    private static void finishReadyWithoutInstall(
+        DownloadSession session,
+        UpdatePackageStore.Entry entry
+    ) {
+        if (!session.finished.compareAndSet(false, true)) return;
+        notifyReady(session.activity, entry);
+        session.activity.runOnUiThread(() -> {
+            ACTIVE_DOWNLOADS.remove(session.entry.id, session);
+            safeDismiss(session.progressDialog);
+            if (!usable(session.activity)) return;
+            if (session.forced) {
+                showFailure(session.activity, entry.snapshot(), true, session.onContinue,
+                    "安装包已下载并校验通过；自动安装已暂停，可点击继续安装。");
+            } else {
+                runContinue(session.onContinue);
+            }
+        });
+    }
+
+    private static void finishPaused(DownloadSession session) {
+        if (!session.finished.compareAndSet(false, true)) return;
+        persistCurrentProgress(session);
+        notifyFailure(session.activity, "下载已暂停，当前进度已保存");
+        session.activity.runOnUiThread(() -> {
+            ACTIVE_DOWNLOADS.remove(session.entry.id, session);
+            safeDismiss(session.progressDialog);
+            if (!usable(session.activity)) return;
+            if (session.forced) showFailure(session.activity, session.entry.snapshot(), true,
+                session.onContinue, "下载已暂停，当前进度已保存，可继续下载。");
+            else runContinue(session.onContinue);
+        });
+    }
+
+    private static void finishFailure(DownloadSession session, String message, boolean paused) {
+        if (paused) {
+            finishPaused(session);
+            return;
+        }
+        if (!session.finished.compareAndSet(false, true)) return;
+        persistCurrentProgress(session);
+        notifyFailure(session.activity, message);
+        session.activity.runOnUiThread(() -> {
+            ACTIVE_DOWNLOADS.remove(session.entry.id, session);
+            safeDismiss(session.progressDialog);
+            if (usable(session.activity)) showFailure(session.activity, session.entry.snapshot(),
+                session.forced, session.onContinue, message);
+        });
+    }
+
+    private static void resetPartial(DownloadSession session) {
+        File part = UpdatePackageStore.partFile(session.activity, session.entry.id);
+        deleteQuietly(part, "重置更新下载分片");
+        persistProgress(session.activity, session.entry, "", "", 0L);
+        updateProgressUi(session, 0L, session.entry.expectedSize);
+    }
+
+    private static void persistCurrentProgress(DownloadSession session) {
+        UpdatePackageStore.Entry latest = UpdatePackageStore.find(session.activity, session.entry.id);
+        String etag = latest == null ? "" : latest.etag;
+        String modified = latest == null ? "" : latest.lastModified;
+        File part = UpdatePackageStore.partFile(session.activity, session.entry.id);
+        persistProgress(session.activity, session.entry, etag, modified,
+            part.isFile() ? part.length() : 0L);
+    }
+
+    private static void persistProgress(
+        Activity activity,
+        UpdatePackageStore.Entry entry,
+        String etag,
+        String lastModified,
+        long downloaded
+    ) {
+        try {
+            UpdatePackageStore.updateValidators(activity, entry.id, etag, lastModified, downloaded);
+        } catch (RuntimeException exception) {
+            CrashReporter.record("保存更新下载进度", exception);
+        }
+    }
+
+    private static void updateProgressUi(DownloadSession session, long downloaded, long total) {
+        notifyProgress(session.activity, downloaded, total);
+        session.activity.runOnUiThread(() -> {
+            if (!usable(session.activity) || session.progressBar == null || session.progressText == null) return;
+            if (total <= 0L) {
+                session.progressBar.setIndeterminate(true);
+                session.progressText.setText("已下载 " + readableBytes(downloaded));
+                return;
+            }
+            int percent = (int) Math.min(100L, downloaded * 100L / total);
+            session.progressBar.setIndeterminate(false);
+            session.progressBar.setProgress(percent);
+            String prefix = downloaded > 0L && downloaded < total ? "可续传 · " : "";
+            session.progressText.setText(prefix + "已下载 " + percent + "%  ·  "
+                + readableBytes(downloaded) + " / " + readableBytes(total));
+        });
+    }
+
+    private static void showAlreadyDownloading(Activity activity, boolean forced, Runnable onContinue) {
+        try {
+            new YiyunyingDialogBuilder(activity)
+                .setTitle("更新正在下载")
+                .setMessage("同一安装包已有一个下载任务，进度会继续保留并显示在通知栏。")
+                .setPositiveButton("知道了", (dialog, which) -> {
+                    if (!forced) runContinue(onContinue);
+                })
+                .setCancelable(!forced)
+                .show();
+        } catch (RuntimeException | LinkageError exception) {
+            if (!forced) runContinue(onContinue);
+        }
+    }
+
+    private static void showFailure(
+        Activity activity,
+        JsonObject update,
+        boolean forced,
+        Runnable onContinue,
+        String message
+    ) {
         notifyFailure(activity, message);
         if (!usable(activity)) return;
         JsonObject snapshot = update == null ? new JsonObject() : update.deepCopy();
-        com.google.android.material.dialog.MaterialAlertDialogBuilder builder = new YiyunyingDialogBuilder(activity)
-            .setTitle("更新未完成")
-            .setMessage(message == null || message.trim().isEmpty() ? "更新暂时无法完成，请稍后重试。" : message)
-            .setCancelable(!forced);
+        com.google.android.material.dialog.MaterialAlertDialogBuilder builder =
+            new YiyunyingDialogBuilder(activity)
+                .setTitle("更新未完成")
+                .setMessage(message == null || message.trim().isEmpty()
+                    ? "更新暂时无法完成，请稍后重试。" : message)
+                .setCancelable(!forced);
         if (snapshot.has("download_url")) {
-            builder.setPositiveButton("重试", (dialog, which) -> install(activity, snapshot, forced, onContinue));
+            builder.setPositiveButton("继续下载", (dialog, which) ->
+                install(activity, snapshot, forced, onContinue));
         }
         builder.setNegativeButton(forced ? "退出" : "稍后", (dialog, which) -> {
             if (!usable(activity)) return;
@@ -413,7 +920,7 @@ public final class AppUpdateInstaller {
     }
 
     private static void ensureNotificationChannel(Activity activity) {
-        if (Build.VERSION.SDK_INT < 26) return;
+        if (activity == null || Build.VERSION.SDK_INT < 26) return;
         NotificationManager manager = activity.getSystemService(NotificationManager.class);
         if (manager == null) return;
         NotificationChannel channel = new NotificationChannel(
@@ -424,6 +931,8 @@ public final class AppUpdateInstaller {
     }
 
     private static void notifyProgress(Activity activity, long downloaded, long total) {
+        if (activity == null) return;
+        ensureNotificationChannel(activity);
         int percent = total > 0L ? (int) Math.min(100L, downloaded * 100L / total) : 0;
         String detail = total > 0L
             ? percent + "% · " + readableBytes(downloaded) + " / " + readableBytes(total)
@@ -437,7 +946,9 @@ public final class AppUpdateInstaller {
         notifySafely(activity, builder);
     }
 
-    private static void notifyReady(Activity activity, File apk) {
+    private static void notifyReady(Activity activity, UpdatePackageStore.Entry entry) {
+        if (activity == null || entry == null) return;
+        ensureNotificationChannel(activity);
         NotificationCompat.Builder builder = notificationBuilder(activity)
             .setContentTitle("更新已下载")
             .setContentText("安装包校验通过，点击继续安装")
@@ -445,10 +956,9 @@ public final class AppUpdateInstaller {
             .setAutoCancel(true)
             .setProgress(0, 0, false);
         try {
-            Uri content = FileProvider.getUriForFile(activity,
-                activity.getPackageName() + ".capture-files", apk);
             PendingIntent install = PendingIntent.getActivity(activity, UPDATE_NOTIFICATION_ID,
-                installIntent(content), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                UpdatePackageHistoryActivity.intent(activity, entry.id),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             builder.setContentIntent(install);
         } catch (RuntimeException exception) {
             CrashReporter.record("创建更新安装通知", exception);
@@ -497,21 +1007,30 @@ public final class AppUpdateInstaller {
         return activity != null && !activity.isFinishing() && !activity.isDestroyed();
     }
 
+    private static boolean foregroundUsable(Activity activity) {
+        if (!usable(activity)) return false;
+        if (!(activity instanceof LifecycleOwner)) return true;
+        return ((LifecycleOwner) activity).getLifecycle().getCurrentState()
+            .isAtLeast(Lifecycle.State.RESUMED);
+    }
+
     private static void safeDismiss(AlertDialog dialog) {
         if (dialog == null || !dialog.isShowing()) return;
-        try {
-            dialog.dismiss();
-        } catch (RuntimeException ignored) {
-            // Window may already be detached while the download callback is returning.
-        }
+        try { dialog.dismiss(); }
+        catch (RuntimeException ignored) { }
     }
 
     private static void runContinue(Runnable onContinue) {
         if (onContinue == null) return;
-        try {
-            onContinue.run();
-        } catch (RuntimeException | LinkageError exception) {
+        try { onContinue.run(); }
+        catch (RuntimeException | LinkageError exception) {
             CrashReporter.record("继续进入应用", exception);
+        }
+    }
+
+    private static void deleteQuietly(File file, String area) {
+        if (file != null && file.exists() && !file.delete()) {
+            CrashReporter.record(area, new IOException(file.getAbsolutePath()));
         }
     }
 
@@ -527,7 +1046,74 @@ public final class AppUpdateInstaller {
         return String.format(Locale.ROOT, "%.1f MB", bytes / 1024d / 1024d);
     }
 
-    private interface ProgressCallback {
-        void onProgress(long downloaded, long total);
+    private static String value(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private static final class DownloadSession {
+        volatile Activity activity;
+        final UpdatePackageStore.Entry entry;
+        volatile boolean forced;
+        volatile Runnable onContinue;
+        final AtomicBoolean paused = new AtomicBoolean();
+        final AtomicBoolean finished = new AtomicBoolean();
+        volatile Call call;
+        AlertDialog progressDialog;
+        ProgressBar progressBar;
+        TextView progressText;
+
+        DownloadSession(
+            Activity activity,
+            UpdatePackageStore.Entry entry,
+            boolean forced,
+            Runnable onContinue
+        ) {
+            this.activity = activity;
+            this.entry = entry;
+            this.forced = forced;
+            this.onContinue = onContinue;
+        }
+
+        void attach(Activity activity, boolean forced, Runnable onContinue) {
+            Activity previous = this.activity;
+            if (activity != null && activity != previous) {
+                this.activity = activity;
+                AlertDialog oldDialog = progressDialog;
+                progressDialog = null;
+                progressBar = null;
+                progressText = null;
+                if (oldDialog != null && previous != null) {
+                    previous.runOnUiThread(() -> safeDismiss(oldDialog));
+                }
+            }
+            this.forced = this.forced || forced;
+            if (onContinue != null) this.onContinue = onContinue;
+        }
+    }
+
+    private static final class VerificationSession {
+        volatile Activity activity;
+        final UpdatePackageStore.Entry entry;
+        volatile boolean forced;
+        volatile Runnable onContinue;
+        final AtomicBoolean paused = new AtomicBoolean();
+
+        VerificationSession(
+            Activity activity,
+            UpdatePackageStore.Entry entry,
+            boolean forced,
+            Runnable onContinue
+        ) {
+            this.activity = activity;
+            this.entry = entry;
+            this.forced = forced;
+            this.onContinue = onContinue;
+        }
+
+        void attach(Activity activity, boolean forced, Runnable onContinue) {
+            if (activity != null) this.activity = activity;
+            this.forced = this.forced || forced;
+            if (onContinue != null) this.onContinue = onContinue;
+        }
     }
 }

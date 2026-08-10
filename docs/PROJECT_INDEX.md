@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- Android 版本：`2.7.12`（`versionCode 57`）
+- Android 源码/本地候选：`2.7.14`（`versionCode 59`）；生产仍为 `2.7.13`（`versionCode 58`）
 - 客户端形态：用户端、管理员端、授权端、总控端
 - 服务端：PHP API、MySQL 数据库、WebSocket/TURN/推送等外部基础设施
 - 下载站：静态下载中心与版本元数据
@@ -26,6 +26,8 @@
 - [全量需求与实施总纲](MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)：唯一主需求索引、编号、真实状态、实施顺序与完成定义
 
 - [项目总览](../README.md)
+- [2.7.14 本地发布候选说明：治理、媒体与可恢复更新](releases/2.7.14.md)
+- [2.7.13 Debug 测试版说明：聊天、媒体、资料与论坛收尾](releases/2.7.13.md)
 - [2.7.12 发布说明：评论顶起与操作栏裁字修复](releases/2.7.12.md)
 - [2.7.11 发布说明：语音评论、评论互动与通知定位](releases/2.7.11.md)
 - [2.7.10 发布说明：置顶动态显示、评论预览与更新包复用](releases/2.7.10.md)

@@ -1585,6 +1585,7 @@ CREATE TABLE IF NOT EXISTS `forum_comments` (
   `user_id` BIGINT UNSIGNED NOT NULL,
   `content` TEXT NOT NULL,
   `tags_json` LONGTEXT,
+  `mentions_json` LONGTEXT,
   `is_pinned` TINYINT NOT NULL DEFAULT 0,
   `pin_order` INT NOT NULL DEFAULT 0,
   `like_count` BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -4093,6 +4094,10 @@ CREATE TABLE IF NOT EXISTS `user_moments` (
   `visibility_user_ids_json` LONGTEXT DEFAULT NULL,
   `is_pinned` TINYINT(1) NOT NULL DEFAULT 0,
   `pin_order` INT UNSIGNED NOT NULL DEFAULT 0,
+  `audit_status` VARCHAR(20) NOT NULL DEFAULT 'approved',
+  `audit_reason` VARCHAR(500) NOT NULL DEFAULT '',
+  `audited_by` BIGINT UNSIGNED DEFAULT NULL,
+  `audited_at` DATETIME DEFAULT NULL,
   `edited_at` DATETIME DEFAULT NULL,
   `deleted_at` DATETIME DEFAULT NULL,
   `delete_expires_at` DATETIME DEFAULT NULL,
@@ -4103,9 +4108,11 @@ CREATE TABLE IF NOT EXISTS `user_moments` (
   KEY `idx_user_moments_feed` (`admin_id`, `app_id`, `status`, `deleted_at`, `created_at`),
   KEY `idx_user_moments_owner` (`user_id`, `created_at`),
   KEY `idx_user_moments_pinned` (`user_id`, `is_pinned`, `pin_order`, `created_at`),
+  KEY `idx_user_moments_moderation` (`admin_id`, `app_id`, `audit_status`, `status`, `deleted_at`, `created_at`),
   KEY `idx_user_moments_purge` (`app_id`, `delete_expires_at`),
   CONSTRAINT `fk_user_moments_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`)
-    REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
+    REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_user_moments_auditor` FOREIGN KEY (`audited_by`) REFERENCES `admins` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `moment_likes` (
@@ -4131,16 +4138,22 @@ CREATE TABLE IF NOT EXISTS `moment_comments` (
   `parent_id` BIGINT UNSIGNED DEFAULT NULL,
   `sticker_id` BIGINT UNSIGNED DEFAULT NULL,
   `content` VARCHAR(2000) NOT NULL,
+  `audit_status` VARCHAR(20) NOT NULL DEFAULT 'approved',
+  `audit_reason` VARCHAR(500) NOT NULL DEFAULT '',
+  `audited_by` BIGINT UNSIGNED DEFAULT NULL,
+  `audited_at` DATETIME DEFAULT NULL,
   `status` TINYINT NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_moment_comments_feed` (`moment_id`, `status`, `id`),
   KEY `idx_moment_comments_user` (`app_id`, `user_id`, `id`),
+  KEY `idx_moment_comments_moderation` (`admin_id`, `app_id`, `audit_status`, `status`, `created_at`),
   CONSTRAINT `fk_moment_comments_moment` FOREIGN KEY (`moment_id`) REFERENCES `user_moments` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_moment_comments_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_moment_comments_parent` FOREIGN KEY (`parent_id`) REFERENCES `moment_comments` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_moment_comments_sticker` FOREIGN KEY (`sticker_id`) REFERENCES `stickers` (`id`) ON DELETE SET NULL
+  CONSTRAINT `fk_moment_comments_sticker` FOREIGN KEY (`sticker_id`) REFERENCES `stickers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_moment_comments_auditor` FOREIGN KEY (`audited_by`) REFERENCES `admins` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `moment_comment_likes` (
@@ -4517,6 +4530,8 @@ VALUES
   (@admin_id, @app_id, 'profile_edit_enabled', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'profile_public_default', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'moment_like_non_friend_visible', '0', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'moment_post_audit', '0', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'moment_comment_audit', '0', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'profile_like_per_action_limit', '10', 'int', NOW(), NOW()),
   (@admin_id, @app_id, 'profile_like_daily_limit', '50', 'int', NOW(), NOW()),
   (@admin_id, @app_id, 'sign_enabled', '1', 'bool', NOW(), NOW()),

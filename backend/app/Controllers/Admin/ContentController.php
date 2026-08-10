@@ -11,6 +11,7 @@ use Yiyunying\Core\Response;
 use Yiyunying\Core\Validator;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
+use Yiyunying\Services\LifecycleService;
 use Yiyunying\Services\LogService;
 
 final class ContentController
@@ -182,16 +183,16 @@ final class ContentController
         $appId = (int) $params['app_id'];
         AppService::owned((int) $admin['id'], $appId);
         $data = $request->all();
-        Validator::required($data, ['version_name', 'version_code', 'apk_url', 'update_content']);
+        Validator::required($data, ['version_name', 'update_content']);
+        $package = LifecycleService::requireUpdatePackageMetadata($data, 'apk_url', 500);
         $versionName = Validator::string($data['version_name'], 'version_name', 1, 40);
-        $versionCode = Validator::integer($data['version_code'], 'version_code', 1, 2147483647);
+        $versionCode = $package['version_code'];
         $minSupportedVersionCode = Validator::integer(
             $data['min_supported_version_code'] ?? 0,
             'min_supported_version_code',
             0,
             $versionCode
         );
-        $apkUrl = Validator::string($data['apk_url'], 'apk_url', 1, 500);
         $updateContent = (string) $data['update_content'];
         $forceUpdate = Validator::boolean($data['force_update'] ?? false, 'force_update') ? 1 : 0;
         if (Database::one('SELECT id FROM app_versions WHERE app_id = ? AND version_code = ? AND deleted_at IS NULL', [$appId, $versionCode])) {
@@ -199,9 +200,14 @@ final class ContentController
         }
         $versionId = Database::insert(
             'INSERT INTO app_versions
-             (admin_id, app_id, version_name, version_code, min_supported_version_code, apk_url, update_content, force_update, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-            [(int) $admin['id'], $appId, $versionName, $versionCode, $minSupportedVersionCode, $apkUrl, $updateContent, $forceUpdate]
+             (admin_id, app_id, version_name, version_code, min_supported_version_code, apk_url,
+              package_name, sha256, size_bytes, update_content, force_update, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+            [
+                (int) $admin['id'], $appId, $versionName, $versionCode, $minSupportedVersionCode,
+                $package['download_url'], $package['package_name'], $package['sha256'], $package['size_bytes'],
+                $updateContent, $forceUpdate,
+            ]
         );
         Database::execute('UPDATE apps SET version = ?, updated_at = NOW() WHERE id = ? AND admin_id = ?', [
             $versionName,

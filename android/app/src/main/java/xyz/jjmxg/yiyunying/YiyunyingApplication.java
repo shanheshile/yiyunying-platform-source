@@ -21,6 +21,7 @@ import xyz.jjmxg.yiyunying.core.CrashReporter;
 import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
 import xyz.jjmxg.yiyunying.core.ThemeModeStore;
 import xyz.jjmxg.yiyunying.domain.Role;
+import xyz.jjmxg.yiyunying.data.update.UpdatePackageStore;
 import xyz.jjmxg.yiyunying.service.MessageNotificationService;
 import xyz.jjmxg.yiyunying.ui.main.MainActivity;
 import xyz.jjmxg.yiyunying.ui.settings.UserSettingsActivity;
@@ -47,6 +48,10 @@ public final class YiyunyingApplication extends Application {
     public void onCreate() {
         super.onCreate();
         CrashReporter.install(this);
+        // Package replacement may kill the old process before it receives a callback. Reconcile
+        // the persisted install request on every cold start so automatic cleanup is reliable on
+        // vendor Android builds that delay or omit MY_PACKAGE_REPLACED delivery.
+        safely("核对软件更新安装包", () -> UpdatePackageStore.reconcileInstalled(this));
         safely("修复桌面入口", () -> AppearanceStyleStore.repairLauncherState(this));
         safely("应用主题", () -> ThemeModeStore.apply(this));
         safely("应用界面语言", () -> AppCompatDelegate.setApplicationLocales(

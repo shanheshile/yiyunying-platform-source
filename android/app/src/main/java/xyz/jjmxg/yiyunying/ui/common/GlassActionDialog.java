@@ -2,7 +2,6 @@ package xyz.jjmxg.yiyunying.ui.common;
 
 import android.app.Dialog;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
@@ -97,11 +96,10 @@ public final class GlassActionDialog {
             button.setLineSpacing(0f, 1.02f);
             button.setEllipsize(TextUtils.TruncateAt.END);
             button.setTextColor(context.getColor(R.color.on_surface));
-            button.setIconResource(action.icon);
+            ActionIconResolver.apply(button, action.label, action.icon);
             button.setIconSize(dp(context, dense ? 15 : 18));
             button.setIconGravity(MaterialButton.ICON_GRAVITY_TOP);
             button.setIconPadding(dp(context, dense ? 3 : 5));
-            button.setIconTint(ColorStateList.valueOf(ThemeColors.primary(context)));
             button.setOnClickListener(view -> {
                 dialog.dismiss();
                 if (action.callback != null) action.callback.run();

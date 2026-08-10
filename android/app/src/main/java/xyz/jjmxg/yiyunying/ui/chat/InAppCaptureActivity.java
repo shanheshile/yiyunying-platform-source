@@ -5,13 +5,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
@@ -21,10 +24,12 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -64,10 +69,19 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private static final long LONG_PRESS_MS = 360L;
     private static final long MAX_VIDEO_MS = 60_000L;
     private static final long MIN_VIDEO_MS = 450L;
+    private static final long FOCUS_LOCK_PRESS_MS = 520L;
+    private static final long FOCUS_FOLLOW_INTERVAL_MS = 52L;
+    private static final long FOCUS_RELEASE_MS = 1_800L;
     private static final int MAX_PHOTO_WIDTH = 1920;
     private static final int MAX_PHOTO_HEIGHT = 1440;
     private static final int MAX_VIDEO_WIDTH = 1280;
     private static final int MAX_VIDEO_HEIGHT = 720;
+    private static final int FOCUS_STATE_FOLLOWING = 1;
+    private static final int FOCUS_STATE_FOCUSING = 2;
+    private static final int FOCUS_STATE_SUCCESS = 3;
+    private static final int FOCUS_STATE_LOCKING = 4;
+    private static final int FOCUS_STATE_LOCKED = 5;
+    private static final int FOCUS_STATE_FAILED = 6;
 
     private ActivityInAppCaptureBinding binding;
     private final Handler mainHandler = new Handler(android.os.Looper.getMainLooper());
@@ -75,6 +89,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private Handler cameraHandler;
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
+    private CaptureRequest.Builder previewRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mediaRecorder;
     private File captureFile;
@@ -82,6 +97,25 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private android.util.Size previewSize;
     private android.util.Size videoSize;
     private int lensFacing = CameraCharacteristics.LENS_FACING_BACK;
+    private int sensorOrientation = 90;
+    private int maxAfRegions;
+    private int maxAeRegions;
+    private int touchAfMode = CaptureRequest.CONTROL_AF_MODE_AUTO;
+    private int pictureAfMode = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
+    private int videoAfMode = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO;
+    private boolean aeLockAvailable;
+    private volatile Rect currentCropRegion = new Rect(0, 0, 1, 1);
+    private volatile MeteringRectangle currentMeteringRegion;
+    private volatile boolean focusLocked;
+    private volatile int focusRequestGeneration;
+    private int awaitingFocusGeneration = -1;
+    private boolean awaitingFocusLocked;
+    private final CameraFocusController.GestureState focusGesture =
+        new CameraFocusController.GestureState();
+    private boolean followFocusPosted;
+    private int focusTouchSlop;
+    private float focusLockAnchorX;
+    private float focusLockAnchorY;
     private boolean surfaceReady;
     private boolean openingCamera;
     private boolean recordingRequested;
@@ -91,6 +125,30 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private boolean deliveringResult;
     private boolean captureBusy;
     private long recordingStartedAt;
+
+    private static final class FocusRequestTag {
+        final int generation;
+
+        FocusRequestTag(int generation) {
+            this.generation = generation;
+        }
+    }
+
+    private final Runnable lockFocusAfterHold = () -> {
+        if (binding == null || captureBusy || recording || recordingStarting
+            || cameraDevice == null || !focusGesture.lock()) return;
+        focusLocked = true;
+        binding.capturePreview.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        updateFocusIndicator(FOCUS_STATE_LOCKING, true);
+        submitTouchFocus(focusGesture.x(), focusGesture.y(), true, true);
+    };
+
+    private final Runnable submitFollowFocus = () -> {
+        followFocusPosted = false;
+        if (binding == null || !focusGesture.isActive() || focusGesture.isLocked()
+            || captureBusy || recording || recordingStarting) return;
+        submitTouchFocus(focusGesture.x(), focusGesture.y(), false, false);
+    };
 
     private final Runnable beginVideoAfterHold = () -> {
         if (binding == null || captureBusy || cameraDevice == null) return;
@@ -115,6 +173,35 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         }
     };
 
+    private final CameraCaptureSession.CaptureCallback cameraStateCallback =
+        new CameraCaptureSession.CaptureCallback() {
+            @Override public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                                     @NonNull CaptureRequest request,
+                                                     @NonNull TotalCaptureResult result) {
+                Rect crop = result.get(CaptureResult.SCALER_CROP_REGION);
+                if (crop != null && !crop.isEmpty()) currentCropRegion = new Rect(crop);
+                Object tag = request.getTag();
+                if (!(tag instanceof FocusRequestTag)
+                    || ((FocusRequestTag) tag).generation != awaitingFocusGeneration) return;
+                if (awaitingFocusGeneration < 0) return;
+                Integer afState = result.get(CaptureResult.CONTROL_AF_STATE);
+                if (afState == null) return;
+                boolean focused = afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+                    || afState == CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED;
+                boolean terminal = focused
+                    || afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED;
+                if (!terminal) return;
+                int generation = awaitingFocusGeneration;
+                boolean locked = awaitingFocusLocked;
+                awaitingFocusGeneration = -1;
+                runOnUiThread(() -> {
+                    if (binding == null || generation != focusRequestGeneration) return;
+                    updateFocusIndicator(locked ? FOCUS_STATE_LOCKED
+                        : (focused ? FOCUS_STATE_SUCCESS : FOCUS_STATE_FAILED), locked);
+                });
+            }
+        };
+
     public static Intent intent(Context context) {
         return new Intent(context, InAppCaptureActivity.class);
     }
@@ -126,6 +213,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         getWindow().setNavigationBarColor(android.graphics.Color.BLACK);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         binding = ActivityInAppCaptureBinding.inflate(getLayoutInflater());
+        focusTouchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         setContentView(binding.getRoot());
         ViewCompat.setOnApplyWindowInsetsListener(binding.getRoot(), (view, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -141,6 +229,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         binding.captureSwitchCamera.setOnClickListener(view -> switchCamera());
         binding.captureShutter.setOnClickListener(view -> takePhoto());
         binding.captureShutter.setOnTouchListener(this::handleShutterTouch);
+        binding.capturePreview.setOnTouchListener(this::handlePreviewFocusTouch);
         binding.capturePreview.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(@NonNull SurfaceHolder holder) {
                 surfaceReady = true;
@@ -165,6 +254,10 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     @Override protected void onPause() {
         mainHandler.removeCallbacks(beginVideoAfterHold);
         mainHandler.removeCallbacks(recordingTicker);
+        mainHandler.removeCallbacks(lockFocusAfterHold);
+        mainHandler.removeCallbacks(submitFollowFocus);
+        followFocusPosted = false;
+        focusGesture.cancel();
         if (!deliveringResult) recordingRequested = false;
         closeCamera();
         stopCameraThread();
@@ -197,7 +290,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             return;
         }
         if (!hasPermission(Manifest.permission.RECORD_AUDIO) && binding != null) {
-            binding.captureHint.setText("轻触拍照 · 长按无声录像（最多 60 秒）");
+            binding.captureHint.setText(defaultCaptureHint());
         }
         openCameraWhenReady();
     }
@@ -229,6 +322,282 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         return true;
     }
 
+    private boolean handlePreviewFocusTouch(View view, MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            if (!canTouchFocus()) return false;
+            int pointerId = event.getPointerId(0);
+            focusLocked = false;
+            focusGesture.begin(pointerId, clamp(event.getX(), 0f, view.getWidth()),
+                clamp(event.getY(), 0f, view.getHeight()));
+            focusLockAnchorX = focusGesture.x();
+            focusLockAnchorY = focusGesture.y();
+            mainHandler.removeCallbacks(lockFocusAfterHold);
+            mainHandler.removeCallbacks(submitFollowFocus);
+            followFocusPosted = false;
+            positionFocusIndicator(focusGesture.x(), focusGesture.y(), true);
+            updateFocusIndicator(FOCUS_STATE_FOLLOWING, false);
+            submitTouchFocus(focusGesture.x(), focusGesture.y(), false, false);
+            mainHandler.postDelayed(lockFocusAfterHold, FOCUS_LOCK_PRESS_MS);
+            return true;
+        }
+
+        int actionIndex = event.getActionIndex();
+        int pointerId = event.getPointerId(actionIndex);
+        if (action == MotionEvent.ACTION_MOVE) {
+            if (!focusGesture.isActive()) return false;
+            int trackedIndex = event.findPointerIndex(event.getPointerId(0));
+            // The tracked pointer is normally index 0. If another finger is added, find the one
+            // already owned by GestureState rather than transferring focus to the new pointer.
+            for (int index = 0; index < event.getPointerCount(); index++) {
+                if (focusGesture.matches(event.getPointerId(index))) {
+                    trackedIndex = index;
+                    break;
+                }
+            }
+            if (trackedIndex < 0 || !focusGesture.move(event.getPointerId(trackedIndex),
+                clamp(event.getX(trackedIndex), 0f, view.getWidth()),
+                clamp(event.getY(trackedIndex), 0f, view.getHeight()))) return true;
+            positionFocusIndicator(focusGesture.x(), focusGesture.y(), false);
+            updateFocusIndicator(FOCUS_STATE_FOLLOWING, false);
+            if (distance(focusLockAnchorX, focusLockAnchorY,
+                focusGesture.x(), focusGesture.y()) > focusTouchSlop) {
+                focusLockAnchorX = focusGesture.x();
+                focusLockAnchorY = focusGesture.y();
+                mainHandler.removeCallbacks(lockFocusAfterHold);
+                mainHandler.postDelayed(lockFocusAfterHold, FOCUS_LOCK_PRESS_MS);
+            }
+            if (!followFocusPosted) {
+                followFocusPosted = true;
+                mainHandler.postDelayed(submitFollowFocus, FOCUS_FOLLOW_INTERVAL_MS);
+            }
+            return true;
+        }
+
+        if (action == MotionEvent.ACTION_UP) {
+            mainHandler.removeCallbacks(lockFocusAfterHold);
+            mainHandler.removeCallbacks(submitFollowFocus);
+            followFocusPosted = false;
+            if (!focusGesture.matches(pointerId)) return true;
+            float x = clamp(event.getX(actionIndex), 0f, view.getWidth());
+            float y = clamp(event.getY(actionIndex), 0f, view.getHeight());
+            boolean runTransientFocus = focusGesture.end(pointerId, x, y);
+            if (runTransientFocus) {
+                positionFocusIndicator(focusGesture.x(), focusGesture.y(), false);
+                updateFocusIndicator(FOCUS_STATE_FOCUSING, false);
+                submitTouchFocus(focusGesture.x(), focusGesture.y(), true, false);
+            }
+            view.performClick();
+            return true;
+        }
+
+        if (action == MotionEvent.ACTION_CANCEL) {
+            mainHandler.removeCallbacks(lockFocusAfterHold);
+            mainHandler.removeCallbacks(submitFollowFocus);
+            followFocusPosted = false;
+            boolean locked = focusGesture.isLocked();
+            focusGesture.cancel();
+            if (!locked) hideFocusIndicator();
+            return true;
+        }
+        return focusGesture.isActive();
+    }
+
+    private boolean canTouchFocus() {
+        return binding != null && cameraDevice != null && captureSession != null
+            && previewRequestBuilder != null && !captureBusy && !recording && !recordingStarting;
+    }
+
+    private void submitTouchFocus(float previewX, float previewY, boolean triggerAf,
+                                  boolean retainLock) {
+        ActivityInAppCaptureBinding currentBinding = binding;
+        Handler handler = cameraHandler;
+        if (currentBinding == null || handler == null || !canTouchFocus()) return;
+        int previewWidth = currentBinding.capturePreview.getWidth();
+        int previewHeight = currentBinding.capturePreview.getHeight();
+        if (previewWidth <= 0 || previewHeight <= 0) return;
+        int displayRotation = rotationDegrees(getWindowManager().getDefaultDisplay().getRotation());
+        MeteringRectangle region = CameraFocusController.meteringRectangle(previewX, previewY,
+            previewWidth, previewHeight, currentCropRegion, sensorOrientation, displayRotation,
+            lensFacing == CameraCharacteristics.LENS_FACING_FRONT);
+        currentMeteringRegion = region;
+        int generation = focusRequestGeneration + 1;
+        focusRequestGeneration = generation;
+        handler.post(() -> applyTouchFocus(region, triggerAf, retainLock, generation));
+    }
+
+    private void applyTouchFocus(MeteringRectangle region, boolean triggerAf,
+                                 boolean retainLock, int generation) {
+        if (generation != focusRequestGeneration) return;
+        CameraCaptureSession session = captureSession;
+        CaptureRequest.Builder request = previewRequestBuilder;
+        if (session == null || request == null || cameraDevice == null) return;
+        try {
+            if (maxAfRegions > 0) {
+                request.set(CaptureRequest.CONTROL_AF_REGIONS,
+                    new MeteringRectangle[] { region });
+            }
+            if (maxAeRegions > 0) {
+                request.set(CaptureRequest.CONTROL_AE_REGIONS,
+                    new MeteringRectangle[] { region });
+            }
+            if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, retainLock);
+
+            request.setTag(null);
+            request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+            session.capture(request.build(), cameraStateCallback, cameraHandler);
+            request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+
+            boolean canTriggerAf = touchAfMode != CaptureRequest.CONTROL_AF_MODE_OFF;
+            if (triggerAf && canTriggerAf) {
+                request.set(CaptureRequest.CONTROL_AF_MODE, touchAfMode);
+                request.setTag(new FocusRequestTag(generation));
+                request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START);
+                awaitingFocusGeneration = generation;
+                awaitingFocusLocked = retainLock;
+                session.capture(request.build(), cameraStateCallback, cameraHandler);
+                request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+            } else {
+                request.setTag(null);
+                request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+                awaitingFocusGeneration = -1;
+            }
+            session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
+
+            if (triggerAf) {
+                if (canTriggerAf) {
+                    cameraHandler.postDelayed(() -> finishFocusWithoutTerminalState(generation,
+                        retainLock), 900L);
+                } else {
+                    runOnUiThread(() -> {
+                        if (binding != null && generation == focusRequestGeneration) {
+                            updateFocusIndicator(retainLock ? FOCUS_STATE_LOCKED
+                                : FOCUS_STATE_SUCCESS, retainLock);
+                        }
+                    });
+                }
+                if (!retainLock) {
+                    cameraHandler.postDelayed(() -> releaseTransientFocus(generation),
+                        FOCUS_RELEASE_MS);
+                }
+            }
+        } catch (CameraAccessException | IllegalArgumentException exception) {
+            runOnUiThread(() -> {
+                if (binding == null || generation != focusRequestGeneration) return;
+                focusLocked = false;
+                updateFocusIndicator(FOCUS_STATE_FAILED, false);
+            });
+        }
+    }
+
+    private void finishFocusWithoutTerminalState(int generation, boolean retainLock) {
+        if (generation != focusRequestGeneration || awaitingFocusGeneration != generation) return;
+        awaitingFocusGeneration = -1;
+        runOnUiThread(() -> {
+            if (binding == null || generation != focusRequestGeneration) return;
+            updateFocusIndicator(retainLock ? FOCUS_STATE_LOCKED : FOCUS_STATE_SUCCESS,
+                retainLock);
+        });
+    }
+
+    private void releaseTransientFocus(int generation) {
+        if (generation != focusRequestGeneration || focusLocked) return;
+        CameraCaptureSession session = captureSession;
+        CaptureRequest.Builder request = previewRequestBuilder;
+        if (session == null || request == null) return;
+        try {
+            request.setTag(null);
+            request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+            session.capture(request.build(), cameraStateCallback, cameraHandler);
+            request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+            request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+            request.set(CaptureRequest.CONTROL_AF_REGIONS, null);
+            request.set(CaptureRequest.CONTROL_AE_REGIONS, null);
+            if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
+            session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
+            currentMeteringRegion = null;
+            runOnUiThread(() -> {
+                if (binding != null && generation == focusRequestGeneration && !focusLocked) {
+                    hideFocusIndicator();
+                }
+            });
+        } catch (CameraAccessException | IllegalArgumentException ignored) { }
+    }
+
+    private void positionFocusIndicator(float previewX, float previewY, boolean animateIn) {
+        if (binding == null) return;
+        View preview = binding.capturePreview;
+        View indicator = binding.captureFocusIndicator;
+        int indicatorWidth = indicator.getWidth() > 0 ? indicator.getWidth() : dp(104);
+        int indicatorHeight = indicator.getHeight() > 0 ? indicator.getHeight() : dp(116);
+        int frameHeight = dp(76);
+        float left = clamp(previewX - indicatorWidth / 2f, 0f,
+            Math.max(0f, preview.getWidth() - indicatorWidth));
+        float top = clamp(previewY - frameHeight / 2f, 0f,
+            Math.max(0f, preview.getHeight() - indicatorHeight));
+        indicator.animate().cancel();
+        indicator.setX(left);
+        indicator.setY(top);
+        indicator.setAlpha(1f);
+        indicator.setVisibility(View.VISIBLE);
+        if (animateIn) {
+            indicator.setScaleX(0.74f);
+            indicator.setScaleY(0.74f);
+            indicator.animate().scaleX(1f).scaleY(1f).setDuration(150L).start();
+        } else {
+            indicator.setScaleX(1f);
+            indicator.setScaleY(1f);
+        }
+    }
+
+    private void updateFocusIndicator(int state, boolean announceLock) {
+        if (binding == null) return;
+        if (state == FOCUS_STATE_LOCKED || state == FOCUS_STATE_LOCKING) {
+            binding.captureFocusFrame.setBackgroundResource(R.drawable.bg_capture_focus_frame_locked);
+            binding.captureFocusStatus.setText(state == FOCUS_STATE_LOCKED ? "焦点已锁定" : "锁定中");
+        } else if (state == FOCUS_STATE_SUCCESS) {
+            binding.captureFocusFrame.setBackgroundResource(R.drawable.bg_capture_focus_frame_success);
+            binding.captureFocusStatus.setText("已聚焦");
+        } else if (state == FOCUS_STATE_FAILED) {
+            binding.captureFocusFrame.setBackgroundResource(R.drawable.bg_capture_focus_frame_failed);
+            binding.captureFocusStatus.setText("未能聚焦");
+        } else {
+            binding.captureFocusFrame.setBackgroundResource(R.drawable.bg_capture_focus_frame);
+            binding.captureFocusStatus.setText(state == FOCUS_STATE_FOLLOWING ? "跟随聚焦" : "聚焦中");
+        }
+        binding.captureFocusIndicator.setVisibility(View.VISIBLE);
+        if (announceLock && state == FOCUS_STATE_LOCKED) {
+            binding.capturePreview.announceForAccessibility("焦点已锁定");
+        }
+    }
+
+    private void hideFocusIndicator() {
+        if (binding == null || focusLocked) return;
+        View indicator = binding.captureFocusIndicator;
+        indicator.animate().cancel();
+        indicator.animate().alpha(0f).setDuration(140L).withEndAction(() -> {
+            if (binding != null && !focusLocked && !focusGesture.isActive()) {
+                binding.captureFocusIndicator.setVisibility(View.GONE);
+            }
+        }).start();
+    }
+
+    private void resetFocusInteraction() {
+        mainHandler.removeCallbacks(lockFocusAfterHold);
+        mainHandler.removeCallbacks(submitFollowFocus);
+        followFocusPosted = false;
+        focusGesture.cancel();
+        focusLocked = false;
+        currentMeteringRegion = null;
+        focusRequestGeneration++;
+        awaitingFocusGeneration = -1;
+        if (binding != null) {
+            binding.captureFocusIndicator.animate().cancel();
+            binding.captureFocusIndicator.setAlpha(1f);
+            binding.captureFocusIndicator.setVisibility(View.GONE);
+        }
+    }
+
     private void openCameraWhenReady() {
         if (!surfaceReady || cameraDevice != null || openingCamera || !hasPermission(Manifest.permission.CAMERA)) return;
         if (cameraHandler == null) return;
@@ -241,6 +610,23 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 return;
             }
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+            Integer actualFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+            if (actualFacing != null) lensFacing = actualFacing;
+            Rect activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            currentCropRegion = activeArray == null || activeArray.isEmpty()
+                ? new Rect(0, 0, 1, 1) : new Rect(activeArray);
+            Integer orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            sensorOrientation = orientation == null ? 90 : orientation;
+            Integer afRegions = characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF);
+            Integer aeRegions = characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
+            maxAfRegions = afRegions == null ? 0 : Math.max(0, afRegions);
+            maxAeRegions = aeRegions == null ? 0 : Math.max(0, aeRegions);
+            Boolean lockAvailable = characteristics.get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE);
+            aeLockAvailable = Boolean.TRUE.equals(lockAvailable);
+            int[] availableAfModes = characteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
+            touchAfMode = CameraFocusController.touchAfMode(availableAfModes);
+            pictureAfMode = CameraFocusController.continuousAfMode(availableAfModes, false);
+            videoAfMode = CameraFocusController.continuousAfMode(availableAfModes, true);
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) throw new CameraAccessException(CameraAccessException.CAMERA_ERROR, "相机不支持预览");
             videoSize = chooseBoundedSize(map.getOutputSizes(MediaRecorder.class),
@@ -304,15 +690,21 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         try {
             CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             request.addTarget(surface);
-            request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            request.setTag(null);
+            request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+            if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
+            previewRequestBuilder = request;
             camera.createCaptureSession(Arrays.asList(surface, reader.getSurface()),
                 new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(@NonNull CameraCaptureSession session) {
                         if (cameraDevice == null) { session.close(); return; }
                         captureSession = session;
-                        try { session.setRepeatingRequest(request.build(), null, cameraHandler); }
+                        try { session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler); }
                         catch (CameraAccessException ignored) { }
-                        runOnUiThread(() -> setCaptureControlsEnabled(true));
+                        runOnUiThread(() -> {
+                            setCaptureControlsEnabled(true);
+                            resetFocusInteraction();
+                        });
                     }
 
                     @Override public void onConfigureFailed(@NonNull CameraCaptureSession session) {
@@ -335,7 +727,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         try {
             CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             request.addTarget(reader.getSurface());
-            request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            applyCurrentFocusToCapture(request, false);
             request.set(CaptureRequest.JPEG_ORIENTATION, captureOrientation());
             session.stopRepeating();
             session.capture(request.build(), new CameraCaptureSession.CaptureCallback() {
@@ -348,6 +740,26 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             setCaptureControlsEnabled(true);
             Toast.makeText(this, "拍照失败：" + exception.getMessage(), Toast.LENGTH_LONG).show();
             startPreview();
+        }
+    }
+
+    private void applyCurrentFocusToCapture(CaptureRequest.Builder request, boolean video) {
+        MeteringRectangle region = currentMeteringRegion;
+        if (region != null) {
+            request.set(CaptureRequest.CONTROL_AF_MODE,
+                focusLocked || !video ? touchAfMode : videoAfMode);
+            if (maxAfRegions > 0) {
+                request.set(CaptureRequest.CONTROL_AF_REGIONS,
+                    new MeteringRectangle[] { region });
+            }
+            if (maxAeRegions > 0) {
+                request.set(CaptureRequest.CONTROL_AE_REGIONS,
+                    new MeteringRectangle[] { region });
+            }
+            if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, focusLocked);
+        } else {
+            request.set(CaptureRequest.CONTROL_AF_MODE, video ? videoAfMode : pictureAfMode);
+            if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
         }
     }
 
@@ -372,6 +784,11 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private void beginVideoRecording() {
         if (recording || recordingStarting || cameraDevice == null || cameraHandler == null) return;
+        mainHandler.removeCallbacks(lockFocusAfterHold);
+        mainHandler.removeCallbacks(submitFollowFocus);
+        followFocusPosted = false;
+        focusGesture.cancel();
+        if (!focusLocked) hideFocusIndicator();
         captureBusy = true;
         recordingStarting = true;
         // Keep the current gesture target enabled so the held pointer can still deliver ACTION_UP.
@@ -396,7 +813,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
                 request.addTarget(preview);
                 request.addTarget(recorderSurface);
-                request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                applyCurrentFocusToCapture(request, true);
                 camera.createCaptureSession(Arrays.asList(preview, recorderSurface),
                     new CameraCaptureSession.StateCallback() {
                         @Override public void onConfigured(@NonNull CameraCaptureSession session) {
@@ -411,7 +828,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                             }
                             captureSession = session;
                             try {
-                                session.setRepeatingRequest(request.build(), null, cameraHandler);
+                                session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
                                 mediaRecorder.start();
                                 recordingStartedAt = SystemClock.elapsedRealtime();
                                 recording = true;
@@ -528,11 +945,16 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         if (binding == null) return;
         binding.recordingTimer.setVisibility(View.GONE);
         binding.recordingTimer.setText("00:00 / 01:00");
-        binding.captureHint.setText(hasPermission(Manifest.permission.RECORD_AUDIO)
-            ? "轻触拍照 · 长按录像（最多 60 秒）"
-            : "轻触拍照 · 长按无声录像（最多 60 秒）");
+        binding.captureHint.setText(defaultCaptureHint());
         binding.captureShutterCore.setBackgroundResource(R.drawable.bg_capture_shutter_photo);
         setCaptureControlsEnabled(true);
+    }
+
+    private String defaultCaptureHint() {
+        return (hasPermission(Manifest.permission.RECORD_AUDIO)
+            ? "轻触拍照 · 长按录像（最多 60 秒）"
+            : "轻触拍照 · 长按无声录像（最多 60 秒）")
+            + "\n画面点按聚焦 · 拖动跟焦 · 长按锁焦";
     }
 
     private void completeCapture(File file, boolean video) {
@@ -553,6 +975,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private void switchCamera() {
         if (recording || recordingStarting || captureBusy) return;
+        resetFocusInteraction();
         lensFacing = lensFacing == CameraCharacteristics.LENS_FACING_BACK
             ? CameraCharacteristics.LENS_FACING_FRONT
             : CameraCharacteristics.LENS_FACING_BACK;
@@ -566,6 +989,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         recordingRequested = false;
         mainHandler.removeCallbacks(beginVideoAfterHold);
         mainHandler.removeCallbacks(recordingTicker);
+        resetFocusInteraction();
         if (cameraHandler == null) {
             setResult(RESULT_CANCELED);
             finish();
@@ -666,6 +1090,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private void closeCaptureSession() {
         CameraCaptureSession session = captureSession;
         captureSession = null;
+        previewRequestBuilder = null;
+        awaitingFocusGeneration = -1;
         if (session != null) {
             try { session.close(); } catch (RuntimeException ignored) { }
         }
@@ -711,5 +1137,13 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static float clamp(float value, float minimum, float maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    private static float distance(float firstX, float firstY, float secondX, float secondY) {
+        return (float) Math.hypot(secondX - firstX, secondY - firstY);
     }
 }

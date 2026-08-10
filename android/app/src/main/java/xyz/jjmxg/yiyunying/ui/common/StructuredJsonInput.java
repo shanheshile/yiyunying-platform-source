@@ -181,6 +181,7 @@ public final class StructuredJsonInput extends LinearLayout {
         row.addView(input, new LayoutParams(0, -2, 1f));
         MaterialButton remove = new MaterialButton(getContext());
         remove.setText("删除");
+        ActionIconResolver.apply(remove, "删除这个投票选项", 0);
         remove.setOnClickListener(view -> {
             if (optionInputs.size() <= 2) {
                 showError("投票至少需要两个选项");
