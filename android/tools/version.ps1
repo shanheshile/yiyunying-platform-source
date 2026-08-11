@@ -83,7 +83,7 @@ function Write-VersionState([string] $Name, [int] $Code) {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     $temporaryFile = "$versionFile.$([Guid]::NewGuid().ToString('N')).tmp"
     $backupFile = "$versionFile.bak"
-    $content = "VERSION_CODE=$Code`r`nVERSION_NAME=$Name`r`n"
+    $content = "VERSION_CODE=$Code`nVERSION_NAME=$Name`n"
     [System.IO.File]::WriteAllText($temporaryFile, $content, $utf8)
     try {
         [System.IO.File]::Replace($temporaryFile, $versionFile, $backupFile, $true)
@@ -111,7 +111,7 @@ function Write-DownloadPackageVersion([string] $Name) {
     $json = $package | ConvertTo-Json -Depth 20
     [System.IO.File]::WriteAllText(
         $downloadPackageFile,
-        $json + [Environment]::NewLine,
+        $json + "`n",
         (New-Object System.Text.UTF8Encoding($false))
     )
 }
@@ -135,7 +135,7 @@ function Write-BackendReleaseIdentity([string] $Name, [int] $Code) {
     $json = $identity | ConvertTo-Json
     [System.IO.File]::WriteAllText(
         $backendReleaseFile,
-        $json + [Environment]::NewLine,
+        $json + "`n",
         (New-Object System.Text.UTF8Encoding($false))
     )
 }
@@ -260,7 +260,7 @@ try {
         } | ConvertTo-Json -Compress
         [System.IO.File]::AppendAllText(
             $historyFile,
-            "$audit`r`n",
+            "$audit`n",
             (New-Object System.Text.UTF8Encoding($false))
         )
     }

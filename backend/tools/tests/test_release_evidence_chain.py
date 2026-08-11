@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 VERIFIER_PATH = ROOT / "backend" / "tools" / "verify-production-release-ssh.py"
 RELEASE_PATH = ROOT / "android" / "tools" / "release.ps1"
 PACKAGE_PATH = ROOT / "scripts" / "package-project.ps1"
+VERSION_PATH = ROOT / "android" / "tools" / "version.ps1"
 
 
 def read(path: Path) -> str:
@@ -63,6 +64,17 @@ def run(command: list[str], cwd: Path, *, check: bool = True) -> subprocess.Comp
 
 
 class ReleaseEvidenceChainTest(unittest.TestCase):
+    def test_version_writers_use_lf_for_release_identity_and_version_evidence(self) -> None:
+        source = read(VERSION_PATH)
+        for marker in (
+            '$content = "VERSION_CODE=$Code`nVERSION_NAME=$Name`n"',
+            '$json + "`n"',
+            '"$audit`n"',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("[Environment]::NewLine", source)
+        self.assertNotIn("`r`n", source)
+
     def test_ssh_and_public_apk_verification_fail_closed(self) -> None:
         source = read(VERIFIER_PATH)
         compile(source, str(VERIFIER_PATH), "exec")
@@ -198,6 +210,9 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             'releaseTag = "v$($version.versionName)-debug"',
             "finalizationStatus = 'pending'",
             "releaseIdentitySha256 = $releaseIdentitySha256",
+            "Read-GitBlobBytes",
+            "Get-ByteArraySha256 -Bytes $committedIdentityBytes",
+            "发布身份文件工作树原始字节与 HEAD Git blob 不一致",
             "$downloadMetadata['pendingManifestSha256'] = $pendingManifestSha256",
             "'ls-files', '--error-unmatch'",
             "if ($Phase -eq 'Finalize')",
@@ -221,6 +236,61 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
         self.assertNotIn("refs/tags", build_gate)
         self.assertNotIn("rev-list", build_gate)
 
+    def test_build_rejects_crlf_identity_even_when_git_reports_clean(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        git = shutil.which("git.exe") or shutil.which("git")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required")
+        self.assertIsNotNone(git, "Git is required")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "repository"
+            (repository / "android" / "tools").mkdir(parents=True)
+            (repository / "backend" / "config").mkdir(parents=True)
+            (repository / "download-site").mkdir(parents=True)
+            shutil.copy2(RELEASE_PATH, repository / "android" / "tools" / "release.ps1")
+            (repository / "android" / "tools" / "version.ps1").write_text(
+                "param([string] $Action, [switch] $Json)\n"
+                "[pscustomobject]@{ versionName = '9.9.9'; versionCode = 999; changed = $false } "
+                "| ConvertTo-Json -Compress\n",
+                encoding="utf-8-sig",
+            )
+            identity_path = repository / "backend" / "config" / "release-identity.json"
+            identity_path.write_bytes(b'{"version_name":"9.9.9","version_code":999}\n')
+
+            run([git, "init", "-b", "main"], repository)
+            run([git, "config", "user.name", "Release Test"], repository)
+            run([git, "config", "user.email", "release-test@example.invalid"], repository)
+            run([git, "config", "core.autocrlf", "true"], repository)
+            run([git, "add", "."], repository)
+            run([git, "commit", "-m", "build source"], repository)
+
+            identity_path.write_bytes(b'{"version_name":"9.9.9","version_code":999}\r\n')
+            run([git, "add", "backend/config/release-identity.json"], repository)
+            self.assertEqual(
+                run([git, "status", "--porcelain", "--untracked-files=all"], repository).stdout,
+                "",
+                "fixture must reproduce a byte-different worktree that Git reports clean",
+            )
+            rejected = run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(repository / "android" / "tools" / "release.ps1"),
+                    "-Phase",
+                    "Build",
+                    "-JavaHome",
+                    str(repository),
+                ],
+                repository,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("HEAD Git blob", rejected.stdout)
+            self.assertFalse((repository / "releases" / "9.9.9").exists())
+
     def test_project_finalize_binds_distinct_ancestor_and_annotated_tag(self) -> None:
         source = read(PACKAGE_PATH)
         for marker in (
@@ -233,12 +303,14 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             "$tagType -ne 'tag'",
             "$tagCommit -ne $evidenceCommit",
             '"refs/tags/$tag"',
-            "'archive' '--format=zip' \"--output=$sourcePath\" $buildCommit",
-            "'archive' '--format=zip' \"--output=$evidenceZip\" $evidenceCommit",
+            "'core.autocrlf=false' '-C' $projectRoot 'archive' '--format=zip' \"--output=$sourcePath\" $buildCommit",
+            "'core.autocrlf=false' '-C' $projectRoot 'archive' '--format=zip' \"--output=$evidenceZip\" $evidenceCommit",
             "'bundle' 'create' $historyPath 'refs/heads/main'",
             "releaseManifestSha256",
             "releaseIdentitySha256",
             "pendingManifestSha256",
+            "Get-ZipEntrySha256",
+            "Build 源码 A 快照中的发布身份原始字节 SHA-256 与发布清单不一致",
             "buildSourceCommit",
             "releaseEvidenceCommit",
             "releaseTag",
@@ -257,6 +329,126 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
         self.assertNotIn("Remove-Item -LiteralPath $sourcePath", source)
         self.assertNotIn("Expand-Archive -LiteralPath $sourcePath", source)
         self.assertNotIn("Move-Item -LiteralPath $stagingDirectory -Destination $releaseDirectory -Force", source)
+
+    def test_finalize_rejects_identity_hash_that_does_not_match_exact_a_archive(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        git = shutil.which("git.exe") or shutil.which("git")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required")
+        self.assertIsNotNone(git, "Git is required")
+
+        version = "8.8.8"
+        code = 888
+        tag = f"v{version}-debug"
+        identity_lf = b'{"version_name":"8.8.8","version_code":888}\n'
+        identity_crlf = b'{"version_name":"8.8.8","version_code":888}\r\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "repository"
+            (repository / "scripts").mkdir(parents=True)
+            (repository / "backend" / "config").mkdir(parents=True)
+            shutil.copy2(PACKAGE_PATH, repository / "scripts" / "package-project.ps1")
+            (repository / ".gitignore").write_text("releases/\n", encoding="utf-8")
+            identity_path = repository / "backend" / "config" / "release-identity.json"
+            identity_path.write_bytes(identity_lf)
+            (repository / "HANDOFF.md").write_text("Build source\n", encoding="utf-8")
+
+            run([git, "init", "-b", "main"], repository)
+            run([git, "config", "user.name", "Release Test"], repository)
+            run([git, "config", "user.email", "release-test@example.invalid"], repository)
+            run([git, "config", "core.autocrlf", "true"], repository)
+            run([git, "add", "."], repository)
+            run([git, "commit", "-m", "build source"], repository)
+            build_commit = run([git, "rev-parse", "HEAD"], repository).stdout.strip()
+            committed_identity_bytes = subprocess.run(
+                [git, "cat-file", "blob", f"{build_commit}:backend/config/release-identity.json"],
+                cwd=repository,
+                check=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+            identity_path.write_bytes(committed_identity_bytes)
+            run([git, "add", "backend/config/release-identity.json"], repository)
+
+            release_directory = repository / "releases" / version
+            release_directory.mkdir(parents=True)
+            releases: list[dict[str, object]] = []
+            for release_id in ("user", "admin", "authorized", "owner"):
+                file_name = f"{release_id}.apk"
+                payload = f"fake-{release_id}".encode()
+                (release_directory / file_name).write_bytes(payload)
+                releases.append(
+                    {
+                        "id": release_id,
+                        "fileName": file_name,
+                        "sizeBytes": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                )
+            project_assets = [
+                {"id": "source", "fileName": f"yiyunying-source-v{version}.zip"},
+                {"id": "history", "fileName": f"yiyunying-git-history-v{version}.bundle"},
+                {"id": "delivery", "fileName": f"yiyunying-project-delivery-v{version}.zip"},
+                {"id": "manifest", "fileName": "project-assets-manifest.json"},
+            ]
+            manifest = {
+                "schemaVersion": 4,
+                "versionName": version,
+                "versionCode": code,
+                "buildSourceCommit": build_commit,
+                "releaseEvidenceCommit": None,
+                "releaseTag": tag,
+                "finalizationStatus": "pending",
+                "releaseIdentitySha256": hashlib.sha256(identity_crlf).hexdigest(),
+                "releases": releases,
+                "projectAssets": project_assets,
+            }
+            manifest_path = release_directory / "release-manifest.json"
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            metadata = dict(manifest)
+            metadata["pendingManifestSha256"] = hashlib.sha256(
+                manifest_path.read_bytes()
+            ).hexdigest()
+            metadata_path = repository / "download-site" / "release-metadata.json"
+            metadata_path.parent.mkdir(parents=True)
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            (release_directory / "SHA256SUMS.txt").write_text(
+                "".join(f"{entry['sha256']}  {entry['fileName']}\n" for entry in releases),
+                encoding="utf-8",
+            )
+
+            (repository / "HANDOFF.md").write_text("Evidence commit\n", encoding="utf-8")
+            run([git, "add", "HANDOFF.md", "download-site/release-metadata.json"], repository)
+            run([git, "commit", "-m", "release evidence"], repository)
+            run([git, "tag", "-a", tag, "-m", "debug release evidence"], repository)
+            identity_path.write_bytes(identity_crlf)
+            run([git, "add", "backend/config/release-identity.json"], repository)
+            self.assertEqual(
+                run([git, "status", "--porcelain", "--untracked-files=all"], repository).stdout,
+                "",
+                "fixture must keep the CRLF identity invisible to Git status",
+            )
+
+            rejected = run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(repository / "scripts" / "package-project.ps1"),
+                    "-ReleaseRoot",
+                    str(repository / "releases"),
+                    "-ExpectedTag",
+                    tag,
+                ],
+                repository,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("Build 源码 A", rejected.stdout)
+            self.assertFalse((release_directory / f"yiyunying-source-v{version}.zip").exists())
 
     def test_finalize_transaction_closes_a_b_evidence_chain_once(self) -> None:
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
@@ -288,6 +480,15 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             run([git, "commit", "-m", "build source"], repository)
             build_commit = run([git, "rev-parse", "HEAD"], repository).stdout.strip()
 
+            committed_identity_bytes = subprocess.run(
+                [git, "cat-file", "blob", f"{build_commit}:backend/config/release-identity.json"],
+                cwd=repository,
+                check=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+            identity_path.write_bytes(committed_identity_bytes)
+            run([git, "add", "backend/config/release-identity.json"], repository)
+
             release_directory = repository / "releases" / version
             release_directory.mkdir(parents=True)
             release_entries: list[dict[str, object]] = []
@@ -318,7 +519,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 "releaseEvidenceCommit": None,
                 "releaseTag": tag,
                 "finalizationStatus": "pending",
-                "releaseIdentitySha256": hashlib.sha256(identity_path.read_bytes()).hexdigest(),
+                "releaseIdentitySha256": hashlib.sha256(committed_identity_bytes).hexdigest(),
                 "releases": release_entries,
                 "projectAssets": project_assets,
             }

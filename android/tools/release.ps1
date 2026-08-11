@@ -267,6 +267,57 @@ function Invoke-GitText {
     return ($output -join [Environment]::NewLine).Trim()
 }
 
+function Read-GitBlobBytes {
+    param(
+        [Parameter(Mandatory = $true)][string] $ObjectId,
+        [Parameter(Mandatory = $true)][string] $Operation
+    )
+
+    if ($ObjectId -notmatch '^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$') {
+        throw "$Operation 失败：Git blob 标识格式无效。"
+    }
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = 'git'
+    $startInfo.Arguments = "-C `"$workspaceRoot`" cat-file blob $ObjectId"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $memory = New-Object System.IO.MemoryStream
+    try {
+        if (-not $process.Start()) {
+            throw "$Operation 失败：无法启动 Git。"
+        }
+        $standardError = $process.StandardError.ReadToEndAsync()
+        $process.StandardOutput.BaseStream.CopyTo($memory)
+        $process.WaitForExit()
+        $errorText = $standardError.Result
+        if ($process.ExitCode -ne 0) {
+            throw "$Operation 失败：$errorText"
+        }
+        $bytes = $memory.ToArray()
+        Write-Output -NoEnumerate $bytes
+    }
+    finally {
+        $memory.Dispose()
+        $process.Dispose()
+    }
+}
+
+function Get-ByteArraySha256 {
+    param([Parameter(Mandatory = $true)][byte[]] $Bytes)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($Bytes)) -replace '-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Read-CommittedReleaseEvidence($Version) {
     if (-not (Test-Path -LiteralPath $releaseIdentityFile)) {
         throw "缺少后端发布身份文件：$releaseIdentityFile"
@@ -285,12 +336,28 @@ function Read-CommittedReleaseEvidence($Version) {
     }
     [void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'backend/config/release-identity.json') -Operation '确认发布身份已提交')
 
-    $identityBytes = [System.IO.File]::ReadAllBytes($releaseIdentityFile)
-    $identity = [System.Text.Encoding]::UTF8.GetString($identityBytes) | ConvertFrom-Json
+    $identityBlob = Invoke-GitText -Arguments @('rev-parse', '--verify', 'HEAD:backend/config/release-identity.json') -Operation '读取已提交发布身份 blob'
+    [byte[]] $committedIdentityBytes = Read-GitBlobBytes -ObjectId $identityBlob -Operation '读取已提交发布身份原始字节'
+    [byte[]] $worktreeIdentityBytes = [System.IO.File]::ReadAllBytes($releaseIdentityFile)
+    $identityBytesEqual = $worktreeIdentityBytes.Length -eq $committedIdentityBytes.Length
+    if ($identityBytesEqual) {
+        for ($index = 0; $index -lt $worktreeIdentityBytes.Length; $index++) {
+            if ($worktreeIdentityBytes[$index] -ne $committedIdentityBytes[$index]) {
+                $identityBytesEqual = $false
+                break
+            }
+        }
+    }
+    if (-not $identityBytesEqual) {
+        throw '发布身份文件工作树原始字节与 HEAD Git blob 不一致；即使 Git 状态显示 clean 也拒绝 Build，请修复换行符或编码后重新提交。'
+    }
+
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $identity = $strictUtf8.GetString($committedIdentityBytes) | ConvertFrom-Json
     if ($identity.version_name -ne $Version.versionName -or [int] $identity.version_code -ne [int] $Version.versionCode) {
         throw 'Android 版本与后端发布身份不一致，拒绝构建。'
     }
-    $identityHash = (Get-FileHash -LiteralPath $releaseIdentityFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $identityHash = Get-ByteArraySha256 -Bytes $committedIdentityBytes
     return [ordered]@{
         buildSourceCommit = $commit.ToLowerInvariant()
         releaseIdentitySha256 = $identityHash

@@ -13,6 +13,34 @@ function Get-Sha256([string] $Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-ZipEntrySha256 {
+    param(
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][string] $EntryName
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entries = @($archive.Entries | Where-Object { $_.FullName -eq $EntryName })
+        if ($entries.Count -ne 1) {
+            throw "源码快照必须且只能包含一个发布身份文件：$EntryName"
+        }
+        $stream = $entries[0].Open()
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha256.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
 function Write-Utf8JsonAtomic([string] $Path, $Value) {
     $json = $Value | ConvertTo-Json -Depth 20
     $temporary = "$Path.$([Guid]::NewGuid().ToString('N')).tmp"
@@ -237,8 +265,12 @@ try {
     $sourcePath = Join-Path $stagingDirectory $sourceName
     $historyPath = Join-Path $stagingDirectory $historyName
     $deliveryPath = Join-Path $stagingDirectory $deliveryName
-    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$sourcePath" $buildCommit
+    & git '-c' 'core.autocrlf=false' '-C' $projectRoot 'archive' '--format=zip' "--output=$sourcePath" $buildCommit
     if ($LASTEXITCODE -ne 0) { throw '从精确 Build 提交生成源码快照失败。' }
+    $sourceIdentitySha256 = Get-ZipEntrySha256 -ZipPath $sourcePath -EntryName 'backend/config/release-identity.json'
+    if ($sourceIdentitySha256 -ne ([string] $releaseManifest.releaseIdentitySha256).ToLowerInvariant()) {
+        throw 'Build 源码 A 快照中的发布身份原始字节 SHA-256 与发布清单不一致；拒绝 Finalize。'
+    }
     & git '-C' $projectRoot 'bundle' 'create' $historyPath 'refs/heads/main' "refs/tags/$tag"
     if ($LASTEXITCODE -ne 0) { throw '生成仅含最终 main 与注释发布标签的 Git Bundle 失败。' }
     [void] (Invoke-GitText -Arguments @('bundle', 'verify', $historyPath) -Operation '验证 Git Bundle')
@@ -256,7 +288,7 @@ try {
 
     $evidenceZip = Join-Path $temporary 'evidence-commit.zip'
     $evidenceSource = Join-Path $temporary 'evidence-source'
-    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$evidenceZip" $evidenceCommit
+    & git '-c' 'core.autocrlf=false' '-C' $projectRoot 'archive' '--format=zip' "--output=$evidenceZip" $evidenceCommit
     if ($LASTEXITCODE -ne 0) { throw '从精确证据提交生成交接文档快照失败。' }
     Expand-Archive -LiteralPath $evidenceZip -DestinationPath $evidenceSource
     $handoffDirectory = Join-Path $temporary 'handoff'
