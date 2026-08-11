@@ -10,6 +10,7 @@
     <color name="on_secondary_container">#D5E5FF</color>
     <color name="tertiary">#B4C7E8</color>
     <color name="error">#FFB4AB</color>
+    <color name="on_error">#690005</color>
     <color name="surface">#11151B</color>
     <color name="surface_container">#191E25</color>
     <color name="surface_container_high">#242A32</color>

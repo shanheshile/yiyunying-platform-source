@@ -48,4 +48,33 @@ public final class HomeFeaturePolicyTest {
         assertFalse(HomeFeaturePolicy.actionEnabled(features, "create_group"));
         assertTrue(HomeFeaturePolicy.actionEnabled(features, "create_chatroom"));
     }
+
+    @Test public void shortVideoNavigationAndPublishingHaveIndependentControls() {
+        JsonObject features = new JsonObject();
+        features.addProperty("social", true);
+        features.addProperty("short_videos", true);
+        features.addProperty("short_video_publish", false);
+
+        assertTrue(HomeFeaturePolicy.actionEnabled(features, "short_videos"));
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_video_publish"));
+
+        features.addProperty("short_videos", false);
+        features.addProperty("short_video_publish", true);
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_videos"));
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_video_publish"));
+    }
+
+    @Test public void shortVideoNavigationFailsClosedAndHonorsEffectiveDenial() {
+        JsonObject features = new JsonObject();
+        features.addProperty("social", true);
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_videos"));
+
+        JsonObject forcedDenied = new JsonObject();
+        forcedDenied.addProperty("enabled", true);
+        forcedDenied.addProperty("effective_enabled", false);
+        features.add("short_videos", forcedDenied);
+        features.addProperty("short_video_publish", true);
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_videos"));
+        assertFalse(HomeFeaturePolicy.actionEnabled(features, "short_video_publish"));
+    }
 }

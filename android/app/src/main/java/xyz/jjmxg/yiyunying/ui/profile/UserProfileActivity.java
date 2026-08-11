@@ -31,6 +31,7 @@ import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.chat.ChatActivity;
 import xyz.jjmxg.yiyunying.ui.chat.ConversationPermissionActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
+import xyz.jjmxg.yiyunying.ui.common.ThemeColors;
 import xyz.jjmxg.yiyunying.ui.forum.ForumPostActivity;
 import xyz.jjmxg.yiyunying.ui.main.MainActivity;
 import xyz.jjmxg.yiyunying.ui.moment.MomentTimelineActivity;
@@ -235,7 +236,8 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         card.setLayoutParams(params);
         card.setRadius(dp(6));
         card.setCardElevation(0);
-        card.setCardBackgroundColor(getColor(R.color.surface_container));
+        card.setCardBackgroundColor(ThemeColors.resolve(this,
+            com.google.android.material.R.attr.colorSurfaceContainer, R.color.surface_container));
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -246,7 +248,8 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         TextView description = new TextView(this);
         description.setText(tr(summary));
         description.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium);
-        description.setTextColor(getColor(R.color.on_surface_variant));
+        description.setTextColor(ThemeColors.resolve(this,
+            com.google.android.material.R.attr.colorOnSurfaceVariant, R.color.on_surface_variant));
         content.addView(heading);
         content.addView(description);
         card.addView(content);
@@ -264,7 +267,8 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(8);
             card.setLayoutParams(params); card.setRadius(dp(6)); card.setCardElevation(0);
-            card.setCardBackgroundColor(getColor(R.color.surface_container));
+            card.setCardBackgroundColor(ThemeColors.resolve(this,
+                com.google.android.material.R.attr.colorSurfaceContainer, R.color.surface_container));
             TextView text = new TextView(this); text.setPadding(dp(14), dp(10), dp(14), dp(10));
             RuntimeLanguage.setDynamicText(text, Jsons.string(item, "title") + "\n"
                 + Jsons.string(item, note ? "updated_at" : "created_at"));
@@ -306,7 +310,8 @@ public final class UserProfileActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
         card.setLayoutParams(params);
         card.setRadius(dp(6));
         card.setCardElevation(0);
-        card.setCardBackgroundColor(getColor(R.color.surface_container));
+        card.setCardBackgroundColor(ThemeColors.resolve(this,
+            com.google.android.material.R.attr.colorSurfaceContainer, R.color.surface_container));
         TextView text = new TextView(this);
         text.setGravity(Gravity.CENTER_VERTICAL);
         text.setMinHeight(dp(54));

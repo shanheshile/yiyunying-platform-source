@@ -15,8 +15,7 @@ final class SpeechController
 {
     public static function transcribe(Request $request): \Yiyunying\Core\ApiResponse
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'messages');
+        $user = AuthService::user($request, 'messages');
         AuthService::ensureNotBanned($user, ['all', 'message']);
 
         $attachment = null;

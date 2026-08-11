@@ -22,7 +22,7 @@ use Yiyunying\Services\WeatherService;
 final class FileFeedbackController
 {
     private const ALLOWED_EXTENSIONS = [
-        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg',
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
         'pdf', 'txt', 'md', 'json', 'csv', 'rtf', 'odt', 'ods', 'odp',
         'zip', '7z', 'rar', 'tar', 'gz', 'bz2', 'xz',
         'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -68,7 +68,7 @@ final class FileFeedbackController
         $user = AuthService::user($request);
         $scene = self::normalizeUploadScene($request->input('scene', 'general'));
         foreach (self::uploadFeaturesForScene($scene) as $feature) {
-            AppService::requireFeature((int) $user['app_id'], $feature);
+            AuthService::requireUserFeature($user, $feature);
         }
         AuthService::ensureNotBanned($user, ['all', 'upload']);
         if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
@@ -296,7 +296,8 @@ final class FileFeedbackController
         if ($raw === '') return 'general';
         $normalized = strtolower($raw);
         return match ($normalized) {
-            'chat_camera', 'chat_album', 'forum_post', 'forum_comment', 'forum_section' => $normalized,
+            'chat_camera', 'chat_album', 'forum_post', 'forum_comment', 'forum_section',
+            'resource_source', 'resource_cover', 'store_app_package', 'store_app_icon' => $normalized,
             '论坛帖子' => 'forum_post',
             '论坛评论' => 'forum_comment',
             '论坛章节' => 'forum_section',
@@ -312,14 +313,14 @@ final class FileFeedbackController
             'chat_album' => ['chat_album'],
             'forum_post', 'forum_comment' => ['forum'],
             'forum_section' => ['forum', 'forum_chapters', 'forum_attachment_unlock'],
+            'resource_source', 'resource_cover' => ['resources'],
+            'store_app_package', 'store_app_icon' => ['store'],
             default => ['remote_files'],
         };
     }
 
     private static function user(Request $request, string $feature): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], $feature);
-        return $user;
+        return AuthService::user($request, $feature);
     }
 }

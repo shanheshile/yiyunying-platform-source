@@ -407,7 +407,9 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             boolean video = result.getData().getBooleanExtra(
                 InAppCaptureActivity.EXTRA_CAPTURE_VIDEO, false);
             optimizeCapturedMedia = true;
-            handleCapturedMedia(uri, video);
+            File completedCaptureFile = LocalMediaOptimizer.resolveOwnedCaptureFile(this, uri);
+            Uri completedUri = completedCaptureFile == null ? uri : Uri.fromFile(completedCaptureFile);
+            handleCapturedMedia(completedUri, video, completedCaptureFile);
         });
     private final ActivityResultLauncher<Intent> stickerUploadPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -449,7 +451,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         new ActivityResultContracts.TakePicture(), success -> {
             if (success && cameraUri != null) {
                 publishCapturedMedia(cameraUri);
-                handleCapturedMedia(cameraUri, false);
+                File completedCaptureFile = cameraTargetInGallery ? null : cameraCacheFile;
+                Uri completedUri = completedCaptureFile == null
+                    ? cameraUri : Uri.fromFile(completedCaptureFile);
+                handleCapturedMedia(completedUri, false, completedCaptureFile);
             } else {
                 discardCaptureTarget();
             }
@@ -460,7 +465,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         new ActivityResultContracts.CaptureVideo(), success -> {
             if (success && cameraUri != null) {
                 publishCapturedMedia(cameraUri);
-                handleCapturedMedia(cameraUri, true);
+                File completedCaptureFile = cameraTargetInGallery ? null : cameraCacheFile;
+                Uri completedUri = completedCaptureFile == null
+                    ? cameraUri : Uri.fromFile(completedCaptureFile);
+                handleCapturedMedia(completedUri, true, completedCaptureFile);
             } else {
                 discardCaptureTarget();
             }
@@ -2189,7 +2197,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         CapturePreferences.setOptimizeBeforeSend(this, enabled);
     }
 
-    private void handleCapturedMedia(Uri captured, boolean video) {
+    private void handleCapturedMedia(Uri captured, boolean video, File ownedCaptureFile) {
         lastCapturedMediaUri = captured;
         dismissRecentSuggestion();
         if (!optimizeCapturedMedia) {
@@ -2201,9 +2209,17 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             Snackbar.make(binding.getRoot(), video ? "正在本地优化录像，请稍候" : "正在本地优化照片", Snackbar.LENGTH_LONG).show();
         }
         LocalMediaOptimizer.optimize(this, captured, video, result -> {
-            if (binding == null) return;
-            binding.progress.setVisibility(View.INVISIBLE);
             Uri output = result.uri == null || Uri.EMPTY.equals(result.uri) ? captured : result.uri;
+            if (result.optimized && ownedCaptureFile != null) {
+                LocalMediaOptimizer.deleteOwnedCacheFile(this, ownedCaptureFile);
+            }
+            if (binding == null) {
+                // There is no composer left to own the result. The strict deleter is a no-op
+                // for gallery/content/external URIs.
+                LocalMediaOptimizer.deleteOwnedCacheUri(this, output);
+                return;
+            }
+            binding.progress.setVisibility(View.INVISIBLE);
             lastCapturedMediaUri = output;
             addCapturedUri(output, video);
             String size = result.optimized
@@ -2286,13 +2302,13 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     }
 
     private void discardCaptureTarget() {
+        // This is the one content-URI deletion exception: the app just inserted this pending
+        // MediaStore row for a capture that the camera explicitly cancelled or failed.
         if (cameraTargetInGallery && cameraUri != null) {
-            try { getContentResolver().delete(cameraUri, null, null); } catch (RuntimeException ignored) { }
+            try { getContentResolver().delete(cameraUri, null, null); }
+            catch (RuntimeException ignored) { }
         }
-        if (cameraCacheFile != null && cameraCacheFile.exists()) {
-            //noinspection ResultOfMethodCallIgnored
-            cameraCacheFile.delete();
-        }
+        LocalMediaOptimizer.deleteOwnedCacheFile(this, cameraCacheFile);
     }
 
     private void openMediaPicker() {
@@ -2342,9 +2358,15 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             restoreInlineAlbumAfterPicker();
             return;
         }
-        pendingAttachments.removeIf(attachment -> attachment.uri != null
-            && mediaPickerInitialSelection.contains(attachment.uri.toString())
-            && !selectedValues.contains(attachment.uri.toString()));
+        for (int index = pendingAttachments.size() - 1; index >= 0; index--) {
+            PendingAttachment attachment = pendingAttachments.get(index);
+            if (attachment.uri != null
+                && mediaPickerInitialSelection.contains(attachment.uri.toString())
+                && !selectedValues.contains(attachment.uri.toString())) {
+                deleteOwnedAttachment(attachment);
+                pendingAttachments.remove(index);
+            }
+        }
         pendingPickerMetadata.clear();
         pendingPickerMetadata.putAll(returnedMetadata);
         selectedUris("file", uris == null ? java.util.Collections.emptyList() : uris);
@@ -2527,7 +2549,12 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     }
 
     private void removeUri(Uri uri) {
-        pendingAttachments.removeIf(attachment -> uri.equals(attachment.uri));
+        for (int index = pendingAttachments.size() - 1; index >= 0; index--) {
+            PendingAttachment attachment = pendingAttachments.get(index);
+            if (!uri.equals(attachment.uri)) continue;
+            deleteOwnedAttachment(attachment);
+            pendingAttachments.remove(index);
+        }
         renderPendingAttachments();
     }
 
@@ -3716,7 +3743,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     private void openFavoriteAttachment(JsonObject item) {
         String type = Jsons.string(item, "favorite_type");
-        if ("moment".equals(type) || "moment".equals(Jsons.string(item, "content_kind"))) {
+        if ("moment".equals(type) || isMomentContentKind(Jsons.string(item, "content_kind"))) {
             openMomentAttachment(item);
             return;
         }
@@ -3789,14 +3816,23 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         long userId = Jsons.longValue(item, "author_user_id");
         String author = first(item, "author_name", "display_name", "nickname", "account");
         if (momentId > 0) {
-            MomentTimelineActivity.openMoment(this, momentId, userId, author);
+            if ("short_video".equalsIgnoreCase(Jsons.string(item, "content_kind"))) {
+                MomentTimelineActivity.openShortVideoMoment(this, momentId, userId, author);
+            } else {
+                MomentTimelineActivity.openMoment(this, momentId, userId, author);
+            }
             return;
         }
         if (userId > 0) {
-            MomentTimelineActivity.openForUser(this, userId, author);
+            if ("short_video".equalsIgnoreCase(Jsons.string(item, "content_kind"))) {
+                MomentTimelineActivity.openShortVideos(this, false);
+            } else {
+                MomentTimelineActivity.openForUser(this, userId, author);
+            }
             return;
         }
-        Snackbar.make(binding.getRoot(), "动态信息不完整，暂时无法打开", Snackbar.LENGTH_LONG).show();
+        String label = "short_video".equalsIgnoreCase(Jsons.string(item, "content_kind")) ? "短视频" : "动态";
+        Snackbar.make(binding.getRoot(), label + "信息不完整，暂时无法打开", Snackbar.LENGTH_LONG).show();
     }
 
     private void loadBusinessDetail(String type, String path, String title) {
@@ -3835,7 +3871,11 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private boolean isMomentAttachment(JsonObject metadata) {
         if (metadata == null) return false;
         return "moment".equalsIgnoreCase(Jsons.string(metadata, "favorite_type"))
-            || "moment".equalsIgnoreCase(Jsons.string(metadata, "content_kind"));
+            || isMomentContentKind(Jsons.string(metadata, "content_kind"));
+    }
+
+    private boolean isMomentContentKind(String contentKind) {
+        return "moment".equalsIgnoreCase(contentKind) || "short_video".equalsIgnoreCase(contentKind);
     }
 
     private void showBusinessDetailSheet(String type, String title, String path, JsonObject item) {
@@ -4122,11 +4162,31 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     @Override protected void onStart() {
         super.onStart();
+        LocalMediaOptimizer.cleanupExpiredOwnedCache(this, activeOwnedCacheUris());
         running = true;
         registerMessageRefreshReceiver();
         registerRecentPhotoObserver();
         loadRecentSuggestion();
         loadMessages();
+    }
+
+    private List<Uri> activeOwnedCacheUris() {
+        List<Uri> active = new ArrayList<>();
+        for (PendingAttachment attachment : pendingAttachments) {
+            if (attachment.uri != null) active.add(attachment.uri);
+        }
+        BatchUploadState upload = activeUploadBatch;
+        if (upload != null) {
+            for (PendingAttachment attachment : upload.attachments) {
+                if (attachment.uri != null) active.add(attachment.uri);
+            }
+        }
+        for (String value : preparingAttachmentUris) {
+            try { active.add(Uri.parse(value)); }
+            catch (RuntimeException ignored) { }
+        }
+        if (cameraCacheFile != null) active.add(Uri.fromFile(cameraCacheFile));
+        return active;
     }
 
     @Override protected void onResume() {
@@ -4775,7 +4835,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             batchUploadRequests.clear();
             JsonArray values = new JsonArray();
             for (JsonObject value : state.uploadedValues) values.add(value);
-            postMessage(state.content, values);
+            postMessage(state.content, values, state.attachments);
         }
     }
 
@@ -4876,7 +4936,11 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         Snackbar.make(binding.getRoot(), prefix + reason + "。已保留全部待发送内容。", Snackbar.LENGTH_LONG).show();
     }
 
-    private void postMessage(String content, JsonArray attachments) {
+    private void postMessage(
+        String content,
+        JsonArray attachments,
+        List<PendingAttachment> submittedAttachments
+    ) {
         String submittedDraftPath = draftPath();
         JsonObject body = new JsonObject();
         JsonObject quote = pendingQuote;
@@ -4899,6 +4963,7 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (MODE_CONVERSATION.equals(mode())) body.addProperty("to_user_id", resolvedConversationPeerId());
         sendRequest = AppAccess.from(this).repository().post(writePath(), body, result -> {
             sendRequest = null;
+            if (result.isSuccessful()) deleteOwnedAttachments(submittedAttachments);
             if (binding == null) return;
             binding.progress.setVisibility(View.INVISIBLE);
             setComposerEnabled(true);
@@ -5034,8 +5099,12 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         List<Uri> candidates = new ArrayList<>();
         Map<String, JsonObject> pickerMetadata = new LinkedHashMap<>();
         for (Uri uri : uris) {
-            if (uri == null || available <= 0 || containsUri(uri)
+            if (uri == null || containsUri(uri)
                 || preparingAttachmentUris.contains(uri.toString())) continue;
+            if (available <= 0) {
+                LocalMediaOptimizer.deleteOwnedCacheUri(this, uri);
+                continue;
+            }
             String key = uri.toString();
             candidates.add(uri);
             preparingAttachmentUris.add(key);
@@ -5144,10 +5213,16 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         List<Uri> candidates,
         AttachmentPreparationResult result
     ) {
-        if (generation != attachmentPreparationGeneration) return;
+        if (generation != attachmentPreparationGeneration) {
+            deleteOwnedUris(candidates);
+            return;
+        }
         for (Uri uri : candidates) preparingAttachmentUris.remove(uri.toString());
         attachmentPreparationCount = Math.max(0, attachmentPreparationCount - 1);
-        if (binding == null) return;
+        if (binding == null) {
+            deleteOwnedUris(candidates);
+            return;
+        }
         int available = 200 - pendingAttachments.size();
         int added = 0;
         for (PendingAttachment attachment : result.attachments) {
@@ -5155,6 +5230,9 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             pendingAttachments.add(attachment);
             available--;
             added++;
+        }
+        for (Uri candidate : candidates) {
+            if (!containsUri(candidate)) LocalMediaOptimizer.deleteOwnedCacheUri(this, candidate);
         }
         renderPendingAttachments();
         if (!result.rejections.isEmpty()) {
@@ -5173,7 +5251,22 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         attachmentPreparationGeneration++;
         attachmentPreparationCount = 0;
         preparingAttachmentUris.clear();
+        deleteOwnedAttachments(pendingAttachments);
         pendingAttachments.clear();
+    }
+
+    private void deleteOwnedAttachment(PendingAttachment attachment) {
+        if (attachment != null) LocalMediaOptimizer.deleteOwnedCacheUri(this, attachment.uri);
+    }
+
+    private void deleteOwnedAttachments(Iterable<PendingAttachment> attachments) {
+        if (attachments == null) return;
+        for (PendingAttachment attachment : attachments) deleteOwnedAttachment(attachment);
+    }
+
+    private void deleteOwnedUris(Iterable<Uri> uris) {
+        if (uris == null) return;
+        for (Uri uri : uris) LocalMediaOptimizer.deleteOwnedCacheUri(this, uri);
     }
 
     private boolean containsUri(Uri uri) {
@@ -5288,8 +5381,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             chip.setText(pendingLabel(attachment));
             int target = index;
             chip.setOnCloseIconClickListener(view -> {
+                if (activeUploadBatch != null || sendRequest != null) return;
                 if (target >= 0 && target < pendingAttachments.size()) {
-                    pendingAttachments.remove(target);
+                    PendingAttachment removed = pendingAttachments.remove(target);
+                    deleteOwnedAttachment(removed);
                     renderPendingAttachments();
                 }
             });
@@ -6679,7 +6774,11 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         card.setCardBackgroundColor(current ? ThemeColors.primaryContainer(this) : getColor(R.color.surface_container_high));
         TextView value = new TextView(this);
         value.setText(content == null || content.isEmpty() ? "（空）" : content);
-        value.setTextColor(getColor(current ? R.color.on_primary_container : R.color.on_surface));
+        value.setTextColor(current
+            ? ThemeColors.resolve(this, com.google.android.material.R.attr.colorOnPrimaryContainer,
+                R.color.on_primary_container)
+            : ThemeColors.resolve(this, com.google.android.material.R.attr.colorOnSurface,
+                R.color.on_surface));
         value.setTextSize(14);
         value.setTextIsSelectable(true);
         value.setLineSpacing(0f, 1.15f);

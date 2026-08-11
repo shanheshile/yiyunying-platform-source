@@ -14,8 +14,11 @@ public final class MediaStackIntegrationContractTest {
         assertTrue(source.contains("List<JsonObject> imageMedia"));
         assertTrue(source.contains("List<JsonObject> videoMedia"));
         assertTrue(source.contains("videos ? \":video\" : \":image\""));
+        assertTrue(source.contains("MediaStackDragPolicy.progress"));
+        assertTrue(source.contains("MediaStackAnimator.applyDrag"));
         assertTrue(source.contains("MediaStackTransitionPolicy.transition"));
         assertTrue(source.contains("MediaStackAnimator.animate"));
+        assertFalse(source.contains("stage.setTranslationX"));
         assertFalse(source.contains("translationX(direction * dp(context, 54)).alpha"));
     }
 
@@ -26,7 +29,16 @@ public final class MediaStackIntegrationContractTest {
         assertTrue(source.contains("List<JsonObject> videos"));
         assertTrue(source.contains("commentMediaStack"));
         assertTrue(source.contains("new InlineAudioPlayerView"));
+        assertTrue(source.contains("MediaStackDragPolicy.progress"));
+        assertTrue(source.contains("MediaStackAnimator.applyDrag"));
         assertTrue(source.contains("MediaStackAnimator.animate"));
+        assertFalse(source.contains("stage.setTranslationX"));
+    }
+
+    @Test public void forumCommentsUseTheSeparatedInteractiveMediaRenderer() throws Exception {
+        String source = read("src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumPostActivity.java");
+        assertTrue(source.contains("MediaViewRenderer.renderCommentMedia"));
+        assertTrue(source.contains("Jsons.array(comment, \"attachments\")"));
     }
 
     private static String read(String relative) throws Exception {

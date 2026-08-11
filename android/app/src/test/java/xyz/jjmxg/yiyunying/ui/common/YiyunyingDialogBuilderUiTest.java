@@ -60,10 +60,18 @@ public final class YiyunyingDialogBuilderUiTest {
         assertNotNull(message);
         assertNotNull(topPanel);
         assertNotNull(contentPanel);
-        assertEquals(activity.getColor(R.color.on_surface),
+        assertEquals(ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorOnSurface, R.color.on_surface),
             title.getTextColors().getDefaultColor());
-        assertEquals(activity.getColor(R.color.on_surface_variant),
+        assertEquals(ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorOnSurfaceVariant,
+                R.color.on_surface_variant),
             message.getTextColors().getDefaultColor());
+        assertEquals(ThemeColors.onPrimary(activity),
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).getCurrentTextColor());
+        assertEquals(ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorOnSurface, R.color.on_surface),
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).getCurrentTextColor());
         assertNotNull(topPanel.getBackground());
         assertTrue(topPanel.getElevation() > 0f);
         assertTrue(((ViewGroup) contentPanel).getClipChildren());
@@ -82,9 +90,22 @@ public final class YiyunyingDialogBuilderUiTest {
         shareDecor.getViewTreeObserver().dispatchOnPreDraw();
         TextView shareRow = findText(shareDecor, "系统分享");
         assertNotNull(shareRow);
-        assertEquals(activity.getColor(R.color.on_surface),
+        assertEquals(ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorOnSurface, R.color.on_surface),
             shareRow.getTextColors().getDefaultColor());
         share.dismiss();
+
+        AlertDialog destructive = new YiyunyingDialogBuilder(activity)
+            .setTitle("删除记录")
+            .setMessage("删除后无法恢复")
+            .setPositiveButton("删除", null)
+            .setNegativeButton("取消", null)
+            .show();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertEquals(ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorOnError, R.color.on_error),
+            destructive.getButton(AlertDialog.BUTTON_POSITIVE).getCurrentTextColor());
+        destructive.dismiss();
         controller.pause().stop().destroy();
     }
 

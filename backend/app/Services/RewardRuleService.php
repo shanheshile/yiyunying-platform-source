@@ -680,27 +680,35 @@ final class RewardRuleService
             if (!array_key_exists($asset, $value)) {
                 continue;
             }
-            if (!is_numeric($value[$asset])) {
-                throw new HttpException('奖励数值格式不正确：' . $asset, 0, 422);
+            try {
+                $units = WalletService::amountUnits($asset, $value[$asset], true);
+                $amount = WalletService::canonicalAmount($asset, $value[$asset], true);
+            } catch (HttpException) {
+                throw new HttpException(
+                    $asset === 'balance'
+                        ? '余额奖励最多保留两位小数'
+                        : '该奖励必须填写非负整数：' . $asset,
+                    0,
+                    422
+                );
             }
-            $amount = (float) $value[$asset];
-            if ($amount < 0 || $amount > 1000000000) {
+            if ($units < 0) {
                 throw new HttpException('奖励数值超出允许范围：' . $asset, 0, 422);
             }
-            $reward[$asset] = $asset === 'balance' ? round($amount, 2) : (int) $amount;
+            $reward[$asset] = $amount;
         }
         return $reward;
     }
 
     private static function emptyReward(): array
     {
-        return ['balance' => 0.0, 'experience' => 0, 'integral' => 0, 'document_credit' => 0, 'vip_days' => 0];
+        return ['balance' => '0.00', 'experience' => 0, 'integral' => 0, 'document_credit' => 0, 'vip_days' => 0];
     }
 
     private static function hasReward(array $reward): bool
     {
-        foreach ($reward as $value) {
-            if ((float) $value > 0) {
+        foreach ($reward as $asset => $value) {
+            if (WalletService::amountUnits((string) $asset, $value, true) > 0) {
                 return true;
             }
         }

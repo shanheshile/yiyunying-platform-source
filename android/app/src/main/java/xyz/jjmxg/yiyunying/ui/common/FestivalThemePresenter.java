@@ -13,6 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.graphics.ColorUtils;
 
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import com.google.gson.JsonObject;
@@ -100,13 +101,15 @@ public final class FestivalThemePresenter {
                 });
             }
             String accent = Jsons.string(theme, "accent_color");
-            try {
-                int color = Color.parseColor(accent);
-                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(color);
-                if (dialog.getButton(AlertDialog.BUTTON_POSITIVE) != null) {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(color);
-                }
-            } catch (RuntimeException ignoredColor) { }
+            int secondarySurface = ThemeColors.resolve(activity,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh,
+                R.color.surface_container_high);
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(readableAccent(
+                accent, secondarySurface, ThemeColors.primary(activity)));
+            if (dialog.getButton(AlertDialog.BUTTON_POSITIVE) != null) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(readableAccent(
+                    accent, ThemeColors.primary(activity), ThemeColors.onPrimary(activity)));
+            }
             content.setAlpha(0f);
             content.setScaleX(0.97f);
             content.setScaleY(0.97f);
@@ -142,6 +145,17 @@ public final class FestivalThemePresenter {
         view.setTypeface(view.getTypeface(), style);
         view.setLineSpacing(0f, 1.15f);
         return view;
+    }
+
+    static int readableAccent(String rawColor, int background, int fallback) {
+        try {
+            int candidate = Color.parseColor(rawColor);
+            if (Color.alpha(candidate) != 255) return fallback;
+            return ColorUtils.calculateContrast(candidate, background) >= 4.5d
+                ? candidate : fallback;
+        } catch (RuntimeException ignoredColor) {
+            return fallback;
+        }
     }
 
     private static String today() {

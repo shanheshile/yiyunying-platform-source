@@ -1,6 +1,17 @@
 -- 易运盈后台四级平台治理与完整最大闭环数据库
 -- 兼容 MySQL 5.7+/8.0 与 MariaDB 10.3+
 -- 本文件必须以 UTF-8（无 BOM）保存，并导入到 appht 数据库。
+--
+-- 首次启动安全说明：本文件不内置任何可登录账号、密码或应用密钥。
+-- 如需在导入后立即登录，必须在同一个数据库会话中先显式设置以下变量，再 SOURCE 本文件：
+--   @YY_BOOTSTRAP_ROOT_PLATFORM_KEY / @YY_BOOTSTRAP_ROOT_ACCOUNT / @YY_BOOTSTRAP_ROOT_PASSWORD_HASH
+--   @YY_BOOTSTRAP_AUTHORIZED_PLATFORM_KEY / @YY_BOOTSTRAP_AUTHORIZED_ACCOUNT / @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH（可选）
+--   @YY_BOOTSTRAP_ADMIN_ACCOUNT / @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH（可选）
+--   @YY_BOOTSTRAP_APP_KEY / @YY_BOOTSTRAP_APP_SECRET_HASH（可选）
+--   @YY_BOOTSTRAP_USER_UID / @YY_BOOTSTRAP_USER_ACCOUNT / @YY_BOOTSTRAP_USER_PASSWORD_HASH（可选）
+-- 密码必须由 PHP password_hash() 生成；APP_SECRET_HASH 必须是随机 app_secret 的 64 位 SHA-256 十六进制值。
+-- 任一层所需变量缺失或格式不正确时，该层及其下级只会创建随机不可认证、status=0 的占位数据。
+-- 不要把真实明文、哈希或密钥写回本文件，也不要把含真实变量的本地 SQL 文件提交到版本库。
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -237,6 +248,40 @@ CREATE TABLE IF NOT EXISTS `admin_permissions` (
   CONSTRAINT `fk_admin_permissions_admin` FOREIGN KEY (`admin_id`, `platform_id`) REFERENCES `admins` (`id`, `platform_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `admin_public_profiles` (
+  `admin_id` BIGINT UNSIGNED NOT NULL,
+  `official_url` VARCHAR(1000) NOT NULL DEFAULT '',
+  `download_url` VARCHAR(1000) NOT NULL DEFAULT '',
+  `official_qq_group` VARCHAR(100) NOT NULL DEFAULT '',
+  `official_qq_group_link` VARCHAR(1000) NOT NULL DEFAULT '',
+  `alipay_qr_url` VARCHAR(1000) NOT NULL DEFAULT '',
+  `wechat_qr_url` VARCHAR(1000) NOT NULL DEFAULT '',
+  `software_intro` TEXT,
+  `about_us` TEXT,
+  `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`admin_id`),
+  CONSTRAINT `fk_admin_public_profiles_admin` FOREIGN KEY (`admin_id`) REFERENCES `admins` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `admin_sponsor_records` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_id` BIGINT UNSIGNED NOT NULL,
+  `sponsor_name` VARCHAR(100) NOT NULL,
+  `amount` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `channel` VARCHAR(20) NOT NULL DEFAULT 'manual',
+  `note` VARCHAR(500) NOT NULL DEFAULT '',
+  `paid_at` DATETIME NOT NULL,
+  `status` TINYINT NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `deleted_at` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_admin_sponsor_rank` (`admin_id`, `status`, `amount`, `paid_at`, `id`),
+  CONSTRAINT `fk_admin_sponsor_records_admin` FOREIGN KEY (`admin_id`) REFERENCES `admins` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `admin_registration_logs` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `platform_id` BIGINT UNSIGNED NOT NULL,
@@ -399,6 +444,7 @@ CREATE TABLE IF NOT EXISTS `apps` (
   `app_key` VARCHAR(80) NOT NULL,
   `app_secret_hash` CHAR(64) NOT NULL,
   `name` VARCHAR(100) NOT NULL,
+  `app_type` VARCHAR(30) NOT NULL DEFAULT 'general',
   `logo` VARCHAR(500) NOT NULL DEFAULT '',
   `description` TEXT,
   `status` TINYINT NOT NULL DEFAULT 1,
@@ -1280,6 +1326,8 @@ CREATE TABLE IF NOT EXISTS `resources` (
   `price_money` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
   `audit_status` VARCHAR(20) NOT NULL DEFAULT 'pending',
   `audit_reason` VARCHAR(500) NOT NULL DEFAULT '',
+  `audited_by` BIGINT UNSIGNED DEFAULT NULL,
+  `audited_at` DATETIME DEFAULT NULL,
   `is_top` TINYINT NOT NULL DEFAULT 0,
   `is_recommended` TINYINT NOT NULL DEFAULT 0,
   `status` TINYINT NOT NULL DEFAULT 1,
@@ -1294,8 +1342,9 @@ CREATE TABLE IF NOT EXISTS `resources` (
   KEY `idx_resources_type_status` (`app_id`, `resource_type`, `audit_status`, `status`, `created_at`),
   KEY `idx_resources_risk` (`app_id`, `risk_level`, `audit_status`),
   KEY `idx_resources_user` (`user_id`, `created_at`),
-  CONSTRAINT `fk_resources_category` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `resource_categories` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_resources_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
+  CONSTRAINT `fk_resources_category` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `resource_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_resources_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_resources_auditor` FOREIGN KEY (`audited_by`) REFERENCES `admins` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `resource_files` (
@@ -1353,12 +1402,13 @@ CREATE TABLE IF NOT EXISTS `resource_purchases` (
   `buyer_user_id` BIGINT UNSIGNED NOT NULL,
   `seller_user_id` BIGINT UNSIGNED DEFAULT NULL,
   `price_integral` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_resource_purchase_buyer` (`resource_id`, `buyer_user_id`),
-  CONSTRAINT `fk_resource_purchase_resource` FOREIGN KEY (`resource_id`, `app_id`, `admin_id`) REFERENCES `resources` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_resource_purchase_buyer` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_resource_purchase_seller` FOREIGN KEY (`seller_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
+  CONSTRAINT `fk_resource_purchase_resource` FOREIGN KEY (`resource_id`, `app_id`, `admin_id`) REFERENCES `resources` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_resource_purchase_buyer` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_resource_purchase_seller` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `store_categories` (
@@ -1398,6 +1448,8 @@ CREATE TABLE IF NOT EXISTS `store_apps` (
   `icon_upload_id` BIGINT UNSIGNED DEFAULT NULL,
   `audit_status` VARCHAR(20) NOT NULL DEFAULT 'pending',
   `audit_reason` VARCHAR(500) NOT NULL DEFAULT '',
+  `audited_by` BIGINT UNSIGNED DEFAULT NULL,
+  `audited_at` DATETIME DEFAULT NULL,
   `price_integral` BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `download_count` BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `status` TINYINT NOT NULL DEFAULT 1,
@@ -1409,8 +1461,27 @@ CREATE TABLE IF NOT EXISTS `store_apps` (
   UNIQUE KEY `uk_store_apps_id_app_admin` (`id`, `app_id`, `admin_id`),
   KEY `idx_store_apps_category_status` (`app_id`, `category_id`, `status`),
   KEY `idx_store_apps_audit` (`app_id`, `audit_status`, `risk_level`, `status`),
-  CONSTRAINT `fk_store_apps_category` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `store_categories` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_store_apps_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
+  CONSTRAINT `fk_store_apps_category` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `store_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_store_apps_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_store_apps_auditor` FOREIGN KEY (`audited_by`) REFERENCES `admins` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `store_app_purchases` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_id` BIGINT UNSIGNED NOT NULL,
+  `app_id` BIGINT UNSIGNED NOT NULL,
+  `store_app_id` BIGINT UNSIGNED NOT NULL,
+  `buyer_user_id` BIGINT UNSIGNED NOT NULL,
+  `seller_user_id` BIGINT UNSIGNED DEFAULT NULL,
+  `price_balance` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `asset_type` VARCHAR(20) NOT NULL DEFAULT 'balance',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_store_app_purchase_buyer` (`store_app_id`, `buyer_user_id`),
+  KEY `idx_store_app_purchases_buyer` (`app_id`, `buyer_user_id`, `created_at`),
+  CONSTRAINT `fk_store_app_purchase_app` FOREIGN KEY (`store_app_id`, `app_id`, `admin_id`) REFERENCES `store_apps` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_store_app_purchase_buyer` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_store_app_purchase_seller` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `store_app_images` (
@@ -2629,7 +2700,47 @@ CREATE TABLE IF NOT EXISTS `uploads` (
   PRIMARY KEY (`id`),
   KEY `idx_uploads_tenant_scene` (`admin_id`, `app_id`, `scene`, `created_at`),
   KEY `idx_uploads_content_fingerprint` (`admin_id`, `app_id`, `sha256`, `size_bytes`, `status`),
+  KEY `idx_uploads_file_path` (`file_path`(191)),
+  KEY `idx_uploads_scene_sha256` (`scene`, `sha256`),
   CONSTRAINT `fk_uploads_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `catalog_file_migrations` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_id` BIGINT UNSIGNED NOT NULL,
+  `app_id` BIGINT UNSIGNED NOT NULL,
+  `upload_id` BIGINT UNSIGNED NOT NULL,
+  `old_file_path` VARCHAR(1000) NOT NULL,
+  `new_file_path` VARCHAR(1000) NOT NULL,
+  `file_sha256` CHAR(64) NOT NULL DEFAULT '',
+  `file_size_bytes` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `cleanup_status` VARCHAR(20) NOT NULL DEFAULT 'cleanup_pending',
+  `cleanup_error` VARCHAR(500) NOT NULL DEFAULT '',
+  `cleaned_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_catalog_file_migration_upload` (`upload_id`),
+  KEY `idx_catalog_file_migration_cleanup` (`admin_id`, `app_id`, `cleanup_status`),
+  KEY `idx_catalog_file_migration_old_path` (`old_file_path`(191)),
+  KEY `idx_catalog_file_migration_sha256` (`file_sha256`),
+  CONSTRAINT `fk_catalog_file_migration_upload` FOREIGN KEY (`upload_id`) REFERENCES `uploads` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `upload_file_deletions` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `upload_id` BIGINT UNSIGNED DEFAULT NULL,
+  `file_path` VARCHAR(1000) NOT NULL,
+  `path_sha256` CHAR(64) NOT NULL,
+  `cleanup_status` VARCHAR(20) NOT NULL DEFAULT 'cleanup_pending',
+  `cleanup_error` VARCHAR(500) NOT NULL DEFAULT '',
+  `cleaned_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_upload_file_deletion_path` (`path_sha256`),
+  KEY `idx_upload_file_deletion_status` (`cleanup_status`, `updated_at`),
+  CONSTRAINT `fk_upload_file_deletion_upload` FOREIGN KEY (`upload_id`) REFERENCES `uploads` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `sticker_packs` (
@@ -2902,6 +3013,7 @@ CREATE TABLE IF NOT EXISTS `level_forum_posts` (
   `author_type` VARCHAR(20) NOT NULL,
   `author_id` BIGINT UNSIGNED NOT NULL,
   `author_name` VARCHAR(100) NOT NULL,
+  `category_code` VARCHAR(30) NOT NULL DEFAULT 'general',
   `title` VARCHAR(200) NOT NULL,
   `content` LONGTEXT NOT NULL,
   `attachments_json` LONGTEXT,
@@ -2919,6 +3031,25 @@ CREATE TABLE IF NOT EXISTS `level_forum_posts` (
   CONSTRAINT `fk_level_forum_root` FOREIGN KEY (`root_platform_id`) REFERENCES `platform_accounts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_level_forum_scope` FOREIGN KEY (`scope_platform_id`) REFERENCES `platform_accounts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_level_forum_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `level_forum_reports` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `post_id` BIGINT UNSIGNED NOT NULL,
+  `reporter_type` VARCHAR(20) NOT NULL,
+  `reporter_id` BIGINT UNSIGNED NOT NULL,
+  `reason` VARCHAR(500) NOT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
+  `handled_by_type` VARCHAR(20) DEFAULT NULL,
+  `handled_by_id` BIGINT UNSIGNED DEFAULT NULL,
+  `handle_remark` VARCHAR(500) NOT NULL DEFAULT '',
+  `handled_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_level_forum_reports_post` (`post_id`, `status`, `id`),
+  KEY `idx_level_forum_reports_actor` (`reporter_type`, `reporter_id`, `status`),
+  CONSTRAINT `fk_level_forum_reports_post` FOREIGN KEY (`post_id`) REFERENCES `level_forum_posts` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `level_forum_comments` (
@@ -4069,16 +4200,94 @@ CREATE TABLE IF NOT EXISTS `forum_report_tags` (
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- 1 级平台所有者：root / 123456
+-- 安全引导变量只读取调用方在当前数据库会话中显式注入的值。
+-- 密码哈希限定为 PHP password_hash() 支持的 bcrypt/Argon2 格式，防止误把明文当作哈希入库。
+SET @yy_bootstrap_root_ready = IF(
+  CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_ROOT_PLATFORM_KEY, ''))) BETWEEN 1 AND 80
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_ROOT_ACCOUNT, ''))) BETWEEN 1 AND 64
+  AND CHAR_LENGTH(COALESCE(@YY_BOOTSTRAP_ROOT_PASSWORD_HASH, '')) BETWEEN 50 AND 255
+  AND (
+    @YY_BOOTSTRAP_ROOT_PASSWORD_HASH LIKE '$2y$%'
+    OR @YY_BOOTSTRAP_ROOT_PASSWORD_HASH LIKE '$2a$%'
+    OR @YY_BOOTSTRAP_ROOT_PASSWORD_HASH LIKE '$argon2i$%'
+    OR @YY_BOOTSTRAP_ROOT_PASSWORD_HASH LIKE '$argon2id$%'
+  ), 1, 0
+);
+SET @yy_bootstrap_authorized_ready = IF(
+  @yy_bootstrap_root_ready = 1
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_AUTHORIZED_PLATFORM_KEY, ''))) BETWEEN 1 AND 80
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_AUTHORIZED_ACCOUNT, ''))) BETWEEN 1 AND 64
+  AND CHAR_LENGTH(COALESCE(@YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH, '')) BETWEEN 50 AND 255
+  AND (
+    @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH LIKE '$2y$%'
+    OR @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH LIKE '$2a$%'
+    OR @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH LIKE '$argon2i$%'
+    OR @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH LIKE '$argon2id$%'
+  ), 1, 0
+);
+SET @yy_bootstrap_admin_ready = IF(
+  @yy_bootstrap_root_ready = 1
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_ADMIN_ACCOUNT, ''))) BETWEEN 1 AND 64
+  AND CHAR_LENGTH(COALESCE(@YY_BOOTSTRAP_ADMIN_PASSWORD_HASH, '')) BETWEEN 50 AND 255
+  AND (
+    @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH LIKE '$2y$%'
+    OR @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH LIKE '$2a$%'
+    OR @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH LIKE '$argon2i$%'
+    OR @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH LIKE '$argon2id$%'
+  ), 1, 0
+);
+SET @yy_bootstrap_app_ready = IF(
+  @yy_bootstrap_admin_ready = 1
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_APP_KEY, ''))) BETWEEN 1 AND 80
+  AND COALESCE(@YY_BOOTSTRAP_APP_SECRET_HASH, '') REGEXP '^[0-9A-Fa-f]{64}$', 1, 0
+);
+SET @yy_bootstrap_user_ready = IF(
+  @yy_bootstrap_app_ready = 1
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_USER_UID, ''))) BETWEEN 1 AND 32
+  AND CHAR_LENGTH(TRIM(COALESCE(@YY_BOOTSTRAP_USER_ACCOUNT, ''))) BETWEEN 1 AND 64
+  AND CHAR_LENGTH(COALESCE(@YY_BOOTSTRAP_USER_PASSWORD_HASH, '')) BETWEEN 50 AND 255
+  AND (
+    @YY_BOOTSTRAP_USER_PASSWORD_HASH LIKE '$2y$%'
+    OR @YY_BOOTSTRAP_USER_PASSWORD_HASH LIKE '$2a$%'
+    OR @YY_BOOTSTRAP_USER_PASSWORD_HASH LIKE '$argon2i$%'
+    OR @YY_BOOTSTRAP_USER_PASSWORD_HASH LIKE '$argon2id$%'
+  ), 1, 0
+);
+
+SET @yy_disabled_password_hash = CONCAT('disabled$', SHA2(CONCAT(UUID(), UUID(), RAND(), NOW(6)), 256));
+SET @yy_disabled_app_secret_hash = SHA2(CONCAT(UUID(), UUID(), RAND(), NOW(6)), 256);
+SET @yy_root_platform_key = IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_PLATFORM_KEY), 'bootstrap-disabled-owner');
+SET @yy_root_account = IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_ACCOUNT), 'bootstrap-disabled-owner');
+SET @yy_root_password_hash = IF(@yy_bootstrap_root_ready = 1, @YY_BOOTSTRAP_ROOT_PASSWORD_HASH, @yy_disabled_password_hash);
+SET @yy_authorized_platform_key = IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_PLATFORM_KEY), 'bootstrap-disabled-authorized');
+SET @yy_authorized_account = IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_ACCOUNT), 'bootstrap-disabled-authorized');
+SET @yy_authorized_password_hash = IF(@yy_bootstrap_authorized_ready = 1, @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH, @yy_disabled_password_hash);
+SET @yy_admin_account = IF(@yy_bootstrap_admin_ready = 1, TRIM(@YY_BOOTSTRAP_ADMIN_ACCOUNT), 'bootstrap-disabled-admin');
+SET @yy_admin_password_hash = IF(@yy_bootstrap_admin_ready = 1, @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH, @yy_disabled_password_hash);
+SET @yy_app_key = IF(@yy_bootstrap_app_ready = 1, TRIM(@YY_BOOTSTRAP_APP_KEY), 'bootstrap-disabled-app');
+SET @yy_app_secret_hash = IF(@yy_bootstrap_app_ready = 1, LOWER(@YY_BOOTSTRAP_APP_SECRET_HASH), @yy_disabled_app_secret_hash);
+SET @yy_user_uid = IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_UID), 'bootstrap-disabled-user');
+SET @yy_user_account = IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_ACCOUNT), 'bootstrap-disabled-user');
+SET @yy_user_password_hash = IF(@yy_bootstrap_user_ready = 1, @YY_BOOTSTRAP_USER_PASSWORD_HASH, @yy_disabled_password_hash);
+
+-- 1 级平台所有者：只有三项 ROOT 变量完整且安全时才启用，否则创建不可登录占位账号。
 INSERT INTO `platform_accounts`
   (`parent_id`, `created_by_platform_id`, `level`, `platform_key`, `account`, `password_hash`,
-   `nickname`, `avatar`, `email`, `phone`, `status`, `membership_level`, `membership_started_at`,
+   `nickname`, `avatar`, `email`, `phone`, `status`, `disabled_reason`, `membership_level`, `membership_started_at`,
    `membership_expired_at`, `admin_quota`, `integral`, `permissions_json`, `register_ip`, `created_at`, `updated_at`)
 VALUES
-  (NULL, NULL, 1, 'yiyunying-root', 'root',
-   'pbkdf2_sha256$120000$yiyunying-install-20260712$0F9tF7l3mI4vx8XBpcv6xSso9hiPS4rOdVShF+eMvUc=',
-   '易运盈平台所有者', '', NULL, NULL, 1, 'owner', NOW(), NULL, 0, 0, NULL, '127.0.0.1', NOW(), NOW())
-ON DUPLICATE KEY UPDATE `level` = 1, `status` = 1, `deleted_at` = NULL, `updated_at` = NOW();
+  (NULL, NULL, 1, @yy_root_platform_key, @yy_root_account, @yy_root_password_hash,
+   IF(@yy_bootstrap_root_ready = 1, '易运盈平台所有者', '未配置的平台所有者'), '', NULL, NULL,
+   @yy_bootstrap_root_ready,
+   IF(@yy_bootstrap_root_ready = 1, '', '首次安装未显式注入平台所有者身份，已安全禁用'),
+   'owner', IF(@yy_bootstrap_root_ready = 1, NOW(), NULL), NULL, 0, 0, NULL, '127.0.0.1', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+  `level` = 1,
+  `password_hash` = IF(@yy_bootstrap_root_ready = 1, VALUES(`password_hash`), `password_hash`),
+  `status` = VALUES(`status`),
+  `disabled_reason` = VALUES(`disabled_reason`),
+  `deleted_at` = NULL,
+  `updated_at` = NOW();
 
 CREATE TABLE IF NOT EXISTS `user_moments` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -4086,6 +4295,7 @@ CREATE TABLE IF NOT EXISTS `user_moments` (
   `app_id` BIGINT UNSIGNED NOT NULL,
   `user_id` BIGINT UNSIGNED NOT NULL,
   `content` TEXT NOT NULL,
+  `content_kind` VARCHAR(20) NOT NULL DEFAULT 'moment',
   `location_name` VARCHAR(200) NOT NULL DEFAULT '',
   `latitude` DECIMAL(10,7) DEFAULT NULL,
   `longitude` DECIMAL(10,7) DEFAULT NULL,
@@ -4109,6 +4319,7 @@ CREATE TABLE IF NOT EXISTS `user_moments` (
   KEY `idx_user_moments_owner` (`user_id`, `created_at`),
   KEY `idx_user_moments_pinned` (`user_id`, `is_pinned`, `pin_order`, `created_at`),
   KEY `idx_user_moments_moderation` (`admin_id`, `app_id`, `audit_status`, `status`, `deleted_at`, `created_at`),
+  KEY `idx_user_moments_kind_feed` (`admin_id`, `app_id`, `content_kind`, `audit_status`, `status`, `deleted_at`, `created_at`),
   KEY `idx_user_moments_purge` (`app_id`, `delete_expires_at`),
   CONSTRAINT `fk_user_moments_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`)
     REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE,
@@ -4305,7 +4516,11 @@ CREATE TABLE IF NOT EXISTS `app_reward_events` (
   CONSTRAINT `fk_app_reward_events_user` FOREIGN KEY (`user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-SET @root_platform_id = (SELECT `id` FROM `platform_accounts` WHERE `platform_key` = 'yiyunying-root' LIMIT 1);
+SET @root_platform_id = (
+  SELECT `id` FROM `platform_accounts`
+  WHERE `platform_key` = @yy_root_platform_key AND `account` = @yy_root_account
+  LIMIT 1
+);
 
 INSERT INTO `platform_settings`
   (`platform_id`, `setting_key`, `setting_value`, `value_type`, `created_at`, `updated_at`)
@@ -4372,24 +4587,38 @@ ON DUPLICATE KEY UPDATE
   `grant_json` = VALUES(`grant_json`), `price_integral` = VALUES(`price_integral`),
   `status` = VALUES(`status`), `sort_order` = VALUES(`sort_order`), `updated_at` = NOW();
 
--- 默认 2 级授权平台：authorized / 123456，直属 1 级平台。
--- 该账号只管理自身创建的 3 级管理员及其应用、用户和内容。
+-- 可选 2 级授权平台：只有三项 AUTHORIZED 变量完整且上级已启用时才启用。
+-- 未注入时仍保留禁用占位关系，便于完整验证外键和数据结构，但任何已知密码都无法登录。
 INSERT INTO `platform_accounts`
   (`parent_id`, `created_by_platform_id`, `level`, `platform_key`, `account`, `password_hash`,
-   `nickname`, `avatar`, `email`, `phone`, `status`, `membership_level`, `membership_started_at`,
+   `nickname`, `avatar`, `email`, `phone`, `status`, `disabled_reason`, `membership_level`, `membership_started_at`,
    `membership_expired_at`, `admin_quota`, `integral`, `permissions_json`, `register_ip`, `created_at`, `updated_at`)
 VALUES
-  (@root_platform_id, @root_platform_id, 2, 'yiyunying-authorized', 'authorized',
-   'pbkdf2_sha256$120000$yiyunying-install-20260712$0F9tF7l3mI4vx8XBpcv6xSso9hiPS4rOdVShF+eMvUc=',
-   '默认授权平台', '', NULL, NULL, 1, 'vip', NOW(), DATE_ADD(NOW(), INTERVAL 3650 DAY),
+  (@root_platform_id, @root_platform_id, 2, @yy_authorized_platform_key, @yy_authorized_account,
+   @yy_authorized_password_hash,
+   IF(@yy_bootstrap_authorized_ready = 1, '授权平台', '未配置的授权平台'), '', NULL, NULL,
+   @yy_bootstrap_authorized_ready,
+   IF(@yy_bootstrap_authorized_ready = 1, '', '首次安装未显式注入授权平台身份，已安全禁用'),
+   'vip', IF(@yy_bootstrap_authorized_ready = 1, NOW(), NULL),
+   IF(@yy_bootstrap_authorized_ready = 1, DATE_ADD(NOW(), INTERVAL 3650 DAY), NULL),
    10, 100, NULL, '127.0.0.1', NOW(), NOW())
 ON DUPLICATE KEY UPDATE
   `parent_id` = @root_platform_id, `created_by_platform_id` = @root_platform_id,
-  `level` = 2, `status` = 1, `membership_level` = 'vip',
-  `membership_expired_at` = GREATEST(COALESCE(`membership_expired_at`, NOW()), DATE_ADD(NOW(), INTERVAL 3650 DAY)),
+  `level` = 2,
+  `password_hash` = IF(@yy_bootstrap_authorized_ready = 1, VALUES(`password_hash`), `password_hash`),
+  `status` = VALUES(`status`), `disabled_reason` = VALUES(`disabled_reason`), `membership_level` = 'vip',
+  `membership_expired_at` = IF(
+    @yy_bootstrap_authorized_ready = 1,
+    GREATEST(COALESCE(`membership_expired_at`, NOW()), DATE_ADD(NOW(), INTERVAL 3650 DAY)),
+    `membership_expired_at`
+  ),
   `admin_quota` = GREATEST(`admin_quota`, 10), `deleted_at` = NULL, `updated_at` = NOW();
 
-SET @authorized_platform_id = (SELECT `id` FROM `platform_accounts` WHERE `platform_key` = 'yiyunying-authorized' LIMIT 1);
+SET @authorized_platform_id = (
+  SELECT `id` FROM `platform_accounts`
+  WHERE `platform_key` = @yy_authorized_platform_key AND `account` = @yy_authorized_account
+  LIMIT 1
+);
 
 INSERT INTO `platform_settings`
   (`platform_id`, `setting_key`, `setting_value`, `value_type`, `created_at`, `updated_at`)
@@ -4413,15 +4642,23 @@ ON DUPLICATE KEY UPDATE
   `grant_json` = VALUES(`grant_json`), `price_integral` = VALUES(`price_integral`),
   `status` = VALUES(`status`), `sort_order` = VALUES(`sort_order`), `deleted_at` = NULL, `updated_at` = NOW();
 
--- 默认 3 级管理员：admin / 123456，直属 1 级平台。
--- PBKDF2 种子会在首次登录成功后自动升级为 PHP password_hash。
+-- 可选 3 级管理员：只有 ADMIN 账号和 password_hash 完整且上级已启用时才启用。
 INSERT INTO `admins`
   (`platform_id`, `account`, `password_hash`, `nickname`, `avatar`, `email`, `phone`, `status`, `register_ip`, `created_at`, `updated_at`)
 VALUES
-  (@root_platform_id, 'admin', 'pbkdf2_sha256$120000$yiyunying-install-20260712$0F9tF7l3mI4vx8XBpcv6xSso9hiPS4rOdVShF+eMvUc=', '默认管理员', '', NULL, NULL, 1, '127.0.0.1', NOW(), NOW())
-ON DUPLICATE KEY UPDATE `account` = VALUES(`account`), `status` = 1, `updated_at` = NOW();
+  (@root_platform_id, @yy_admin_account, @yy_admin_password_hash,
+   IF(@yy_bootstrap_admin_ready = 1, '后台管理员', '未配置的后台管理员'), '', NULL, NULL,
+   @yy_bootstrap_admin_ready, '127.0.0.1', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+  `password_hash` = IF(@yy_bootstrap_admin_ready = 1, VALUES(`password_hash`), `password_hash`),
+  `status` = VALUES(`status`),
+  `updated_at` = NOW();
 
-SET @admin_id = (SELECT `id` FROM `admins` WHERE `platform_id` = @root_platform_id AND `account` = 'admin' LIMIT 1);
+SET @admin_id = (
+  SELECT `id` FROM `admins`
+  WHERE `platform_id` = @root_platform_id AND `account` = @yy_admin_account
+  LIMIT 1
+);
 
 INSERT INTO `admin_entitlements`
   (`platform_id`, `admin_id`, `membership_level`, `membership_status`, `membership_started_at`,
@@ -4458,15 +4695,20 @@ WHERE NOT EXISTS (
   SELECT 1 FROM `admin_integral_logs` WHERE `admin_id` = @admin_id AND `scene` = 'install_gift'
 );
 
--- 演示应用。真实应用仍通过管理员创建应用接口生成。
--- 演示 app_secret：yiyunying-demo-secret-2026
+-- 可选引导应用：APP_KEY 与随机 APP_SECRET_HASH 必须显式注入；缺失时应用保持禁用。
 INSERT INTO `apps`
   (`admin_id`, `app_key`, `app_secret_hash`, `name`, `logo`, `description`, `status`, `version`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, 'yiyunying-demo', SHA2('yiyunying-demo-secret-2026', 256), '易运盈演示应用', '', '用于安装后的完整业务闭环测试', 1, '1.0.0', NOW(), NOW())
-ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `status` = 1, `updated_at` = NOW();
+  (@admin_id, @yy_app_key, @yy_app_secret_hash,
+   IF(@yy_bootstrap_app_ready = 1, '易运盈引导应用', '未配置的引导应用'), '',
+   '用于首次安装结构初始化；启用身份必须由部署者显式注入', @yy_bootstrap_app_ready, '1.0.0', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+  `name` = VALUES(`name`),
+  `app_secret_hash` = IF(@yy_bootstrap_app_ready = 1, VALUES(`app_secret_hash`), `app_secret_hash`),
+  `status` = VALUES(`status`),
+  `updated_at` = NOW();
 
-SET @app_id = (SELECT `id` FROM `apps` WHERE `app_key` = 'yiyunying-demo' LIMIT 1);
+SET @app_id = (SELECT `id` FROM `apps` WHERE `app_key` = @yy_app_key AND `admin_id` = @admin_id LIMIT 1);
 
 INSERT INTO `business_catalogs`
   (`admin_id`, `app_id`, `catalog_code`, `catalog_name`, `description`, `sort_order`, `status`, `created_at`, `updated_at`)
@@ -4544,7 +4786,11 @@ VALUES
   (@admin_id, @app_id, 'accept_stranger_messages_default', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'forum_post_audit', '0', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'forum_comment_audit', '0', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'resource_user_submit_enabled', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'resource_submit_audit', '1', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'store_user_submit_enabled', '1', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'store_submit_audit', '1', 'bool', NOW(), NOW()),
+  (@admin_id, @app_id, 'catalog_private_migration_ready', '1', 'bool', NOW(), NOW()),
   (@admin_id, @app_id, 'upload_max_bytes', '104857600', 'int', NOW(), NOW()),
   (@admin_id, @app_id, 'upload_image_max_bytes', '104857600', 'int', NOW(), NOW()),
   (@admin_id, @app_id, 'upload_video_max_bytes', '1073741824', 'int', NOW(), NOW()),
@@ -4650,6 +4896,12 @@ VALUES
   ,(@admin_id, @app_id, 'bounties', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'level_forum', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'social', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_videos', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_video_publish', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_video_comments', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_video_likes', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_video_favorites', 1, NULL, NOW(), NOW())
+  ,(@admin_id, @app_id, 'short_video_forwards', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'notifications', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'withdrawals', 1, NULL, NOW(), NOW())
   ,(@admin_id, @app_id, 'chat_extensions', 1, NULL, NOW(), NOW())
@@ -4671,10 +4923,22 @@ VALUES
 ON DUPLICATE KEY UPDATE `enabled` = VALUES(`enabled`), `updated_at` = NOW();
 
 INSERT INTO `resource_categories`
-  (`admin_id`, `app_id`, `name`, `icon`, `description`, `sort_order`, `status`, `created_at`, `updated_at`)
+  (`admin_id`, `app_id`, `resource_type`, `name`, `icon`, `description`, `sort_order`, `status`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, @app_id, '默认分类', '', '演示资源分类', 0, 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE `status` = 1, `updated_at` = NOW();
+  (@admin_id, @app_id, 'source_market', 'Android Java 源码', '', 'Android 原生 Java 源码、示例与完整工程', 130, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'iApp 源码', '', 'iApp 源码、界面示例与可复用模块', 120, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'Lua 源码', '', 'Lua 脚本、源码模块与完整示例', 110, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'Web 源码', '', '网页、前端界面与 Web 完整工程源码', 100, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'PHP 源码', '', 'PHP 服务端源码、接口与完整工程', 90, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'Python 源码', '', 'Python 脚本、服务与完整工程源码', 80, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'JavaScript 源码', '', 'JavaScript、Node.js 与前端框架源码', 70, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'HarmonyOS 源码', '', 'HarmonyOS、ArkTS 与鸿蒙应用源码', 60, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'iOS 源码', '', 'iOS、Swift 与苹果应用完整源码', 50, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', 'C/C++ 源码', '', 'C、C++ 源码、库与完整工程', 40, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', '数据库源码', '', '数据库脚本、结构、查询与迁移源码', 30, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', '通用模块', '', '好友聊天、群聊、登录注册、论坛、文档和商城等独立模块', 20, 1, NOW(), NOW()),
+  (@admin_id, @app_id, 'source_market', '其他源码', '', '未归入标准技术分类的其他源码与示例', 10, 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE `description` = VALUES(`description`), `sort_order` = VALUES(`sort_order`), `status` = 1, `updated_at` = NOW();
 
 INSERT INTO `store_categories`
   (`admin_id`, `app_id`, `name`, `icon`, `sort_order`, `status`, `created_at`)
@@ -4730,8 +4994,8 @@ ON DUPLICATE KEY UPDATE `room_kind` = 'chat_room', `status` = 1, `updated_at` = 
 INSERT INTO `payment_channels`
   (`admin_id`, `app_id`, `channel_code`, `name`, `config_json`, `enabled`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, @app_id, 'demo', '演示支付', '{"secret":"change-me-demo-secret","gateway_url":""}', 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `config_json` = VALUES(`config_json`), `enabled` = 1, `updated_at` = NOW();
+  (@admin_id, @app_id, 'bootstrap-disabled', '未配置支付通道', '{"gateway_url":""}', 0, NOW(), NOW())
+ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `config_json` = VALUES(`config_json`), `enabled` = 0, `updated_at` = NOW();
 
 INSERT INTO `remote_configs`
   (`admin_id`, `app_id`, `config_key`, `config_value`, `value_type`, `description`, `status`, `created_at`, `updated_at`)
@@ -4739,14 +5003,22 @@ VALUES
   (@admin_id, @app_id, 'welcome_text', '欢迎使用易运盈后台', 'string', '启动欢迎语', 1, NOW(), NOW())
 ON DUPLICATE KEY UPDATE `config_value` = VALUES(`config_value`), `updated_at` = NOW();
 
--- 默认用户：user / 123456，所属应用 app_key=yiyunying-demo。
+-- 可选 4 级用户：UID、账号和 password_hash 必须显式注入，且上级应用必须已启用。
 INSERT INTO `users`
   (`uid`, `admin_id`, `app_id`, `account`, `password_hash`, `email`, `phone`, `status`, `register_ip`, `created_at`, `updated_at`)
 VALUES
-  ('10000000001', @admin_id, @app_id, 'user', 'pbkdf2_sha256$120000$yiyunying-user-20260712$bOBHGneB62dBT/HIdd03iLbL7m8KZSKW/O28KUv6mzQ=', NULL, NULL, 1, '127.0.0.1', NOW(), NOW())
-ON DUPLICATE KEY UPDATE `account` = VALUES(`account`), `status` = 1, `updated_at` = NOW();
+  (@yy_user_uid, @admin_id, @app_id, @yy_user_account, @yy_user_password_hash,
+   NULL, NULL, @yy_bootstrap_user_ready, '127.0.0.1', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+  `password_hash` = IF(@yy_bootstrap_user_ready = 1, VALUES(`password_hash`), `password_hash`),
+  `status` = VALUES(`status`),
+  `updated_at` = NOW();
 
-SET @user_id = (SELECT `id` FROM `users` WHERE `app_id` = @app_id AND `account` = 'user' LIMIT 1);
+SET @user_id = (
+  SELECT `id` FROM `users`
+  WHERE `app_id` = @app_id AND `account` = @yy_user_account AND `uid` = @yy_user_uid
+  LIMIT 1
+);
 
 INSERT INTO `user_profiles`
   (`admin_id`, `app_id`, `user_id`, `nickname`, `qq`, `avatar`, `background`, `signature`, `gender`, `title`, `public_profile`, `created_at`, `updated_at`)
@@ -4829,25 +5101,26 @@ WHERE NOT EXISTS (
 INSERT INTO `app_versions`
   (`admin_id`, `app_id`, `version_name`, `version_code`, `apk_url`, `update_content`, `force_update`, `status`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, @app_id, '1.0.0', 1, 'http://appht.jjmxg.xyz/downloads/yiyunying-demo.apk', '易运盈后台完整后端初始版本', 0, 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE `version_name` = VALUES(`version_name`), `status` = 1, `updated_at` = NOW();
+  (@admin_id, @app_id, '1.0.0', 1, '', '首次安装未发布安装包，请由管理员校验后发布', 0, 0, NOW(), NOW())
+ON DUPLICATE KEY UPDATE `version_name` = VALUES(`version_name`), `status` = 0, `updated_at` = NOW();
 
--- 演示卡密：YY-DEMO-123456，只能由默认 user 兑换一次。
+-- 引导卡密固定为禁用占位，避免全新安装产生任何公开可兑换凭据。
 INSERT INTO `card_batches`
   (`admin_id`, `app_id`, `name`, `card_type`, `value_json`, `total_count`, `used_count`, `max_use`, `status`, `created_at`, `updated_at`)
-SELECT @admin_id, @app_id, '安装演示卡密', 'mixed', '{"balance":100,"document_credit":10,"vip_days":7}', 1, 0, 1, 1, NOW(), NOW()
+SELECT @admin_id, @app_id, '安全禁用引导批次', 'mixed', '{"balance":100,"document_credit":10,"vip_days":7}', 1, 0, 1, 0, NOW(), NOW()
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM `card_batches` WHERE `app_id` = @app_id AND `name` = '安装演示卡密'
+  SELECT 1 FROM `card_batches` WHERE `app_id` = @app_id AND `name` = '安全禁用引导批次'
 );
 
-SET @batch_id = (SELECT `id` FROM `card_batches` WHERE `app_id` = @app_id AND `name` = '安装演示卡密' ORDER BY `id` ASC LIMIT 1);
+SET @batch_id = (SELECT `id` FROM `card_batches` WHERE `app_id` = @app_id AND `name` = '安全禁用引导批次' ORDER BY `id` ASC LIMIT 1);
 
 INSERT INTO `cards`
   (`admin_id`, `app_id`, `batch_id`, `card_code`, `card_type`, `value_json`, `max_use`, `used_count`, `status`, `created_at`, `updated_at`)
 VALUES
-  (@admin_id, @app_id, @batch_id, 'YY-DEMO-123456', 'mixed', '{"balance":100,"document_credit":10,"vip_days":7}', 1, 0, 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE `card_code` = VALUES(`card_code`);
+  (@admin_id, @app_id, @batch_id, 'BOOTSTRAP-DISABLED-CARD', 'mixed',
+   '{"balance":100,"document_credit":10,"vip_days":7}', 1, 0, 0, NOW(), NOW())
+ON DUPLICATE KEY UPDATE `status` = 0, `updated_at` = NOW();
 
 INSERT INTO `schema_migrations` (`version`, `description`, `applied_at`)
 VALUES ('2026.07.12-core-schema', '核心账号、应用、用户、文档、卡密、公告版本与日志结构', NOW())

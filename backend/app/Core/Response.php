@@ -53,14 +53,33 @@ final class Response
         );
     }
 
-    public static function file(string $path, string $mimeType = 'application/octet-stream'): ApiResponse
+    public static function file(
+        string $path,
+        string $mimeType = 'application/octet-stream',
+        string $disposition = 'inline',
+        string $downloadName = '',
+        string $validator = ''
+    ): ApiResponse
     {
         $size = is_file($path) ? filesize($path) : false;
         if ($size === false) throw new HttpException('媒体文件不存在', 404, 404);
+        $mtime = filemtime($path);
+        $lastModified = $mtime === false ? '' : gmdate('D, d M Y H:i:s', $mtime) . ' GMT';
+        $validator = strtolower(trim($validator));
+        $etag = preg_match('/^[a-f0-9]{64}$/', $validator) === 1
+            ? '"sha256-' . $validator . '"'
+            : '';
         $offset = 0;
         $length = (int) $size;
         $status = 200;
         $range = trim((string) ($_SERVER['HTTP_RANGE'] ?? ''));
+        $ifRange = trim((string) ($_SERVER['HTTP_IF_RANGE'] ?? ''));
+        if ($range !== '' && $ifRange !== '') {
+            $matchesValidator = $etag !== '' && hash_equals($etag, $ifRange);
+            $ifRangeDate = $matchesValidator ? false : strtotime($ifRange);
+            $matchesDate = $ifRangeDate !== false && $mtime !== false && $mtime <= $ifRangeDate;
+            if (!$matchesValidator && !$matchesDate) $range = '';
+        }
         if ($range !== '' && preg_match('/^bytes=(\d*)-(\d*)$/', $range, $matches) === 1) {
             if ($matches[1] === '' && $matches[2] === '') throw new HttpException('媒体范围无效', 416, 416);
             if ($matches[1] === '') {
@@ -79,6 +98,13 @@ final class Response
         }
         $safeMime = preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+$#i', $mimeType) === 1
             ? $mimeType : 'application/octet-stream';
+        $safeDisposition = $disposition === 'attachment' ? 'attachment' : 'inline';
+        $safeName = trim(str_replace(["\r", "\n", '"', '\\'], '_', basename($downloadName)));
+        $contentDisposition = $safeDisposition;
+        if ($safeName !== '') {
+            $asciiName = preg_replace('/[^A-Za-z0-9._-]+/', '_', $safeName) ?: 'download.bin';
+            $contentDisposition .= '; filename="' . $asciiName . '"; filename*=UTF-8\'\'' . rawurlencode($safeName);
+        }
         $response = new ApiResponse([], $status);
         $response->filePath = $path;
         $response->fileOffset = $offset;
@@ -88,10 +114,12 @@ final class Response
             'Content-Length' => (string) $length,
             'Accept-Ranges' => 'bytes',
             'Cache-Control' => 'private, max-age=300, no-transform',
-            'Content-Disposition' => 'inline',
+            'Content-Disposition' => $contentDisposition,
             'Referrer-Policy' => 'no-referrer',
             'X-Content-Type-Options' => 'nosniff',
         ];
+        if ($etag !== '') $response->headers['ETag'] = $etag;
+        if ($lastModified !== '') $response->headers['Last-Modified'] = $lastModified;
         if ($status === 206) {
             $response->headers['Content-Range'] = 'bytes ' . $offset . '-' . ($offset + $length - 1) . '/' . $size;
         }

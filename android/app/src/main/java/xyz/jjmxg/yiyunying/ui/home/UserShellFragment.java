@@ -31,6 +31,9 @@ import xyz.jjmxg.yiyunying.databinding.FragmentUserShellBinding;
 import xyz.jjmxg.yiyunying.ui.common.BaseFragment;
 import xyz.jjmxg.yiyunying.ui.common.BackNavigationHandler;
 import xyz.jjmxg.yiyunying.ui.common.BottomDockStyler;
+import xyz.jjmxg.yiyunying.ui.forum.ForumListActivity;
+import xyz.jjmxg.yiyunying.ui.moment.MomentTimelineActivity;
+import xyz.jjmxg.yiyunying.ui.social.SocialDirectoryActivity;
 
 public final class UserShellFragment extends BaseFragment implements BackNavigationHandler {
     private static final int[] MENU_IDS = {
@@ -96,6 +99,19 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
         binding.menuButton.setOnClickListener(view -> host().openNavigationDrawer());
         binding.notesButton.setOnClickListener(view -> host().openModule("documents"));
         binding.primaryAction.setOnClickListener(view -> currentPageAction());
+        binding.quickPrivateChat.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.PRIVATE_CHAT));
+        binding.quickGroupChat.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.GROUP_CHAT));
+        binding.quickRedPackets.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.RED_PACKETS));
+        binding.quickForum.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.FORUM));
+        binding.quickShortVideos.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.SHORT_VIDEOS));
+        binding.quickShop.setOnClickListener(view ->
+            openQuickAccess(UserQuickAccessPolicy.SHOP));
+        syncQuickAccess();
         binding.searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
@@ -212,8 +228,8 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
     }
 
     private void loadFeatureFlags() {
-        track(app().repository().getPublic(
-            "/api/public/features", new LinkedHashMap<>(), result -> {
+        track(app().repository().get(
+            "/api/user/features", new LinkedHashMap<>(), result -> {
                 if (binding == null || !result.isSuccessful()) return;
                 featureFlags = Jsons.object(result.dataObject(), "features").deepCopy();
                 syncFeatureFlags();
@@ -237,6 +253,63 @@ public final class UserShellFragment extends BaseFragment implements BackNavigat
         binding.primaryAction.setEnabled(actionAvailable);
         binding.primaryAction.setAlpha(actionAvailable ? 1f : 0f);
         binding.primaryAction.setVisibility(actionAvailable ? View.VISIBLE : View.INVISIBLE);
+        syncQuickAccess();
+    }
+
+    private void syncQuickAccess() {
+        if (binding == null) return;
+        int visibleCount = 0;
+        visibleCount += setQuickAccessVisibility(
+            binding.quickPrivateChat, UserQuickAccessPolicy.PRIVATE_CHAT);
+        visibleCount += setQuickAccessVisibility(
+            binding.quickGroupChat, UserQuickAccessPolicy.GROUP_CHAT);
+        visibleCount += setQuickAccessVisibility(
+            binding.quickRedPackets, UserQuickAccessPolicy.RED_PACKETS);
+        visibleCount += setQuickAccessVisibility(
+            binding.quickForum, UserQuickAccessPolicy.FORUM);
+        visibleCount += setQuickAccessVisibility(
+            binding.quickShortVideos, UserQuickAccessPolicy.SHORT_VIDEOS);
+        visibleCount += setQuickAccessVisibility(
+            binding.quickShop, UserQuickAccessPolicy.SHOP);
+        binding.quickAccessSection.setVisibility(visibleCount > 0 ? View.VISIBLE : View.GONE);
+    }
+
+    private int setQuickAccessVisibility(View view, String entry) {
+        boolean visible = UserQuickAccessPolicy.visible(featureFlags, entry);
+        view.setVisibility(visible ? View.VISIBLE : View.GONE);
+        view.setEnabled(visible);
+        return visible ? 1 : 0;
+    }
+
+    private void openQuickAccess(String entry) {
+        if (binding == null) return;
+        if (!UserQuickAccessPolicy.visible(featureFlags, entry)) {
+            syncQuickAccess();
+            message(binding.getRoot(), "管理员或上级平台已关闭该快捷功能");
+            return;
+        }
+        switch (entry) {
+            case UserQuickAccessPolicy.PRIVATE_CHAT:
+                SocialDirectoryActivity.openFriends(requireContext());
+                return;
+            case UserQuickAccessPolicy.GROUP_CHAT:
+                SocialDirectoryActivity.openRooms(requireContext());
+                return;
+            case UserQuickAccessPolicy.RED_PACKETS:
+                host().openModule("red_packets");
+                return;
+            case UserQuickAccessPolicy.FORUM:
+                ForumListActivity.open(requireContext());
+                return;
+            case UserQuickAccessPolicy.SHORT_VIDEOS:
+                MomentTimelineActivity.openShortVideos(requireContext(), false);
+                return;
+            case UserQuickAccessPolicy.SHOP:
+                host().openModule("shop_goods");
+                return;
+            default:
+                message(binding.getRoot(), "该快捷功能不可用");
+        }
     }
 
     private void currentPageSearch(String query) {

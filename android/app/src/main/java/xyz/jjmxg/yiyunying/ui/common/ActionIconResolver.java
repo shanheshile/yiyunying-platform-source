@@ -5,7 +5,6 @@ import android.text.TextUtils;
 import android.widget.TextView;
 
 import androidx.annotation.DrawableRes;
-import androidx.core.content.ContextCompat;
 import androidx.core.widget.TextViewCompat;
 
 import com.google.android.material.button.MaterialButton;
@@ -60,8 +59,9 @@ public final class ActionIconResolver {
             button.setIconPadding(dp(button, 6));
             int tint = danger && filled
                 ? ThemeColors.resolve(button.getContext(),
-                    com.google.android.material.R.attr.colorOnError, R.color.white)
-                : (danger ? ContextCompat.getColor(button.getContext(), R.color.error)
+                    com.google.android.material.R.attr.colorOnError, R.color.on_error)
+                : (danger ? ThemeColors.resolve(button.getContext(),
+                    android.R.attr.colorError, R.color.error)
                     : (filled ? ThemeColors.onPrimary(button.getContext())
                         : ThemeColors.primary(button.getContext())));
             button.setIconTint(ColorStateList.valueOf(tint));
@@ -70,11 +70,13 @@ public final class ActionIconResolver {
         if (danger) {
             if (filled) {
                 button.setBackgroundTintList(ColorStateList.valueOf(
-                    ContextCompat.getColor(button.getContext(), R.color.error)));
+                    ThemeColors.resolve(button.getContext(),
+                        android.R.attr.colorError, R.color.error)));
                 button.setTextColor(ThemeColors.resolve(button.getContext(),
-                    com.google.android.material.R.attr.colorOnError, R.color.white));
+                    com.google.android.material.R.attr.colorOnError, R.color.on_error));
             } else {
-                button.setTextColor(ContextCompat.getColor(button.getContext(), R.color.error));
+                button.setTextColor(ThemeColors.resolve(button.getContext(),
+                    android.R.attr.colorError, R.color.error));
             }
         }
     }
@@ -94,12 +96,14 @@ public final class ActionIconResolver {
         if (icon != 0) {
             TextViewCompat.setCompoundDrawableTintList(view, ColorStateList.valueOf(
                 destructive(semanticLabel)
-                    ? ContextCompat.getColor(view.getContext(), R.color.error)
+                    ? ThemeColors.resolve(view.getContext(),
+                        android.R.attr.colorError, R.color.error)
                     : ThemeColors.primary(view.getContext())));
         }
         view.setContentDescription(description(semanticLabel, view.getText()));
         if (destructive(semanticLabel)) {
-            view.setTextColor(ContextCompat.getColor(view.getContext(), R.color.error));
+            view.setTextColor(ThemeColors.resolve(view.getContext(),
+                android.R.attr.colorError, R.color.error));
         }
     }
 

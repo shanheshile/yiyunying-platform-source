@@ -25,7 +25,7 @@ use Yiyunying\Services\RolePermissionService;
 final class OversightController
 {
     private const ALLOWED_UPLOAD_EXTENSIONS = [
-        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg',
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
         'pdf', 'txt', 'md', 'json', 'csv', 'rtf', 'odt', 'ods', 'odp',
         'zip', '7z', 'rar', 'tar', 'gz', 'bz2', 'xz',
         'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',

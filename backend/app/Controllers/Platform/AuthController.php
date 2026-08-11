@@ -20,15 +20,18 @@ final class AuthController
     public static function login(Request $request): \Yiyunying\Core\ApiResponse
     {
         $data = $request->all();
-        Validator::required($data, ['account', 'password']);
+        Validator::required($data, ['platform_key', 'account', 'password']);
         $account = Validator::string($data['account'], 'account', 3, 64);
+        $platformKey = trim((string) $data['platform_key']);
         $platform = Database::one(
             'SELECT * FROM platform_accounts WHERE account = ? AND deleted_at IS NULL LIMIT 1',
             [$account]
         );
-        if ($platform === null || !Password::verify((string) $data['password'], (string) $platform['password_hash'])) {
+        if ($platform === null
+            || !hash_equals((string) $platform['platform_key'], $platformKey)
+            || !Password::verify((string) $data['password'], (string) $platform['password_hash'])) {
             self::writeLoginLog($platform, $account, $request, false, '账号或密码错误');
-            throw new HttpException('账号或密码错误', 401, 401);
+            throw new HttpException('平台标识、账号或密码错误', 401, 401);
         }
         try {
             PlatformService::assertActive($platform);

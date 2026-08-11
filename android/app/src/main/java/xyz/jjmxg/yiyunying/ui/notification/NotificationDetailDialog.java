@@ -309,6 +309,7 @@ final class NotificationDetailDialog {
             case "pending": return "待处理";
             case "approved": case "approve": return "已通过";
             case "rejected": case "reject": return "未通过";
+            case "on_hold": case "hold": return "暂定";
             case "completed": return "已完成";
             case "cancelled": case "canceled": return "已取消";
             case "expired": return "已过期";

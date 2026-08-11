@@ -1,7 +1,9 @@
 ﻿[CmdletBinding()]
 param(
+    [ValidateSet('Build', 'Finalize')]
+    [string] $Phase = 'Build',
     [ValidateSet('none', 'patch', 'minor', 'major', 'build')]
-    [string] $Bump = 'patch',
+    [string] $Bump = 'none',
     [string] $JavaHome = $env:JAVA_HOME,
     [string] $DownloadRootBase = '/downloads',
     [switch] $SkipVerification,
@@ -18,6 +20,8 @@ $downloadSiteRoot = Join-Path $workspaceRoot 'download-site'
 $metadataFile = Join-Path $downloadSiteRoot 'release-metadata.json'
 $versionScript = Join-Path $PSScriptRoot 'version.ps1'
 $verifyScript = Join-Path $PSScriptRoot 'verify.ps1'
+$packageScript = Join-Path $workspaceRoot 'scripts\package-project.ps1'
+$releaseIdentityFile = Join-Path $workspaceRoot 'backend\config\release-identity.json'
 $releaseRoot = Join-Path $workspaceRoot 'releases'
 
 function Invoke-VersionCommand {
@@ -245,18 +249,134 @@ function Assert-ReleaseNotes([string[]] $Notes) {
     }
 }
 
+function Invoke-GitText {
+    param([Parameter(Mandatory = $true)][string[]] $Arguments, [string] $Operation)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git '-C' $workspaceRoot @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Operation 失败：$($output -join [Environment]::NewLine)"
+    }
+    return ($output -join [Environment]::NewLine).Trim()
+}
+
+function Read-CommittedReleaseEvidence($Version) {
+    if (-not (Test-Path -LiteralPath $releaseIdentityFile)) {
+        throw "缺少后端发布身份文件：$releaseIdentityFile"
+    }
+    $dirty = Invoke-GitText -Arguments @('status', '--porcelain', '--untracked-files=all') -Operation '读取 Git 工作区状态'
+    if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+        throw '发布构建必须从完全干净且已提交的源码生成（包括未跟踪文件）；请先提交或清理工作区。'
+    }
+    $branch = Invoke-GitText -Arguments @('symbolic-ref', '--short', 'HEAD') -Operation '读取 Git 分支'
+    if ($branch -ne 'main') {
+        throw "正式发布只允许从 main 分支生成，当前分支：$branch"
+    }
+    $commit = Invoke-GitText -Arguments @('rev-parse', '--verify', 'HEAD^{commit}') -Operation '读取构建源码提交'
+    if ($commit -notmatch '^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$') {
+        throw "构建源码提交格式异常：$commit"
+    }
+    [void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'backend/config/release-identity.json') -Operation '确认发布身份已提交')
+
+    $identityBytes = [System.IO.File]::ReadAllBytes($releaseIdentityFile)
+    $identity = [System.Text.Encoding]::UTF8.GetString($identityBytes) | ConvertFrom-Json
+    if ($identity.version_name -ne $Version.versionName -or [int] $identity.version_code -ne [int] $Version.versionCode) {
+        throw 'Android 版本与后端发布身份不一致，拒绝构建。'
+    }
+    $identityHash = (Get-FileHash -LiteralPath $releaseIdentityFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    return [ordered]@{
+        buildSourceCommit = $commit.ToLowerInvariant()
+        releaseIdentitySha256 = $identityHash
+    }
+}
+
 Assert-ApkIdentityParser
 Assert-DownloadRoot -Value $DownloadRootBase
 if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSha256) -and $ExpectedSignerSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
     throw 'ExpectedSignerSha256 必须是 64 位十六进制 SHA-256。'
 }
+if (-not $DryRun -and $Bump -ne 'none') {
+    throw '证据绑定发布不允许在构建或收口过程中修改版本；请先单独更新版本并提交到 main。'
+}
 $action = if ($Bump -eq 'none') { 'show' } else { $Bump }
 $version = Invoke-VersionCommand -Action $action -Preview:$DryRun
 if ($DryRun) {
+    Write-Host "计划阶段：$Phase"
     Write-Host "计划发布：$($version.versionName) ($($version.versionCode))"
-    Write-Host '干运行结束：未构建 APK、未写入版本和下载站元数据。'
+    Write-Host '干运行结束：未构建 APK、未生成项目资产、未写入版本和下载站元数据。'
     exit 0
 }
+
+$releaseDirectory = Join-Path $releaseRoot $version.versionName
+if ($Phase -eq 'Finalize') {
+    if (-not (Test-Path -LiteralPath $releaseDirectory)) {
+        throw "缺少 Build 阶段发布目录：$releaseDirectory"
+    }
+    $expectedTag = "v$($version.versionName)-debug"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
+        -ReleaseRoot $releaseRoot -ExpectedTag $expectedTag
+    if ($LASTEXITCODE -ne 0) {
+        throw "Finalize 阶段项目资产生成失败，退出码：$LASTEXITCODE"
+    }
+
+    $finalManifestPath = Join-Path $releaseDirectory 'release-manifest.json'
+    $finalManifest = Get-Content -LiteralPath $finalManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $evidenceCommit = (Invoke-GitText -Arguments @('rev-parse', '--verify', 'HEAD^{commit}') -Operation '读取发布证据提交').ToLowerInvariant()
+    if ($finalManifest.versionName -ne $version.versionName -or
+        [int] $finalManifest.versionCode -ne [int] $version.versionCode -or
+        [string] $finalManifest.releaseEvidenceCommit -ne $evidenceCommit -or
+        [string] $finalManifest.releaseTag -ne $expectedTag -or
+        [string] $finalManifest.finalizationStatus -ne 'finalized') {
+        throw 'Finalize 后发布清单未绑定到当前证据提交、最终标签和版本。'
+    }
+    $projectAssetsManifestPath = Join-Path $releaseDirectory 'project-assets-manifest.json'
+    $projectAssetsManifest = Get-Content -LiteralPath $projectAssetsManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $finalManifestSha256 = (Get-FileHash -LiteralPath $finalManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ([int] $projectAssetsManifest.schemaVersion -ne 3 -or
+        @($projectAssetsManifest.assets).Count -ne 3 -or
+        [string] $projectAssetsManifest.buildSourceCommit -ne [string] $finalManifest.buildSourceCommit -or
+        [string] $projectAssetsManifest.releaseEvidenceCommit -ne $evidenceCommit -or
+        [string] $projectAssetsManifest.releaseTag -ne $expectedTag -or
+        [string] $projectAssetsManifest.releaseIdentitySha256 -ne [string] $finalManifest.releaseIdentitySha256 -or
+        ([string] $projectAssetsManifest.releaseManifestSha256).ToLowerInvariant() -ne $finalManifestSha256) {
+        throw '项目资产清单未同时绑定 Build 源码提交与 Finalize 证据提交。'
+    }
+    foreach ($asset in @($finalManifest.projectAssets)) {
+        $assetPath = Join-Path $releaseDirectory ([string] $asset.fileName)
+        if (-not (Test-Path -LiteralPath $assetPath) -or (Get-Item -LiteralPath $assetPath).Length -le 0) {
+            throw "Finalize 后发布清单声明的项目资产缺失或为空：$($asset.fileName)"
+        }
+    }
+    foreach ($assetEvidence in @($projectAssetsManifest.assets)) {
+        $assetPath = Join-Path $releaseDirectory ([string] $assetEvidence.fileName)
+        if (-not (Test-Path -LiteralPath $assetPath)) {
+            throw "项目资产证据指向缺失文件：$($assetEvidence.fileName)"
+        }
+        $assetFile = Get-Item -LiteralPath $assetPath
+        $assetHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($assetFile.Length -ne [long] $assetEvidence.sizeBytes -or
+            $assetHash -ne ([string] $assetEvidence.sha256).ToLowerInvariant()) {
+            throw "项目资产体积或 SHA-256 与证据清单不一致：$($assetEvidence.fileName)"
+        }
+    }
+
+    Write-Host "Finalize 完成：$releaseDirectory"
+    Write-Host "Build 源码提交：$($finalManifest.buildSourceCommit)"
+    Write-Host "发布证据提交：$evidenceCommit"
+    Write-Host "最终注释标签：$expectedTag"
+    exit 0
+}
+
+$releaseEvidence = Read-CommittedReleaseEvidence -Version $version
+$buildSourceCommit = [string] $releaseEvidence.buildSourceCommit
+$releaseIdentitySha256 = [string] $releaseEvidence.releaseIdentitySha256
 
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw 'JAVA_HOME 未配置，请通过 -JavaHome 指定 JDK 17。'
@@ -269,11 +389,11 @@ if (-not (Test-Path -LiteralPath $downloadSiteRoot)) {
 }
 
 $versionChanged = [bool] $version.changed
-$releaseDirectory = Join-Path $releaseRoot $version.versionName
 $stagingDirectory = Join-Path $releaseRoot (".$($version.versionName).$([Guid]::NewGuid().ToString('N')).staging")
 $backupDirectory = "$releaseDirectory.backup"
 $nativeValidationDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("yiyunying-apk-verify-" + [Guid]::NewGuid().ToString('N'))
 $metadataBackup = $null
+$releaseDirectoryCreated = $false
 
 try {
     if (Test-Path -LiteralPath $releaseDirectory) {
@@ -386,10 +506,10 @@ try {
     }
     else {
         @(
-            '新增账号隔离的自动缓存策略、分类清理与服务端平台上限',
-            '优化图片原图、GIF 动图、动态照片、视频、语音、音频、文档与普通文件的类型化预览',
-            '完善视频封面、缓冲、进度、倍速、全屏和按网络自动播放策略',
-            '补齐数据库迁移、十一领域验收矩阵与发布前静态检查'
+            '重构管理端主页、源码示例、交流与我的四栏，并完善多应用切换和权限管制',
+            '新增用户端短视频与快捷业务模块，完善群聊、论坛、资源、商城和审核闭环',
+            '优化拍摄变焦与录像聚焦、拍后预览确认、主题字体按钮颜色和系统栏适配',
+            '补齐登录身份、迁移门禁、四端发布证据和最小功能闭环测试'
         )
     }
     Assert-ReleaseNotes -Notes $notes
@@ -398,33 +518,38 @@ try {
         [ordered]@{
             id = 'source'
             fileName = "yiyunying-source-v$($version.versionName).zip"
-            label = '完整源码快照'
-            description = '当前发布提交的完整源码，不含构建缓存、密钥与本地凭据。'
+            label = 'APK 构建源码快照'
+            description = '精确对应四端 APK 的 Build 源码提交，不含构建缓存、密钥与本地凭据。'
         },
         [ordered]@{
             id = 'history'
             fileName = "yiyunying-git-history-v$($version.versionName).bundle"
-            label = '完整 Git 历史'
-            description = '可离线克隆和恢复全部分支、标签与提交历史的 Git Bundle。'
+            label = '主线 Git 历史'
+            description = '可离线恢复 main 全部可达历史与本次最终注释标签；不包含未发布本地分支和 reflog。'
         },
         [ordered]@{
             id = 'delivery'
             fileName = "yiyunying-project-delivery-v$($version.versionName).zip"
             label = '项目交接总包'
-            description = '源码、Git 历史、版本说明、架构与新任务交接文档的完整交付包。'
+            description = '包含 Build 源码、最终主线 Git 历史、版本说明、架构与证据提交交接文档。'
         },
         [ordered]@{
             id = 'manifest'
             fileName = 'project-assets-manifest.json'
             label = '项目文件校验清单'
-            description = '列出项目下载文件的体积、SHA-256、版本和对应 Git 提交。'
+            description = '列出项目下载文件体积、SHA-256、Build 源码提交、证据提交和最终注释标签。'
         }
     )
 
     $manifest = [ordered]@{
-        schemaVersion = 3
+        schemaVersion = 4
         versionName = $version.versionName
         versionCode = $version.versionCode
+        buildSourceCommit = $buildSourceCommit
+        releaseEvidenceCommit = $null
+        releaseTag = "v$($version.versionName)-debug"
+        finalizationStatus = 'pending'
+        releaseIdentitySha256 = $releaseIdentitySha256
         releaseDate = (Get-Date -Format 'yyyy-MM-dd')
         generatedAt = [DateTimeOffset]::Now.ToString('o')
         downloadRootBase = $DownloadRootBase
@@ -433,7 +558,9 @@ try {
         projectAssets = $projectAssets
     }
 
-    Write-Utf8JsonAtomic -Path (Join-Path $stagingDirectory 'release-manifest.json') -Value $manifest
+    $pendingManifestPath = Join-Path $stagingDirectory 'release-manifest.json'
+    Write-Utf8JsonAtomic -Path $pendingManifestPath -Value $manifest
+    $pendingManifestSha256 = (Get-FileHash -LiteralPath $pendingManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     [System.IO.File]::WriteAllLines(
         (Join-Path $stagingDirectory 'SHA256SUMS.txt'),
         $sumLines,
@@ -447,22 +574,31 @@ try {
         Move-Item -LiteralPath $releaseDirectory -Destination $backupDirectory
     }
     Move-Item -LiteralPath $stagingDirectory -Destination $releaseDirectory
+    $releaseDirectoryCreated = $true
 
     if (-not $SkipDownloadMetadata) {
         if (Test-Path -LiteralPath $metadataFile) {
             $metadataBackup = Get-Content -LiteralPath $metadataFile -Raw -Encoding UTF8
         }
-        Write-Utf8JsonAtomic -Path $metadataFile -Value $manifest
+        $downloadMetadata = [ordered]@{}
+        foreach ($entry in $manifest.GetEnumerator()) {
+            $downloadMetadata[$entry.Key] = $entry.Value
+        }
+        $downloadMetadata['pendingManifestSha256'] = $pendingManifestSha256
+        Write-Utf8JsonAtomic -Path $metadataFile -Value $downloadMetadata
     }
 
     if (Test-Path -LiteralPath $backupDirectory) {
         Remove-Item -LiteralPath $backupDirectory -Recurse -Force
     }
 
-    Write-Host "发布产物已生成：$releaseDirectory"
+    Write-Host "Build 阶段产物已生成：$releaseDirectory"
     Write-Host "版本：$($version.versionName) ($($version.versionCode))"
+    Write-Host "Build 源码提交：$buildSourceCommit"
+    Write-Host "Pending 发布清单 SHA-256：$pendingManifestSha256"
     Write-Host "下载根地址：$DownloadRootBase"
     Write-Host '四端 APK 的包名、包内版本、签名、体积与 SHA-256 已全部通过校验。'
+    Write-Host "请提交下载元数据与部署证据，再创建注释标签 v$($version.versionName)-debug 并运行 -Phase Finalize。"
     Write-Host '提示：当前产物为 Debug 验证包，正式公开发布前必须改用受保护的生产签名。'
 }
 catch {
@@ -473,6 +609,9 @@ catch {
             Remove-Item -LiteralPath $releaseDirectory -Recurse -Force
         }
         Move-Item -LiteralPath $backupDirectory -Destination $releaseDirectory
+    }
+    elseif ($releaseDirectoryCreated -and (Test-Path -LiteralPath $releaseDirectory)) {
+        Remove-Item -LiteralPath $releaseDirectory -Recurse -Force
     }
     if ($null -ne $metadataBackup) {
         [System.IO.File]::WriteAllText(

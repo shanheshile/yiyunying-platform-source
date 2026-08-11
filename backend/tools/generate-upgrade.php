@@ -81,48 +81,8 @@ DROP PROCEDURE IF EXISTS `yy_add_column`;
 SQL;
 
 $sql .= <<<'SQL'
--- 补齐默认 2 级授权平台测试账号：authorized / 123456。
-SET @root_platform_id = (SELECT `id` FROM `platform_accounts` WHERE `platform_key` = 'yiyunying-root' LIMIT 1);
-
-INSERT INTO `platform_accounts`
-  (`parent_id`, `created_by_platform_id`, `level`, `platform_key`, `account`, `password_hash`,
-   `nickname`, `avatar`, `email`, `phone`, `status`, `membership_level`, `membership_started_at`,
-   `membership_expired_at`, `admin_quota`, `integral`, `permissions_json`, `register_ip`, `created_at`, `updated_at`)
-SELECT @root_platform_id, @root_platform_id, 2, 'yiyunying-authorized', 'authorized',
-       'pbkdf2_sha256$120000$yiyunying-install-20260712$0F9tF7l3mI4vx8XBpcv6xSso9hiPS4rOdVShF+eMvUc=',
-       '默认授权平台', '', NULL, NULL, 1, 'vip', NOW(), DATE_ADD(NOW(), INTERVAL 3650 DAY),
-       10, 100, NULL, '127.0.0.1', NOW(), NOW()
-FROM DUAL
-WHERE @root_platform_id IS NOT NULL
-ON DUPLICATE KEY UPDATE
-  `parent_id` = @root_platform_id, `created_by_platform_id` = @root_platform_id,
-  `level` = 2, `status` = 1, `membership_level` = 'vip',
-  `membership_expired_at` = GREATEST(COALESCE(`membership_expired_at`, NOW()), DATE_ADD(NOW(), INTERVAL 3650 DAY)),
-  `admin_quota` = GREATEST(`admin_quota`, 10), `deleted_at` = NULL, `updated_at` = NOW();
-
-SET @authorized_platform_id = (SELECT `id` FROM `platform_accounts` WHERE `platform_key` = 'yiyunying-authorized' LIMIT 1);
-
-INSERT INTO `platform_settings`
-  (`platform_id`, `setting_key`, `setting_value`, `value_type`, `created_at`, `updated_at`)
-SELECT @authorized_platform_id, `setting_key`, `setting_value`, `value_type`, NOW(), NOW()
-FROM `platform_settings`
-WHERE `platform_id` = @root_platform_id AND @authorized_platform_id IS NOT NULL
-ON DUPLICATE KEY UPDATE
-  `setting_value` = VALUES(`setting_value`), `value_type` = VALUES(`value_type`), `updated_at` = NOW();
-
-INSERT INTO `platform_exchange_products`
-  (`platform_id`, `product_code`, `name`, `description`, `product_type`, `grant_json`,
-   `price_integral`, `stock`, `sold_count`, `per_admin_limit`, `per_admin_daily_limit`,
-   `status`, `sort_order`, `start_at`, `end_at`, `created_at`, `updated_at`, `deleted_at`)
-SELECT @authorized_platform_id, `product_code`, `name`, `description`, `product_type`, `grant_json`,
-       `price_integral`, `stock`, 0, `per_admin_limit`, `per_admin_daily_limit`,
-       `status`, `sort_order`, `start_at`, `end_at`, NOW(), NOW(), NULL
-FROM `platform_exchange_products`
-WHERE `platform_id` = @root_platform_id AND @authorized_platform_id IS NOT NULL
-ON DUPLICATE KEY UPDATE
-  `name` = VALUES(`name`), `description` = VALUES(`description`), `product_type` = VALUES(`product_type`),
-  `grant_json` = VALUES(`grant_json`), `price_integral` = VALUES(`price_integral`),
-  `status` = VALUES(`status`), `sort_order` = VALUES(`sort_order`), `deleted_at` = NULL, `updated_at` = NOW();
+-- 安全边界：增量升级只更新已有租户结构和设置，不创建、启用或重置任何平台、管理员、应用或用户身份。
+-- 新的 2 级授权平台必须由已认证的 1 级平台通过业务接口创建，并在创建时设置独立强密码。
 
 -- 新平台规则。1 级与 2 级均可设置，但只有 1 级能够使用 issued 官方发放模式。
 INSERT INTO `platform_settings` (`platform_id`,`setting_key`,`setting_value`,`value_type`,`created_at`,`updated_at`)

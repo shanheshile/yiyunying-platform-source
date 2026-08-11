@@ -316,7 +316,8 @@ public final class GlassBottomSheet {
         button.setGravity(android.view.Gravity.CENTER);
         button.setAllCaps(false);
         int fill = primary ? ThemeColors.primary(context) : context.getColor(R.color.glass_surface);
-        int text = primary ? ThemeColors.onPrimary(context) : context.getColor(R.color.on_surface);
+        int text = primary ? ThemeColors.onPrimary(context) : ThemeColors.resolve(context,
+            com.google.android.material.R.attr.colorOnSurface, R.color.on_surface);
         int stroke = primary ? Color.TRANSPARENT : context.getColor(R.color.outline_variant);
         button.setTextColor(text);
 

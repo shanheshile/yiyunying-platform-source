@@ -12,6 +12,7 @@ use Yiyunying\Core\Validator;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
 use Yiyunying\Services\LogService;
+use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\RedPacketManagementService;
 
 final class CommerceController
@@ -162,6 +163,105 @@ final class CommerceController
         return Response::success(['goods_id' => (int) $goods['id']], '商品已下架');
     }
 
+    public static function shopGoodsComments(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        [$admin, $appId] = self::context($request, $params);
+        $adminId = (int) $admin['id'];
+        $page = $request->page();
+        $limit = $request->limit();
+        $offset = ($page - 1) * $limit;
+        $where = ['comment.admin_id = ?', 'comment.app_id = ?'];
+        $query = [$adminId, $appId];
+
+        $statuses = self::shopGoodsCommentStatusFilter($request);
+        if ($statuses !== null) {
+            $where[] = 'comment.status IN (' . implode(',', array_fill(0, count($statuses), '?')) . ')';
+            array_push($query, ...$statuses);
+        }
+        foreach (['goods_id', 'user_id', 'score'] as $field) {
+            if ($request->input($field) !== null && $request->input($field) !== '') {
+                $where[] = "comment.{$field} = ?";
+                $query[] = (int) $request->input($field);
+            }
+        }
+        $keyword = trim((string) $request->input('keyword', ''));
+        if ($keyword !== '') {
+            $where[] = '(comment.content LIKE ? OR goods.name LIKE ? OR author.account LIKE ? OR author.uid LIKE ? OR profile.nickname LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($query, $like, $like, $like, $like, $like);
+        }
+        $whereSql = implode(' AND ', $where);
+        $total = (int) (Database::one(
+            "SELECT COUNT(*) AS total
+             FROM shop_goods_comments comment
+             INNER JOIN shop_goods goods
+                     ON goods.id = comment.goods_id
+                    AND goods.admin_id = comment.admin_id AND goods.app_id = comment.app_id
+             INNER JOIN users author
+                     ON author.id = comment.user_id
+                    AND author.admin_id = comment.admin_id AND author.app_id = comment.app_id
+             LEFT JOIN user_profiles profile
+                    ON profile.user_id = author.id
+                   AND profile.admin_id = comment.admin_id AND profile.app_id = comment.app_id
+             WHERE {$whereSql}",
+            $query
+        )['total'] ?? 0);
+        $items = Database::all(
+            self::shopGoodsCommentSelect() . " WHERE {$whereSql}
+             ORDER BY comment.created_at DESC, comment.id DESC
+             LIMIT {$limit} OFFSET {$offset}",
+            $query
+        );
+        $items = MessageMediaService::hydrate($items, 'shop_goods_comment', $appId);
+        $items = array_map(
+            static fn(array $item): array => self::decorateShopGoodsComment($item),
+            $items
+        );
+        $data = Pagination::data($items, $total, $page, $limit);
+        $data['status_summary'] = self::shopGoodsCommentStatusSummary($adminId, $appId);
+        return Response::success($data);
+    }
+
+    public static function showShopGoodsComment(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        [$admin, $appId] = self::context($request, $params);
+        $adminId = (int) $admin['id'];
+        $commentId = (int) $params['comment_id'];
+        $comment = self::shopGoodsCommentRow($adminId, $appId, $commentId);
+        if ($comment === null) throw new HttpException('商品评论不存在', 404, 404);
+        $replies = Database::all(
+            self::shopGoodsCommentSelect() .
+            ' WHERE comment.parent_id = ? AND comment.admin_id = ? AND comment.app_id = ?
+              ORDER BY comment.created_at ASC, comment.id ASC LIMIT 100',
+            [$commentId, $adminId, $appId]
+        );
+        $comment = MessageMediaService::hydrate([$comment], 'shop_goods_comment', $appId)[0];
+        $replies = MessageMediaService::hydrate($replies, 'shop_goods_comment', $appId);
+        return Response::success([
+            'comment' => self::decorateShopGoodsComment($comment),
+            'replies' => array_map(
+                static fn(array $item): array => self::decorateShopGoodsComment($item),
+                $replies
+            ),
+            'replies_truncated' => (int) ($comment['reply_count'] ?? 0) > count($replies),
+        ]);
+    }
+
+    public static function hideShopGoodsComment(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        return self::transitionShopGoodsComment($request, $params, 2, 'hide', '商品评论及其回复已隐藏');
+    }
+
+    public static function restoreShopGoodsComment(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        return self::transitionShopGoodsComment($request, $params, 1, 'restore', '商品评论已恢复，其回复仍保持原状态');
+    }
+
+    public static function deleteShopGoodsComment(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        return self::transitionShopGoodsComment($request, $params, -1, 'delete', '商品评论及其回复已删除');
+    }
+
     public static function lotteryPrizes(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         [$admin, $appId] = self::context($request, $params);
@@ -302,6 +402,271 @@ final class CommerceController
             'refund_amount' => $result['refund_amount'],
             'status' => 'refunded',
         ], '红包已强制结束，剩余金额已退回发送者');
+    }
+
+    private static function shopGoodsCommentSelect(): string
+    {
+        return 'SELECT comment.*, goods.name AS goods_name, goods.goods_type, goods.status AS goods_status,
+                       author.uid, author.account,
+                       COALESCE(NULLIF(profile.nickname, \'\'), author.account) AS nickname,
+                       profile.avatar AS avatar_url,
+                       parent.content AS parent_content, parent.status AS parent_status,
+                       parent_author.account AS parent_account,
+                       COALESCE(NULLIF(parent_profile.nickname, \'\'), parent_author.account) AS parent_nickname,
+                       (SELECT COUNT(*) FROM shop_goods_comments child
+                        WHERE child.parent_id = comment.id
+                          AND child.goods_id = comment.goods_id
+                          AND child.admin_id = comment.admin_id AND child.app_id = comment.app_id) AS reply_count,
+                       (SELECT COUNT(*) FROM shop_goods_comments active_child
+                        WHERE active_child.parent_id = comment.id
+                          AND active_child.goods_id = comment.goods_id
+                          AND active_child.admin_id = comment.admin_id AND active_child.app_id = comment.app_id
+                          AND active_child.status IN (1, 2)) AS active_reply_count,
+                       (SELECT COUNT(*) FROM shop_comment_reactions likes
+                        WHERE likes.comment_id = comment.id AND likes.reaction_type = \'like\') AS likes_count
+                FROM shop_goods_comments comment
+                INNER JOIN shop_goods goods
+                        ON goods.id = comment.goods_id
+                       AND goods.admin_id = comment.admin_id AND goods.app_id = comment.app_id
+                INNER JOIN users author
+                        ON author.id = comment.user_id
+                       AND author.admin_id = comment.admin_id AND author.app_id = comment.app_id
+                LEFT JOIN user_profiles profile
+                       ON profile.user_id = author.id
+                      AND profile.admin_id = comment.admin_id AND profile.app_id = comment.app_id
+                LEFT JOIN shop_goods_comments parent
+                       ON parent.id = comment.parent_id AND parent.goods_id = comment.goods_id
+                      AND parent.admin_id = comment.admin_id AND parent.app_id = comment.app_id
+                LEFT JOIN users parent_author
+                       ON parent_author.id = parent.user_id
+                      AND parent_author.admin_id = comment.admin_id AND parent_author.app_id = comment.app_id
+                LEFT JOIN user_profiles parent_profile
+                       ON parent_profile.user_id = parent_author.id
+                      AND parent_profile.admin_id = comment.admin_id AND parent_profile.app_id = comment.app_id';
+    }
+
+    private static function shopGoodsCommentRow(int $adminId, int $appId, int $commentId): ?array
+    {
+        return Database::one(
+            self::shopGoodsCommentSelect()
+            . ' WHERE comment.id = ? AND comment.admin_id = ? AND comment.app_id = ?',
+            [$commentId, $adminId, $appId]
+        );
+    }
+
+    private static function shopGoodsCommentStatusFilter(Request $request): ?array
+    {
+        $raw = $request->input('status');
+        if ($raw === null || trim((string) $raw) === '') return null;
+        $key = strtolower(trim((string) $raw));
+        $statuses = [
+            '1' => [1], 'visible' => [1],
+            '2' => [2], 'hidden' => [2],
+            '0' => [0], 'legacy_deleted' => [0],
+            '-1' => [-1], 'soft_deleted' => [-1],
+            'deleted' => [0, -1],
+        ];
+        if (!array_key_exists($key, $statuses)) {
+            throw new HttpException(
+                '评论状态仅支持 visible、hidden、deleted、legacy_deleted、soft_deleted 或 1、2、0、-1',
+                0,
+                422
+            );
+        }
+        return $statuses[$key];
+    }
+
+    private static function shopGoodsCommentStatusSummary(int $adminId, int $appId): array
+    {
+        $summary = ['visible' => 0, 'hidden' => 0, 'deleted' => 0, 'legacy_deleted' => 0];
+        foreach (Database::all(
+            'SELECT status, COUNT(*) AS total FROM shop_goods_comments
+             WHERE admin_id = ? AND app_id = ? GROUP BY status',
+            [$adminId, $appId]
+        ) as $row) {
+            $status = (int) $row['status'];
+            $total = (int) $row['total'];
+            if ($status === 1) $summary['visible'] += $total;
+            elseif ($status === 2) $summary['hidden'] += $total;
+            elseif ($status === 0) {
+                $summary['deleted'] += $total;
+                $summary['legacy_deleted'] += $total;
+            } elseif ($status === -1) $summary['deleted'] += $total;
+        }
+        $summary['total'] = $summary['visible'] + $summary['hidden'] + $summary['deleted'];
+        return $summary;
+    }
+
+    private static function decorateShopGoodsComment(array $comment): array
+    {
+        $status = (int) ($comment['status'] ?? 0);
+        $state = [
+            1 => ['visible', '正常显示'],
+            2 => ['hidden', '已隐藏'],
+            0 => ['legacy_deleted', '历史已删除'],
+            -1 => ['deleted', '已删除'],
+        ][$status] ?? ['unknown', '未知状态'];
+        $score = max(0, min(5, (int) ($comment['score'] ?? 0)));
+        $comment['visibility_status'] = $state[0];
+        $comment['status_label'] = $state[1];
+        $comment['score'] = $score;
+        $comment['score_label'] = $score > 0 ? $score . ' 星' : '未评分';
+        $comment['can_hide'] = $status === 1;
+        $comment['can_restore'] = $status === 2;
+        $comment['can_delete'] = in_array($status, [1, 2], true);
+        $comment['content_excerpt'] = mb_substr((string) ($comment['content'] ?? ''), 0, 180);
+        return $comment;
+    }
+
+    private static function transitionShopGoodsComment(
+        Request $request,
+        array $params,
+        int $targetStatus,
+        string $action,
+        string $successMessage
+    ): \Yiyunying\Core\ApiResponse {
+        [$admin, $appId] = self::context($request, $params);
+        $adminId = (int) $admin['id'];
+        $commentId = (int) $params['comment_id'];
+        $reason = trim(mb_substr((string) $request->input('reason', ''), 0, 500));
+        $result = Database::transaction(static function () use (
+            $request, $adminId, $appId, $commentId, $targetStatus, $action, $reason
+        ): array {
+            $before = Database::one(
+                'SELECT comment.* FROM shop_goods_comments comment
+                 INNER JOIN shop_goods goods
+                         ON goods.id = comment.goods_id
+                        AND goods.admin_id = comment.admin_id AND goods.app_id = comment.app_id
+                 WHERE comment.id = ? AND comment.admin_id = ? AND comment.app_id = ? FOR UPDATE',
+                [$commentId, $adminId, $appId]
+            );
+            if ($before === null) throw new HttpException('商品评论不存在', 404, 404);
+            $currentStatus = (int) $before['status'];
+            $terminal = in_array($currentStatus, [0, -1], true);
+            if ($terminal && $targetStatus !== -1) {
+                throw new HttpException('用户已删除或已软删除的商品评论不能隐藏或恢复', 0, 409);
+            }
+            if ($targetStatus === 1 && $currentStatus === 1) {
+                return ['changed' => false, 'affected_count' => 0];
+            }
+            if ($targetStatus === 1 && $currentStatus !== 2) {
+                throw new HttpException('只有管理员隐藏的商品评论可以恢复', 0, 409);
+            }
+            if ($targetStatus === 2 && !in_array($currentStatus, [1, 2], true)) {
+                throw new HttpException('当前商品评论不能隐藏', 0, 409);
+            }
+
+            $goodsId = (int) $before['goods_id'];
+            $rows = Database::all(
+                'SELECT id, parent_id, status FROM shop_goods_comments
+                 WHERE goods_id = ? AND admin_id = ? AND app_id = ? FOR UPDATE',
+                [$goodsId, $adminId, $appId]
+            );
+            if ($targetStatus === 1) {
+                self::assertRestorableShopGoodsCommentParentChain($rows, $before);
+            }
+            $subtreeIds = $targetStatus === 1
+                ? [$commentId]
+                : self::shopGoodsCommentSubtreeIds($rows, $commentId);
+            $subtreeLookup = array_fill_keys($subtreeIds, true);
+            $changedIds = [];
+            foreach ($rows as $row) {
+                $id = (int) $row['id'];
+                if (!isset($subtreeLookup[$id])) continue;
+                $status = (int) $row['status'];
+                $eligible = $targetStatus === 1 ? $status === 2
+                    : ($targetStatus === 2 ? $status === 1 : in_array($status, [1, 2], true));
+                if ($eligible) $changedIds[] = $id;
+            }
+            foreach (array_chunk($changedIds, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                Database::execute(
+                    "UPDATE shop_goods_comments SET status = ?, updated_at = NOW()
+                     WHERE id IN ({$placeholders}) AND goods_id = ? AND admin_id = ? AND app_id = ?",
+                    array_merge([$targetStatus], $chunk, [$goodsId, $adminId, $appId])
+                );
+            }
+            if ($changedIds === []) {
+                return ['changed' => false, 'affected_count' => 0];
+            }
+            $after = Database::one(
+                'SELECT * FROM shop_goods_comments
+                 WHERE id = ? AND goods_id = ? AND admin_id = ? AND app_id = ?',
+                [$commentId, $goodsId, $adminId, $appId]
+            ) ?? $before;
+            $auditIds = array_slice($changedIds, 0, 100);
+            $beforeLog = $before;
+            $beforeLog['affected_comment_ids'] = $auditIds;
+            $beforeLog['affected_count'] = count($changedIds);
+            $afterLog = $after;
+            $afterLog['affected_comment_ids'] = $auditIds;
+            $afterLog['affected_count'] = count($changedIds);
+            $afterLog['affected_ids_truncated'] = count($changedIds) > count($auditIds);
+            $afterLog['reason'] = $reason;
+            LogService::adminOperation(
+                $request, $adminId, $appId, 'shop_goods_comment_moderation',
+                $action, $commentId, $beforeLog, $afterLog
+            );
+            return ['changed' => true, 'affected_count' => count($changedIds)];
+        });
+
+        $comment = self::shopGoodsCommentRow($adminId, $appId, $commentId);
+        if ($comment !== null) {
+            $comment = MessageMediaService::hydrate([$comment], 'shop_goods_comment', $appId)[0];
+            $comment = self::decorateShopGoodsComment($comment);
+        }
+        return Response::success([
+            'comment' => $comment,
+            'changed' => (bool) $result['changed'],
+            'affected_count' => (int) $result['affected_count'],
+        ], $result['changed'] ? $successMessage : '商品评论状态未变化，无需重复处理');
+    }
+
+    private static function shopGoodsCommentSubtreeIds(array $rows, int $rootId): array
+    {
+        $children = [];
+        foreach ($rows as $row) {
+            $parentId = (int) ($row['parent_id'] ?? 0);
+            $children[$parentId][] = (int) $row['id'];
+        }
+        $result = [];
+        $visited = [];
+        $queue = [$rootId];
+        $cursor = 0;
+        while ($cursor < count($queue)) {
+            $id = $queue[$cursor++];
+            if (isset($visited[$id])) continue;
+            $visited[$id] = true;
+            $result[] = $id;
+            foreach ($children[$id] ?? [] as $childId) $queue[] = $childId;
+        }
+        return $result;
+    }
+
+    private static function assertRestorableShopGoodsCommentParentChain(array $rows, array $comment): void
+    {
+        $byId = [];
+        foreach ($rows as $row) $byId[(int) $row['id']] = $row;
+        $parentId = (int) ($comment['parent_id'] ?? 0);
+        $visited = [];
+        while ($parentId > 0) {
+            if (isset($visited[$parentId])) {
+                throw new HttpException('商品评论回复关系异常，暂时不能恢复', 0, 409);
+            }
+            $visited[$parentId] = true;
+            $parent = $byId[$parentId] ?? null;
+            if ($parent === null) {
+                throw new HttpException('上级商品评论不存在，暂时不能恢复该回复', 0, 409);
+            }
+            $status = (int) $parent['status'];
+            if (in_array($status, [0, -1], true)) {
+                throw new HttpException('上级商品评论已删除，不能恢复该回复', 0, 409);
+            }
+            if ($status !== 1) {
+                throw new HttpException('请先恢复上级商品评论，再恢复该回复', 0, 409);
+            }
+            $parentId = (int) ($parent['parent_id'] ?? 0);
+        }
     }
 
     private static function paged(

@@ -99,13 +99,38 @@ public final class RecordAdapter extends RecyclerView.Adapter<RecordAdapter.Hold
         String title = DisplayText.first(item, spec.primaryKeys());
         if (title.isEmpty()) title = spec.title() + " #" + identity(item);
         RuntimeLanguage.setDynamicText(holder.binding.title, title);
+        String auditStatus = Jsons.string(item, "audit_status");
+        if (auditStatus.isEmpty()) {
+            holder.binding.auditStatusBadge.setVisibility(View.GONE);
+        } else {
+            String auditLabel = Jsons.string(item, "audit_status_label");
+            if (auditLabel.isEmpty()) {
+                auditLabel = DisplayText.fieldValue("audit_status", item.get("audit_status"));
+            }
+            RuntimeLanguage.setDynamicText(holder.binding.auditStatusBadge, auditLabel);
+            holder.binding.auditStatusBadge.setVisibility(View.VISIBLE);
+        }
         String subtitle = secondary(holder, item, 0, 2);
         String metadata = secondary(holder, item, 2, spec.secondaryKeys().size());
         RuntimeLanguage.setDynamicText(holder.binding.subtitle, subtitle);
         holder.binding.subtitle.setVisibility(subtitle.isEmpty() ? View.GONE : View.VISIBLE);
         RuntimeLanguage.setDynamicText(holder.binding.metadata, metadata);
         holder.binding.metadata.setVisibility(metadata.isEmpty() ? View.GONE : View.VISIBLE);
-        RuntimeLanguage.setDynamicText(holder.binding.avatar, firstCharacter(title));
+        boolean groupRecord = "chat_rooms".equals(spec.id());
+        String recordImage = groupRecord ? Jsons.string(item, "icon") : "";
+        if (!groupRecord) {
+            holder.binding.avatarImage.setVisibility(View.GONE);
+            holder.binding.avatar.setVisibility(View.VISIBLE);
+            RuntimeLanguage.setDynamicText(holder.binding.avatar, firstCharacter(title));
+        } else {
+            holder.binding.avatar.setVisibility(View.GONE);
+            holder.binding.avatarImage.setVisibility(View.VISIBLE);
+            ImageLoader.get().load(
+                ImageLoader.get().absoluteUrl(holder.itemView.getContext(), recordImage),
+                holder.binding.avatarImage,
+                R.drawable.bg_group_avatar_placeholder
+            );
+        }
         holder.binding.moreButton.setVisibility(!selectionMode && !spec.itemActions().isEmpty() ? View.VISIBLE : View.GONE);
         holder.binding.moreButton.setContentDescription("打开“" + title + "”的操作菜单");
         holder.binding.selectionCheck.setVisibility(selectionMode ? View.VISIBLE : View.GONE);

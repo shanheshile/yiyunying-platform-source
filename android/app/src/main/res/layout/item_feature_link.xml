@@ -21,7 +21,7 @@
         android:minWidth="22dp"
         android:paddingHorizontal="6dp"
         android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-        android:textColor="?attr/colorOnPrimary"
+        android:textColor="?attr/colorOnError"
         android:visibility="gone" />
 
     <ImageView

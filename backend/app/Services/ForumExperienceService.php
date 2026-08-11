@@ -375,17 +375,35 @@ final class ForumExperienceService
                 if (strtolower((string) ($existingPurchase['asset_type'] ?? 'balance')) !== $assetType) {
                     throw new HttpException('购买凭证资产类型不一致，请联系管理员', 0, 409);
                 }
-                return ['already_owned' => true, 'price_balance' => (float) $section['price_balance'], 'asset_type' => $assetType];
+                return [
+                    'already_owned' => true,
+                    'price_balance' => WalletService::canonicalAmount('balance', $section['price_balance']),
+                    'asset_type' => $assetType,
+                ];
             }
             $seller = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], (int) $section['seller_user_id']);
             if ($seller === null) throw new HttpException('内容作者不存在', 404, 404);
-            $price = (float) $section['price_balance'];
+            try {
+                $price = WalletService::canonicalAmount('balance', $section['price_balance']);
+                $priceUnits = WalletService::amountUnits('balance', $price);
+            } catch (HttpException) {
+                throw new HttpException('该内容节价格格式异常，暂不可购买', 0, 409);
+            }
             $maximumPrice = self::maximumUnlockPrice((int) $user['app_id']);
-            if (!is_finite($price) || $price < 0.01 || $price > $maximumPrice) {
+            $maximumPriceUnits = WalletService::amountUnits('balance', (string) $maximumPrice);
+            if ($priceUnits < 1 || $priceUnits > $maximumPriceUnits) {
                 throw new HttpException('该内容节价格不符合当前管理员限制，暂不可购买', 0, 409);
             }
             WalletService::requireActivityEnabled((int) $user['app_id']);
-            WalletService::adjust($user, $assetType, -$price, 'forum_section_buy', 'forum_section', $sectionId, '购买论坛付费内容节');
+            WalletService::adjust(
+                $user,
+                $assetType,
+                WalletService::negativeAmount($assetType, $price),
+                'forum_section_buy',
+                'forum_section',
+                $sectionId,
+                '购买论坛付费内容节'
+            );
             WalletService::adjust($seller, $assetType, $price, 'forum_section_sale', 'forum_section', $sectionId, '论坛付费内容节收入');
             Database::execute(
                 'INSERT INTO forum_section_purchases
@@ -591,10 +609,17 @@ final class ForumExperienceService
             AppService::requireFeature($appId, 'forum_attachment_unlock');
         }
         $rawPrice = $data['price_balance'] ?? $existing['price_balance'] ?? 0;
-        if ($needsPayment && !is_numeric($rawPrice)) throw new HttpException('付费解锁价格格式错误', 0, 422);
-        $price = $needsPayment ? round((float) $rawPrice, 2) : 0.0;
+        try {
+            $price = $needsPayment
+                ? WalletService::canonicalAmount('balance', $rawPrice)
+                : '0.00';
+            $priceUnits = WalletService::amountUnits('balance', $price, !$needsPayment);
+        } catch (HttpException) {
+            throw new HttpException('付费解锁价格最多保留两位小数，且必须是有效金额', 0, 422);
+        }
         $maximumPrice = self::maximumUnlockPrice($appId);
-        if ($needsPayment && (!is_finite($price) || $price < 0.01 || $price > $maximumPrice)) {
+        $maximumPriceUnits = WalletService::amountUnits('balance', (string) $maximumPrice);
+        if ($needsPayment && ($priceUnits < 1 || $priceUnits > $maximumPriceUnits)) {
             throw new HttpException(
                 '付费解锁价格必须在 0.01 到 ' . self::decimalLabel($maximumPrice) . ' 余额之间',
                 0,
@@ -718,12 +743,13 @@ final class ForumExperienceService
         return min(self::ABSOLUTE_UNLOCK_MAX_PRICE_BALANCE, max(0.01, round($maximum, 2)));
     }
 
-    private static function decimalLabel(float $value): string
+    private static function decimalLabel(mixed $value): string
     {
-        return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
+        $canonical = (string) WalletService::canonicalAmount('balance', $value, true);
+        return rtrim(rtrim($canonical, '0'), '.');
     }
 
-    private static function unlockLabel(string $type, ?string $unlockAt, float $price): string
+    private static function unlockLabel(string $type, ?string $unlockAt, mixed $price): string
     {
         return match ($type) {
             'paid' => '支付 ' . self::decimalLabel($price) . ' 余额解锁',

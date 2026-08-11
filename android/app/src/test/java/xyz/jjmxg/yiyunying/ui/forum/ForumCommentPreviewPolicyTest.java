@@ -17,8 +17,8 @@ public final class ForumCommentPreviewPolicyTest {
     }
 
     @Test public void toggleAlwaysUsesTheRealReplyCount() {
-        assertEquals("查看全部 7 条回复", ForumCommentPreviewPolicy.toggleLabel(false, 7));
-        assertEquals("收起回复", ForumCommentPreviewPolicy.toggleLabel(true, 7));
+        assertEquals("更多 5 条回复", ForumCommentPreviewPolicy.toggleLabel(false, 7));
+        assertEquals("返回全部评论", ForumCommentPreviewPolicy.toggleLabel(true, 7));
         assertEquals("", ForumCommentPreviewPolicy.toggleLabel(false, 0));
     }
 }

@@ -18,7 +18,7 @@ $check = static function (bool $condition, string $message) use (&$failures, &$c
 $sets = [
     '2级授权平台' => [RolePermissionService::platformDefinitions(), 13],
     '3级管理员' => [RolePermissionService::adminDefinitions(), 13],
-    '4级用户' => [RolePermissionService::userDefinitions(), 29],
+    '4级用户' => [RolePermissionService::userDefinitions(), 35],
 ];
 foreach ($sets as $role => [$definitions, $expected]) {
     $check(count($definitions) === $expected, $role . '权限数量错误');
@@ -93,6 +93,7 @@ foreach ([
     "get('/api/platform/permissions'",
     "get('/api/admin/permissions'",
     "get('/api/user/permissions'",
+    "get('/api/user/features'",
     "get('/api/platform/operators/{operator_id}/permissions'",
     "put('/api/platform/operators/{operator_id}/permissions'",
     "get('/api/platform/admins/{admin_id}/permissions'",

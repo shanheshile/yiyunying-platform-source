@@ -68,6 +68,8 @@ public final class ResourceHallActivity extends SystemInsetActivity {
     private boolean suppressModeChange;
     private boolean suppressSearchChange;
     private boolean rebuildingCategories;
+    private boolean mineOnly;
+    private boolean purchasedOnly;
     private int listGeneration;
     private int categoryGeneration;
     private String renderedCategorySnapshot = "";
@@ -123,6 +125,16 @@ public final class ResourceHallActivity extends SystemInsetActivity {
                 suppressSearchChange = false;
             }
             reload();
+        });
+        binding.scopeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            boolean nextMineOnly = checkedId == R.id.mineScopeButton;
+            boolean nextPurchasedOnly = checkedId == R.id.purchasedScopeButton;
+            if (mineOnly == nextMineOnly && purchasedOnly == nextPurchasedOnly) return;
+            mineOnly = nextMineOnly;
+            purchasedOnly = nextPurchasedOnly;
+            adapter.submit(new ArrayList<>());
+            loadItems();
         });
         binding.searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
@@ -206,6 +218,7 @@ public final class ResourceHallActivity extends SystemInsetActivity {
         final int requestedMode = mode;
         final int generation = ++categoryGeneration;
         LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        if (requestedMode == MODE_SOURCE) query.put("resource_type", "source_market");
         AppAccess.from(this).repository().getCached(path, query, cached -> {
             if (!isCurrentCategoryRequest(requestedMode, generation) || !cached.isSuccessful()) return;
             renderCategories(cached.objectItems(), requestedMode);
@@ -284,17 +297,23 @@ public final class ResourceHallActivity extends SystemInsetActivity {
         final int requestedMode = mode;
         final long requestedCategoryId = selectedCategoryId;
         final String requestedKeyword = text(binding.searchInput.getText());
+        final boolean requestedMineOnly = mineOnly;
+        final boolean requestedPurchasedOnly = purchasedOnly;
         final int generation = ++listGeneration;
         binding.progress.setVisibility(View.VISIBLE);
         Map<String, String> query = new LinkedHashMap<>();
         query.put("limit", "100");
+        if (requestedMode == MODE_SOURCE) query.put("resource_type", "source_market");
+        if (requestedMineOnly) query.put("mine", "1");
+        if (requestedPurchasedOnly) query.put("purchased", "1");
         if (!requestedKeyword.isEmpty()) query.put("keyword", requestedKeyword);
         if (requestedCategoryId > 0) {
             query.put("category_id", String.valueOf(requestedCategoryId));
         }
         String path = requestedMode == MODE_APPS ? "/api/user/store-apps" : "/api/user/resources";
         AppAccess.from(this).repository().getCached(path, query, cached -> {
-            if (!isCurrentListRequest(requestedMode, requestedCategoryId, requestedKeyword, generation)
+            if (!isCurrentListRequest(requestedMode, requestedCategoryId, requestedKeyword,
+                requestedMineOnly, requestedPurchasedOnly, generation)
                 || !cached.isSuccessful()) return;
             List<JsonObject> cachedItems = cached.objectItems();
             renderItems(cachedItems);
@@ -302,7 +321,8 @@ public final class ResourceHallActivity extends SystemInsetActivity {
         });
         listRequest = AppAccess.from(this).repository().get(path, query, result -> {
             listRequest = null;
-            if (!isCurrentListRequest(requestedMode, requestedCategoryId, requestedKeyword, generation)) return;
+            if (!isCurrentListRequest(requestedMode, requestedCategoryId, requestedKeyword,
+                requestedMineOnly, requestedPurchasedOnly, generation)) return;
             binding.progress.setVisibility(View.INVISIBLE);
             binding.swipeRefresh.setRefreshing(false);
             if (!result.isSuccessful()) {
@@ -320,18 +340,26 @@ public final class ResourceHallActivity extends SystemInsetActivity {
         int requestedMode,
         long requestedCategoryId,
         String requestedKeyword,
+        boolean requestedMineOnly,
+        boolean requestedPurchasedOnly,
         int generation
     ) {
         return binding != null && !isFinishing() && !isDestroyed()
             && mode == requestedMode
             && selectedCategoryId == requestedCategoryId
             && requestedKeyword.equals(text(binding.searchInput.getText()))
+            && mineOnly == requestedMineOnly
+            && purchasedOnly == requestedPurchasedOnly
             && listGeneration == generation;
     }
 
     private void renderItems(List<JsonObject> items) {
         adapter.submit(items);
-        binding.emptyText.setText(mode == MODE_APPS ? "暂无可用应用" : "暂无可用源码资源");
+        binding.emptyText.setText(mineOnly
+            ? (mode == MODE_APPS ? "你还没有投稿应用" : "你还没有投稿源码")
+            : purchasedOnly
+                ? (mode == MODE_APPS ? "你还没有购买应用" : "你还没有购买源码资源")
+                : (mode == MODE_APPS ? "暂无可用应用" : "暂无可用源码资源"));
         binding.emptyText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
@@ -370,6 +398,7 @@ public final class ResourceHallActivity extends SystemInsetActivity {
 
     private void showDetail(JsonObject item, int itemMode) {
         String title = itemMode == MODE_APPS ? Jsons.string(item, "name") : Jsons.string(item, "title");
+        boolean interactive = booleanValue(item, "interaction_enabled");
         ScrollView scroll = new ScrollView(this);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -390,31 +419,48 @@ public final class ResourceHallActivity extends SystemInsetActivity {
             addField(content, "版本", versionText(item));
             addField(content, "包名", valueOr(Jsons.string(item, "package_name"), "未提供"));
             addField(content, "安装包大小", sizeText(Jsons.longValue(item, "size_bytes")));
-            int price = Jsons.intValue(item, "price_integral", 0);
+            int price = Jsons.intValue(item, "price_balance", 0);
             addField(content, "获取方式", price > 0 ? price + " 余额" : "免费");
         } else {
             int price = Jsons.intValue(item, "price_balance", 0);
             addField(content, "价格", price > 0 ? price + " 余额" : "免费");
             addField(content, "发布者", valueOr(Jsons.string(item, "nickname"), "平台用户"));
         }
+        String auditStatus = Jsons.string(item, "audit_status");
+        if (!"approved".equals(auditStatus) || booleanValue(item, "is_owner")) {
+            addField(content, "审核状态", valueOr(Jsons.string(item, "audit_status_label"), auditStatus));
+            String auditReason = Jsons.string(item, "audit_reason");
+            if (!auditReason.isEmpty()) addSection(content, "审核说明", auditReason);
+        }
         addField(content, "下载次数", String.valueOf(Jsons.intValue(item, "download_count", 0)));
         addSection(content, "详细介绍", valueOr(Jsons.string(item, "description"), "发布者暂未填写详细介绍。"));
 
-        MaterialButton favoriteButton = new MaterialButton(this, null,
-            com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        favoriteButton.setIconResource(R.drawable.ic_favorite);
-        updateFavoriteButton(favoriteButton, booleanValue(item, "favorited"));
-        LinearLayout.LayoutParams favoriteParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        favoriteParams.topMargin = dp(14);
-        content.addView(favoriteButton, favoriteParams);
-        favoriteButton.setOnClickListener(view -> toggleFavorite(item, itemMode, favoriteButton));
+        if (interactive) {
+            MaterialButton favoriteButton = new MaterialButton(this, null,
+                com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            favoriteButton.setIconResource(R.drawable.ic_favorite);
+            updateFavoriteButton(favoriteButton, booleanValue(item, "favorited"));
+            LinearLayout.LayoutParams favoriteParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            favoriteParams.topMargin = dp(14);
+            content.addView(favoriteButton, favoriteParams);
+            favoriteButton.setOnClickListener(view -> toggleFavorite(item, itemMode, favoriteButton));
+        } else {
+            addSection(content, "当前不可互动",
+                Jsons.string(item, itemMode == MODE_APPS ? "apk_url" : "download_url").isEmpty()
+                    ? "当前条目已停止公开，不能收藏、购买或评论。"
+                    : "当前条目已停止公开，不能收藏、购买或评论；你已获得的下载权限仍然保留。");
+        }
 
-        String download = ImageLoader.get().absoluteUrl(this, Jsons.string(item, "download_url"));
+        String downloadField = itemMode == MODE_APPS ? "apk_url" : "download_url";
+        String download = ImageLoader.get().absoluteUrl(this, Jsons.string(item, downloadField));
         int price = itemMode == MODE_APPS
-            ? Jsons.intValue(item, "price_integral", 0)
+            ? Jsons.intValue(item, "price_balance", 0)
             : Jsons.intValue(item, "price_balance", 0);
-        String action = !download.isEmpty() ? "查看文件" : (itemMode == MODE_SOURCE ? (price > 0 ? "余额购买" : "免费获取") : "确定");
+        boolean canDownload = !download.isEmpty();
+        String action = canDownload ? (itemMode == MODE_APPS ? "下载安装包" : "查看文件")
+            : (!interactive ? "知道了"
+            : (price > 0 ? "余额购买" : "暂不可获取"));
         AlertDialog dialog = new YiyunyingDialogBuilder(this)
             .setBusinessTitle(valueOr(title, itemMode == MODE_APPS ? "应用详情" : "源码详情"))
             .setView(scroll)
@@ -422,14 +468,22 @@ public final class ResourceHallActivity extends SystemInsetActivity {
             .setPositiveButton(action, null)
             .create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-            if (!download.isEmpty()) {
+            if (canDownload) {
                 dialog.dismiss();
                 openDownload(item, itemMode, download);
-            } else if (itemMode == MODE_SOURCE) {
+            } else if (!interactive) {
+                dialog.dismiss();
+            } else if (price > 0 && itemMode == MODE_SOURCE) {
                 dialog.dismiss();
                 confirmPurchase(item);
+            } else if (price > 0 && itemMode == MODE_APPS) {
+                dialog.dismiss();
+                confirmStorePurchase(item);
             } else {
                 dialog.dismiss();
+                Snackbar.make(binding.getRoot(),
+                    "文件尚未完成安全迁移，请联系发布者重新上传",
+                    Snackbar.LENGTH_LONG).show();
             }
         }));
         dialog.show();
@@ -470,18 +524,23 @@ public final class ResourceHallActivity extends SystemInsetActivity {
     private void confirmPurchase(JsonObject item) {
         long id = Jsons.longValue(item, "id");
         int price = Jsons.intValue(item, "price_balance", 0);
+        long sourceUploadId = Jsons.longValue(item, "source_upload_id");
         String title = valueOr(Jsons.string(item, "title"), "该资源");
         YiyunyingDialogBuilder builder = new YiyunyingDialogBuilder(this);
         builder.setTitle("确认获取资源");
         builder.setBusinessMessage(price > 0 ? "将使用 " + price + " 余额购买“" + title + "”。购买成功后可查看文件。" : "确认免费获取“" + title + "”？")
             .setNegativeButton("取消", null)
-            .setPositiveButton(price > 0 ? "确认购买" : "免费获取", (dialog, which) -> buyResource(id, title))
+            .setPositiveButton(price > 0 ? "确认购买" : "免费获取",
+                (dialog, which) -> buyResource(id, title, price, sourceUploadId))
             .show();
     }
 
-    private void buyResource(long id, String title) {
+    private void buyResource(long id, String title, int expectedPrice, long expectedSourceUploadId) {
         if (actionRequest != null) return;
-        actionRequest = AppAccess.from(this).repository().post("/api/user/resources/" + id + "/buy", new JsonObject(), result -> {
+        JsonObject body = new JsonObject();
+        body.addProperty("expected_price_balance", expectedPrice);
+        body.addProperty("expected_source_upload_id", expectedSourceUploadId);
+        actionRequest = AppAccess.from(this).repository().post("/api/user/resources/" + id + "/buy", body, result -> {
             actionRequest = null;
             if (binding == null) return;
             if (!result.isSuccessful()) {
@@ -495,10 +554,68 @@ public final class ResourceHallActivity extends SystemInsetActivity {
         });
     }
 
+    private void confirmStorePurchase(JsonObject item) {
+        long id = Jsons.longValue(item, "id");
+        int price = Jsons.intValue(item, "price_balance", 0);
+        long sourceUploadId = Jsons.longValue(item, "source_upload_id");
+        int versionCode = Jsons.intValue(item, "version_code", 0);
+        String title = valueOr(Jsons.string(item, "name"), "应用安装包");
+        new YiyunyingDialogBuilder(this)
+            .setBusinessTitle("确认购买应用")
+            .setBusinessMessage("将支付 " + price + " 余额购买《" + title
+                + "》。购买成功后可重复下载当前版本。")
+            .setPositiveButton("确认购买",
+                (dialog, which) -> buyStoreApp(id, title, price, sourceUploadId, versionCode))
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void buyStoreApp(
+        long id,
+        String title,
+        int expectedPrice,
+        long expectedSourceUploadId,
+        int expectedVersionCode
+    ) {
+        if (actionRequest != null) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("expected_price_balance", expectedPrice);
+        body.addProperty("expected_source_upload_id", expectedSourceUploadId);
+        body.addProperty("expected_version_code", expectedVersionCode);
+        actionRequest = AppAccess.from(this).repository().post(
+            "/api/user/store-apps/" + id + "/buy", body, result -> {
+                actionRequest = null;
+                if (binding == null) return;
+                if (!result.isSuccessful()) {
+                    Snackbar.make(binding.getRoot(), result.message().isEmpty()
+                        ? "应用购买失败，请稍后重试" : result.message(),
+                        Snackbar.LENGTH_LONG).show();
+                    return;
+                }
+                String url = ImageLoader.get().absoluteUrl(this,
+                    Jsons.string(result.dataObject(), "apk_url"));
+                if (url.isEmpty()) {
+                    Snackbar.make(binding.getRoot(),
+                        "购买成功，但安装包暂不可下载", Snackbar.LENGTH_LONG).show();
+                    return;
+                }
+                FilePreviewActivity.open(this, apkFileName(title), url,
+                    "application/vnd.android.package-archive");
+                loadItems();
+            });
+    }
+
     private void openDownload(JsonObject item, int itemMode, String url) {
         String title = itemMode == MODE_APPS ? Jsons.string(item, "name") : Jsons.string(item, "title");
-        if (itemMode == MODE_APPS && !title.toLowerCase(Locale.ROOT).endsWith(".apk")) title += ".apk";
-        FilePreviewActivity.open(this, valueOr(title, "下载文件"), url, mimeFor(title, url));
+        String fileName = itemMode == MODE_APPS ? apkFileName(title) : valueOr(title, "下载文件");
+        String mime = itemMode == MODE_APPS
+            ? "application/vnd.android.package-archive" : mimeFor(title, url);
+        FilePreviewActivity.open(this, fileName, url, mime);
+    }
+
+    private static String apkFileName(String title) {
+        String value = valueOr(title, "应用安装包");
+        return value.toLowerCase(Locale.ROOT).endsWith(".apk") ? value : value + ".apk";
     }
 
     private void addField(LinearLayout parent, String label, String value) {
@@ -627,14 +744,23 @@ public final class ResourceHallActivity extends SystemInsetActivity {
             String category = Jsons.string(item, "category_name");
             holder.binding.categoryBadge.setText(valueOr(category, "未分类"));
             holder.binding.categoryBadge.setVisibility(View.VISIBLE);
-            int price = app ? Jsons.intValue(item, "price_integral", 0) : Jsons.intValue(item, "price_balance", 0);
-            holder.binding.stateBadge.setText(price > 0 ? price + " 余额" : "免费");
+            int price = Jsons.intValue(item, "price_balance", 0);
+            String auditStatus = Jsons.string(item, "audit_status");
+            String auditLabel = Jsons.string(item, "audit_status_label");
+            boolean currentlyPublic = "approved".equals(auditStatus) && Jsons.intValue(item, "status", 0) == 1;
+            holder.binding.stateBadge.setText(purchasedOnly && !currentlyPublic
+                ? "历史已购 · 当前已下架"
+                : mineOnly || !"approved".equals(auditStatus)
+                    ? valueOr(auditLabel, auditStatus)
+                    : (price > 0 ? price + " 余额" : "免费"));
             holder.binding.stateBadge.setVisibility(View.VISIBLE);
             holder.binding.subtitle.setText(valueOr(Jsons.string(item, "description"), "暂无简介，点击查看详情"));
             RuntimeLanguage.protectDynamicText(holder.binding.subtitle);
             String metadata = app
                 ? "版本 " + versionText(item) + "  ·  下载 " + Jsons.intValue(item, "download_count", 0)
                 : "浏览 " + Jsons.intValue(item, "view_count", 0) + "  ·  下载 " + Jsons.intValue(item, "download_count", 0);
+            String auditReason = Jsons.string(item, "audit_reason");
+            if ((mineOnly || purchasedOnly) && !auditReason.isEmpty()) metadata += "  ·  " + auditReason;
             holder.binding.metadata.setText(metadata);
             holder.binding.tags.setVisibility(View.GONE);
             String image = app ? Jsons.string(item, "icon_url") : Jsons.string(item, "cover_url");

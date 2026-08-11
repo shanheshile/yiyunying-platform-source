@@ -24,5 +24,8 @@ public final class ForumUnlockPolicyTest {
     @Test public void labelExplainsTheActualUnlockContract() {
         assertEquals("付费 2.5 余额", ForumUnlockPolicy.label(ForumUnlockPolicy.PAID, 2.5, ""));
         assertTrue(ForumUnlockPolicy.label(ForumUnlockPolicy.PAID_OR_SCHEDULED, 3, "8月12日 10:00").contains("到期解锁"));
+        assertTrue(ForumUnlockPolicy.explanation(ForumUnlockPolicy.PAID_OR_SCHEDULED).contains("付费提前查看"));
+        assertTrue(ForumUnlockPolicy.explanation(ForumUnlockPolicy.SCHEDULED).contains("自动"));
+        assertTrue(ForumUnlockPolicy.explanation(ForumUnlockPolicy.FREE).contains("无需支付"));
     }
 }

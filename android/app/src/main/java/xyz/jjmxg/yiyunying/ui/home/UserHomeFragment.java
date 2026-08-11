@@ -192,7 +192,7 @@ public final class UserHomeFragment extends BaseFragment {
             TextView date = new TextView(requireContext());
             RuntimeLanguage.setDynamicText(date, Jsons.string(notice, "created_at"));
             date.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelSmall);
-            date.setTextColor(requireContext().getColor(R.color.outline));
+            date.setTextColor(requireContext().getColor(R.color.on_surface_variant));
             date.setPadding(0, dp(5), 0, 0);
             row.addView(title);
             row.addView(content);

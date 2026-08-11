@@ -2467,8 +2467,6 @@ final class CommunicationController
 
     private static function user(Request $request, string $feature): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], $feature);
-        return $user;
+        return AuthService::user($request, $feature);
     }
 }

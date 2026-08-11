@@ -26,6 +26,7 @@ public final class DisplayText {
         labels.put("membership_status", "会员状态");
         labels.put("membership_level", "会员等级");
         labels.put("app_key", "应用标识");
+        labels.put("app_type", "应用类型");
         labels.put("platform_key", "平台标识");
         labels.put("integral", "余额");
         labels.put("activity_credit", "活动币");
@@ -47,6 +48,7 @@ public final class DisplayText {
         labels.put("owner_type", "归属");
         labels.put("current_role", "我的角色");
         labels.put("role", "角色");
+        labels.put("room_kind", "会话类型");
         labels.put("join_mode", "加入方式");
         labels.put("join_mode_text", "加入方式");
         labels.put("join_label", "当前状态");
@@ -155,8 +157,17 @@ public final class DisplayText {
         labels.put("view_count", "浏览数");
         labels.put("sender_type", "发送者类型");
         labels.put("content_type", "内容类型");
+        labels.put("content_kind", "内容类型");
         labels.put("direction", "消息方向");
         labels.put("audit_status", "审核状态");
+        labels.put("audit_status_label", "审核状态");
+        labels.put("audit_reason", "审核说明");
+        labels.put("audited_by", "审核人编号");
+        labels.put("audited_at", "审核时间");
+        labels.put("reviewer_account", "审核人账号");
+        labels.put("reviewer_name", "审核人");
+        labels.put("risk_level", "风险等级");
+        labels.put("risk_reason", "风险说明");
         labels.put("notification_type", "通知类型");
         labels.put("popup_frequency", "显示频率");
         labels.put("order_type", "订单来源");
@@ -305,11 +316,9 @@ public final class DisplayText {
         labels.put("download_count", "下载次数");
         labels.put("purchase_count", "购买次数");
         labels.put("review_status", "审核状态");
-        labels.put("audit_reason", "审核说明");
         labels.put("audit_remark", "审核意见");
         labels.put("review_comment", "审核意见");
         labels.put("reviewed_at", "审核时间");
-        labels.put("reviewer_name", "审核人");
         labels.put("audience_type", "展示范围");
         labels.put("display_enabled", "允许展示");
         labels.put("is_popup", "弹窗提醒");
@@ -384,6 +393,15 @@ public final class DisplayText {
             case "unpaid": return "待支付";
             case "approved": case "passed": return "审核通过";
             case "rejected": return "审核未通过";
+            case "on_hold": return "暂定";
+            case "short_video": return "短视频";
+            case "short_videos": return "短视频功能";
+            case "short_video_publish": return "短视频发布";
+            case "short_video_comments": return "短视频评论";
+            case "short_video_likes": return "短视频点赞";
+            case "short_video_favorites": return "短视频收藏";
+            case "short_video_forwards": return "短视频转发";
+            case "moment": return "动态";
             case "failed": return "处理失败";
             case "banned": case "blocked": return "已封禁";
             case "cancelled": case "canceled": return "已取消";
@@ -501,7 +519,14 @@ public final class DisplayText {
             if ("archive".equals(normalizedRaw)) return "压缩包";
             if ("source".equals(normalizedRaw) || "source_code".equals(normalizedRaw)) return "源码";
             if ("application".equals(normalizedRaw) || "app".equals(normalizedRaw)) return "应用软件";
+            if ("source_market".equals(normalizedRaw)) return "源码商城";
+            if ("app_store".equals(normalizedRaw)) return "应用商店";
             if ("other".equals(normalizedRaw)) return "其他文件";
+        }
+        if ("risk_level".equals(normalizedKey)) {
+            if ("low".equals(normalizedRaw)) return "低风险";
+            if ("review".equals(normalizedRaw)) return "需要人工复核";
+            if ("high".equals(normalizedRaw)) return "高风险";
         }
         if ("profile_visibility".equals(normalizedKey)) {
             if ("full".equals(normalizedRaw)) return "展示完整资料";
@@ -529,6 +554,10 @@ public final class DisplayText {
             if ("open".equals(normalizedRaw)) return "开放加入";
             if ("approval".equals(normalizedRaw)) return "审核加入";
             if ("invite".equals(normalizedRaw)) return "仅限邀请";
+        }
+        if ("room_kind".equals(normalizedKey)) {
+            if ("group".equals(normalizedRaw)) return "群聊";
+            if ("chat_room".equals(normalizedRaw)) return "聊天室";
         }
         if ("activity_type".equals(normalizedKey)) {
             if ("red_packet".equals(normalizedRaw)) return "红包";
@@ -639,6 +668,7 @@ public final class DisplayText {
             if ("pending".equals(raw) || "reviewing".equals(raw)) return "待审核";
             if ("approved".equals(raw) || "passed".equals(raw)) return "审核通过";
             if ("rejected".equals(raw)) return "审核未通过";
+            if ("on_hold".equals(raw)) return "暂定";
         }
         if ("membership_status".equals(key)) {
             if ("active".equals(raw)) return "有效";
@@ -715,6 +745,12 @@ public final class DisplayText {
     }
 
     private static String enumValue(String key, String raw) {
+        if ("app_type".equals(key)) {
+            if ("general".equals(raw)) return "综合应用";
+            if ("community".equals(raw)) return "社区应用";
+            if ("business".equals(raw)) return "商业应用";
+            if ("tool".equals(raw)) return "工具应用";
+        }
         if ("packet_type".equals(key) || "claim_mode".equals(key) || "distribution_mode".equals(key)) {
             if ("fixed".equals(raw) || "equal".equals(raw)) return "按份数平均分配";
             if ("random".equals(raw) || "lucky".equals(raw)) return "随机金额";

@@ -63,7 +63,7 @@ final class AuthService
         return $admin;
     }
 
-    public static function user(Request $request): array
+    public static function user(Request $request, ?string $featureCode = null): array
     {
         $plainToken = $request->bearerToken();
         if ($plainToken === null || $plainToken === '') {
@@ -112,7 +112,20 @@ final class AuthService
         $request->setAttribute('admin_id', (int) $user['admin_id']);
         $request->setAttribute('app_id', (int) $user['app_id']);
         $request->setAttribute('platform_id', (int) $admin['platform_id']);
+        $featureCode = trim((string) ($featureCode ?? ''));
+        if ($featureCode === '') {
+            $featureCode = RolePermissionService::userFeatureForPath($request->path());
+        }
+        if ($featureCode !== null && $featureCode !== '') {
+            self::requireUserFeature($user, $featureCode);
+            $request->setAttribute('user_feature_code', $featureCode);
+        }
         return $user;
+    }
+
+    public static function requireUserFeature(array $user, string $featureCode): void
+    {
+        RolePermissionService::requireUserFeature($user, $featureCode);
     }
 
     public static function revokeCurrentAdminToken(Request $request): void

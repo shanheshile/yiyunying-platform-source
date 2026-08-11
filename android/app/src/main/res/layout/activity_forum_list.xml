@@ -125,10 +125,23 @@
                 android:paddingBottom="3dp">
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sortButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:contentDescription="选择帖子排序方式"
+                    android:text="综合排序"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_sort"
+                    app:iconPadding="4dp"
+                    app:iconSize="17dp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/startDateButton"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="wrap_content"
                     android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
                     android:text="开始日期"
                     android:textSize="12sp" />
 
@@ -213,10 +226,10 @@
             android:layout_margin="20dp"
             android:contentDescription="发布帖子"
             android:text="发帖"
-            android:textColor="?attr/colorOnPrimary"
+            android:textColor="@color/on_forum_publish_container"
             android:visibility="gone"
-            app:backgroundTint="?attr/colorPrimary"
+            app:backgroundTint="@color/forum_publish_container"
             app:icon="@drawable/ic_add"
-            app:iconTint="?attr/colorOnPrimary" />
+            app:iconTint="@color/on_forum_publish_container" />
     </FrameLayout>
 </LinearLayout>

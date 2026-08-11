@@ -88,4 +88,40 @@ public final class CameraFocusControllerTest {
                 CaptureRequest.CONTROL_AF_MODE_OFF
             }));
     }
+
+    @Test public void digitalZoomIsCapabilityBoundedAndProducesCenteredCrop() {
+        Rect active = new Rect(100, 200, 4100, 3200);
+        assertEquals(1f, CameraFocusController.maxZoom(null), 0f);
+        assertEquals(1f, CameraFocusController.maxZoom(Float.NaN), 0f);
+        assertEquals(4f, CameraFocusController.clampZoom(9f, 4f), 0f);
+        assertEquals(1f, CameraFocusController.clampZoom(0.2f, 4f), 0f);
+        assertEquals(2.5f, CameraFocusController.zoomFromProgress(500, 1000, 4f), 0.001f);
+        assertEquals(500, CameraFocusController.progressFromZoom(2.5f, 1000, 4f));
+        assertEquals(new Rect(1100, 950, 3100, 2450),
+            CameraFocusController.zoomCropRegion(active, 2f, 4f));
+        assertEquals(active, CameraFocusController.zoomCropRegion(active, 1f, 4f));
+    }
+
+    @Test public void pinchZoomCannotEscapeDeviceRange() {
+        assertEquals(4f, CameraFocusController.zoomAfterScale(3f, 2f, 4f), 0f);
+        assertEquals(1f, CameraFocusController.zoomAfterScale(1.2f, 0.1f, 4f), 0f);
+        assertEquals(2f, CameraFocusController.zoomAfterScale(2f, Float.NaN, 4f), 0f);
+    }
+
+    @Test public void recordingStillAcceptsFocusWhileBusyButTransitionAndReviewDoNot() {
+        assertTrue(CameraFocusController.canAcceptFocus(true, true, true,
+            true, true, false, false));
+        CameraFocusController.GestureState recordingGesture =
+            new CameraFocusController.GestureState();
+        recordingGesture.begin(3, 120f, 240f);
+        assertTrue(recordingGesture.move(3, 180f, 280f));
+        assertTrue(recordingGesture.lock());
+        assertTrue(recordingGesture.isLocked());
+        assertFalse(CameraFocusController.canAcceptFocus(true, true, true,
+            true, false, false, false));
+        assertFalse(CameraFocusController.canAcceptFocus(true, true, true,
+            true, true, true, false));
+        assertFalse(CameraFocusController.canAcceptFocus(true, true, true,
+            false, true, false, true));
+    }
 }

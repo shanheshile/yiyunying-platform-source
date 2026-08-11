@@ -87,14 +87,37 @@ final class AdminController
         $defaults = AdminProvisionService::defaultGrant((int) $target['id']);
         $custom = array_merge($defaults, array_filter([
             'membership_level' => $request->input('membership_level'),
-            'vip_days' => $request->input('vip_days'),
+            'vip_days' => $request->input('vip_days', $request->input('membership_days')),
             'app_quota' => $request->input('app_quota'),
             'remote_document_quota' => $request->input('remote_document_quota'),
             'integral' => $request->input('balance'),
         ], static fn ($value): bool => $value !== null && $value !== ''));
-        $admin = AdminProvisionService::managedProvision($target, $request->all(), $request, $custom);
-        PlatformService::log($request, $actor, 'admin', 'create', 'admin', (int) $admin['id'], null, self::publicAdmin($admin));
-        return Response::success(['admin' => self::publicAdmin($admin)], 'admin 创建成功', 201);
+        $admin = AdminProvisionService::managedProvision(
+            $target,
+            $request->all(),
+            $request,
+            $custom,
+            '平台创建',
+            static function (array $created) use ($request, $actor): void {
+                PlatformService::log(
+                    $request,
+                    $actor,
+                    'admin',
+                    'create',
+                    'admin',
+                    (int) $created['id'],
+                    null,
+                    self::publicAdmin($created)
+                );
+            }
+        );
+        return Response::success([
+            'admin' => self::publicAdmin($admin),
+            'registration_gift' => $admin['registration_gift'],
+            'initial_app' => $admin['initial_app'],
+            'app_secret' => $admin['initial_app_secret'],
+            'secret_notice' => '首个应用 app_secret 只在创建成功时返回一次，请立即交付给管理员保存到服务端。',
+        ], 'admin 创建成功', 201);
     }
 
     public static function show(Request $request, array $params): \Yiyunying\Core\ApiResponse

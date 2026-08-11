@@ -14,7 +14,7 @@ use Yiyunying\Services\LogService;
 
 final class BountyController
 {
-    private static function user(Request $request): array { $user = AuthService::user($request); AppService::requireFeature((int) $user['app_id'], 'bounties'); return $user; }
+    private static function user(Request $request): array { return AuthService::user($request, 'bounties'); }
     public static function index(Request $request): \Yiyunying\Core\ApiResponse { $user = self::user($request); return Response::success(BountyService::feed($request, $user)); }
     public static function show(Request $request, array $params): \Yiyunying\Core\ApiResponse { $user = self::user($request); return Response::success(['bounty' => BountyService::show($user, (int) $params['bounty_id'])]); }
     public static function create(Request $request): \Yiyunying\Core\ApiResponse { $user = self::user($request); AuthService::ensureNotBanned($user, ['all', 'bounty']); $id = BountyService::create($user, $request->all()); $bounty = BountyService::bounty((int) $user['admin_id'], (int) $user['app_id'], $id); LogService::userOperation($request, $user, 'bounty', 'create', $id, ['audit_status' => $bounty['audit_status']]); $pending = (string) $bounty['audit_status'] === 'pending'; return Response::success(['bounty_id' => $id, 'audit_status' => $bounty['audit_status']], $pending ? '悬赏已提交审核，余额已冻结' : '悬赏发布成功，余额已冻结', 201); }

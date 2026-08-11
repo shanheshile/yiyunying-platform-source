@@ -21,6 +21,7 @@ import xyz.jjmxg.yiyunying.BuildConfig;
 import xyz.jjmxg.yiyunying.core.AppAccess;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
+import xyz.jjmxg.yiyunying.data.session.EndpointPolicy;
 import xyz.jjmxg.yiyunying.databinding.ActivityRegisterBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.data.session.SessionManager;
@@ -41,6 +42,7 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
     private boolean emailRequired;
     private boolean phoneRequired;
     private boolean emailVerificationRequired;
+    private boolean buildIdentityValid;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     @Override
@@ -60,9 +62,11 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
         if (role == Role.USER) binding.inviteCodeLayout.post(() -> pasteInviteCode(false));
         binding.registerButton.setOnClickListener(view -> submit());
         binding.sendEmailCodeButton.setOnClickListener(view -> sendEmailCode());
-        SessionManager session = AppAccess.from(this).session();
-        session.configureConnection(baseUrl(), appKey(), platformKey());
-        if (role == Role.USER) {
+        buildIdentityValid = configureBuildIdentity();
+        if (!buildIdentityValid) {
+            setRegistrationEntryEnabled(false);
+            binding.getRoot().post(this::showConnectionConfigurationError);
+        } else if (role == Role.USER) {
             binding.emailLayout.setVisibility(View.GONE);
             binding.phoneLayout.setVisibility(View.GONE);
             loadRegistrationPolicy();
@@ -76,6 +80,10 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
     }
 
     private void submit() {
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
         binding.accountLayout.setError(null);
         binding.passwordLayout.setError(null);
         binding.passwordConfirmationLayout.setError(null);
@@ -149,14 +157,38 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
                     startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
                     finishAffinity();
                 } else {
-                    setResult(RESULT_OK);
-                    finish();
+                    showBootstrapAppSecret(result.dataObject());
                 }
             }
         );
     }
 
+    private void showBootstrapAppSecret(JsonObject data) {
+        JsonObject app = Jsons.object(data, "initial_app");
+        String appKey = Jsons.string(app, "app_key");
+        String secret = Jsons.string(data, "app_secret");
+        if (appKey.isEmpty() || secret.isEmpty()) {
+            Snackbar.make(binding.getRoot(), "注册成功，但首个应用密钥未返回，请联系平台管理员重置密钥", Snackbar.LENGTH_LONG).show();
+            setResult(RESULT_OK);
+            finish();
+            return;
+        }
+        new xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder(this)
+            .setTitle("请保存首个应用密钥")
+            .setMessage("应用名称：" + Jsons.string(app, "name")
+                + "\n应用唯一 ID：" + appKey
+                + "\n应用密钥：" + secret
+                + "\n\n该密钥只显示这一次，请保存到服务端安全配置中。")
+            .setCancelable(false)
+            .setPositiveButton("我已保存", (dialog, which) -> {
+                setResult(RESULT_OK);
+                finish();
+            })
+            .show();
+    }
+
     private void loadRegistrationPolicy() {
+        if (!buildIdentityValid) return;
         binding.progress.setVisibility(View.VISIBLE);
         binding.registerButton.setEnabled(false);
         Map<String, String> query = new LinkedHashMap<>();
@@ -197,6 +229,10 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
     }
 
     private void sendEmailCode() {
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
         String email = text(binding.emailInput.getText());
         binding.emailLayout.setError(null);
         if (email.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
@@ -234,7 +270,34 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
 
     private void setLoading(boolean loading) {
         binding.progress.setVisibility(loading ? View.VISIBLE : View.INVISIBLE);
-        binding.registerButton.setEnabled(!loading);
+        binding.registerButton.setEnabled(!loading && buildIdentityValid);
+    }
+
+    private boolean configureBuildIdentity() {
+        try {
+            EndpointPolicy.normalize(baseUrl());
+            if (role == Role.USER && appKey().trim().isEmpty()) {
+                throw new IllegalArgumentException("missing app key");
+            }
+            if (role == Role.ADMIN && (platformKey().trim().isEmpty() || appKey().trim().isEmpty())) {
+                throw new IllegalArgumentException("missing admin identity");
+            }
+            SessionManager session = AppAccess.from(this).session();
+            session.configureConnection(baseUrl(), appKey(), platformKey());
+            return true;
+        } catch (IllegalArgumentException exception) {
+            AppAccess.from(this).session().clearAuthentication();
+            return false;
+        }
+    }
+
+    private void setRegistrationEntryEnabled(boolean enabled) {
+        binding.registerButton.setEnabled(enabled);
+        binding.sendEmailCodeButton.setEnabled(enabled);
+    }
+
+    private void showConnectionConfigurationError() {
+        Snackbar.make(binding.getRoot(), "安装包身份配置无效，已禁止注册，请联系开发者重新打包。", Snackbar.LENGTH_LONG).show();
     }
 
     private void constrainWidth() {
@@ -245,16 +308,13 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private String baseUrl() {
-        String value = getIntent().getStringExtra(EXTRA_BASE_URL);
-        return value == null || value.trim().isEmpty() ? BuildConfig.DEFAULT_API_BASE_URL : value.trim();
+        return BuildConfig.DEFAULT_API_BASE_URL;
     }
     private String appKey() {
-        String value = getIntent().getStringExtra(EXTRA_APP_KEY);
-        return value == null || value.trim().isEmpty() ? BuildConfig.DEFAULT_APP_KEY : value.trim();
+        return BuildConfig.DEFAULT_APP_KEY;
     }
     private String platformKey() {
-        String value = getIntent().getStringExtra(EXTRA_PLATFORM_KEY);
-        return value == null || value.trim().isEmpty() ? BuildConfig.DEFAULT_PLATFORM_KEY : value.trim();
+        return BuildConfig.DEFAULT_PLATFORM_KEY;
     }
     private static boolean booleanValue(JsonObject object, String key, boolean fallback) {
         try { return object.has(key) ? object.get(key).getAsBoolean() : fallback; }

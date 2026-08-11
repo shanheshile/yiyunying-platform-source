@@ -158,9 +158,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         watch(binding.paidPriceInput);
         watch(binding.paidPreviewInput);
         binding.addSectionButton.setOnClickListener(view -> showSectionEditor(-1));
-        binding.submitButton.setText(post ? "发布帖子" : "发表评论");
-        ActionIconResolver.apply(binding.submitButton,
-            post ? "发布帖子" : "发表评论", R.drawable.ic_send, true);
+        styleSubmitButton(post);
         binding.addAttachmentButton.setOnClickListener(view -> showAttachmentMenu());
         binding.submitButton.setOnClickListener(view -> submit());
         MenuItem draft = binding.toolbar.getMenu().add("保存草稿");
@@ -169,6 +167,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         draftAction.setText("存草稿");
         draftAction.setTextColor(getColor(R.color.on_forum_draft_container));
         draftAction.setBackgroundTintList(ColorStateList.valueOf(getColor(R.color.forum_draft_container)));
+        draftAction.setCornerRadius(dp(12));
         draftAction.setMinWidth(0);
         draftAction.setInsetTop(0);
         draftAction.setInsetBottom(0);
@@ -234,7 +233,20 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         binding.paidSection.setVisibility(paid || scheduled ? View.VISIBLE : View.GONE);
         binding.paidPriceLayout.setVisibility(paid ? View.VISIBLE : View.GONE);
         binding.unlockAtLayout.setVisibility(scheduled ? View.VISIBLE : View.GONE);
+        updateUnlockRuleSummary();
         updateComposerState();
+    }
+
+    private void updateUnlockRuleSummary() {
+        if (binding == null) return;
+        boolean paid = binding.paidSwitch.isChecked();
+        boolean scheduled = binding.scheduledSwitch.isChecked();
+        String policy = ForumUnlockPolicy.from(paid, scheduled);
+        binding.unlockRuleSummary.setVisibility(binding.paidHeading.getVisibility());
+        binding.unlockRuleSummary.setText("当前正文："
+            + ForumUnlockPolicy.label(policy, number(text(binding.paidPriceInput)),
+                localUnlockAt(unlockAtIso(binding.unlockAtInput)))
+            + "\n" + ForumUnlockPolicy.explanation(policy));
     }
 
     private void loadCategories() {
@@ -272,6 +284,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         chip.setCheckable(true);
         chip.setChecked(selectedCategoryId == categoryId);
         chip.setEnsureMinTouchTargetSize(false);
+        styleTaxonomyChip(chip);
         chip.setOnClickListener(view -> {
             if (selectedCategoryId == categoryId) return;
             selectedCategoryId = categoryId;
@@ -280,6 +293,23 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             updateComposerState();
         });
         return chip;
+    }
+
+    private void styleTaxonomyChip(Chip chip) {
+        int[][] states = new int[][]{
+            new int[]{android.R.attr.state_checked}, new int[]{}
+        };
+        chip.setChipBackgroundColor(new ColorStateList(states, new int[]{
+            getColor(R.color.forum_category_selected_container),
+            getColor(R.color.surface_container_high),
+        }));
+        chip.setTextColor(new ColorStateList(states, new int[]{
+            getColor(R.color.on_forum_category_selected_container),
+            getColor(R.color.on_surface),
+        }));
+        chip.setChipStrokeColor(ColorStateList.valueOf(getColor(R.color.outline_variant)));
+        chip.setChipStrokeWidth(dp(1));
+        chip.setCheckedIconVisible(true);
     }
 
     private void loadRecommendedTags() {
@@ -307,6 +337,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             chip.setCheckable(true);
             chip.setChecked(selected.contains(name));
             chip.setEnsureMinTouchTargetSize(false);
+            styleTaxonomyChip(chip);
             chip.setOnClickListener(view -> toggleRecommendedTag(name, ((Chip) view).isChecked()));
             binding.recommendedTagChips.addView(chip);
         }
@@ -356,6 +387,9 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), dp(4), dp(20), 0);
+        TextView guidance = unlockEditorGuidance(
+            "章节可独立公开、付费或定时解锁。付费并定时表示可提前购买，也会在到期后自动公开。"
+        );
         EditText title = editor("内容节标题", false);
         EditText content = editor("本节正文", true);
         EditText tags = editor("标签，使用逗号分隔", false);
@@ -387,7 +421,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         unlockAt.setVisibility(scheduled.isChecked() ? View.VISIBLE : View.GONE);
         paid.setOnCheckedChangeListener((button, checked) -> price.setVisibility(checked ? View.VISIBLE : View.GONE));
         scheduled.setOnCheckedChangeListener((button, checked) -> unlockAt.setVisibility(checked ? View.VISIBLE : View.GONE));
-        form.addView(title); form.addView(content); form.addView(tags); form.addView(paid); form.addView(price);
+        form.addView(guidance); form.addView(title); form.addView(content); form.addView(tags); form.addView(paid); form.addView(price);
         form.addView(scheduled); form.addView(unlockAt); form.addView(preview);
         AlertDialog dialog = new YiyunyingDialogBuilder(this).setTitle(existing == null ? "添加章节" : "编辑章节")
             .setView(form)
@@ -399,12 +433,15 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
                 double sectionPrice = number(text(price));
                 String unlockType = ForumUnlockPolicy.from(paid.isChecked(), scheduled.isChecked());
                 String unlockAtIso = unlockAtIso(unlockAt);
+                boolean invalidPrice = ForumUnlockPolicy.needsPayment(unlockType) && !validMoney(text(price));
                 boolean invalidSchedule = ForumUnlockPolicy.needsSchedule(unlockType)
                     && !isFutureUnlockAt(unlockAtIso);
-                if (sectionContent.isEmpty() || !ForumUnlockPolicy.valid(unlockType, sectionPrice, unlockAtIso)
+                if (sectionContent.isEmpty() || invalidPrice
+                    || !ForumUnlockPolicy.valid(unlockType, sectionPrice, unlockAtIso)
                     || invalidSchedule) {
                     Snackbar.make(binding.getRoot(), sectionContent.isEmpty()
                         ? "章节正文不能为空"
+                        : invalidPrice ? "章节解锁价格最低 0.01，且最多保留两位小数"
                         : invalidSchedule ? "自动解锁时间必须晚于当前时间"
                         : "请补全当前章节需要的价格和自动解锁时间", Snackbar.LENGTH_LONG).show();
                     return;
@@ -430,6 +467,20 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         if (multiline) { input.setMinLines(4); input.setGravity(Gravity.TOP | Gravity.START); }
         input.setPadding(dp(4), dp(8), dp(4), dp(8));
         return input;
+    }
+
+    private TextView unlockEditorGuidance(String text) {
+        TextView guidance = new TextView(this);
+        guidance.setText(text);
+        guidance.setTextColor(getColor(R.color.on_forum_unlock_container));
+        guidance.setTextSize(14);
+        guidance.setBackgroundResource(R.drawable.bg_forum_unlock_section);
+        guidance.setPadding(dp(12), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.bottomMargin = dp(8);
+        guidance.setLayoutParams(params);
+        return guidance;
     }
 
     private void renderSectionEditors() {
@@ -672,6 +723,9 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), dp(4), dp(20), 0);
+        TextView guidance = unlockEditorGuidance(
+            "附件解锁只保护当前附件。选择付费并定时后，读者可购买提前查看，也可等待到期自动公开。"
+        );
         MaterialSwitch paid = new MaterialSwitch(this);
         paid.setText("此附件需要余额解锁");
         paid.setVisibility(paidUnlockEnabled ? View.VISIBLE : View.GONE);
@@ -695,7 +749,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         unlockAt.setVisibility(scheduled.isChecked() ? View.VISIBLE : View.GONE);
         paid.setOnCheckedChangeListener((button, checked) -> price.setVisibility(checked ? View.VISIBLE : View.GONE));
         scheduled.setOnCheckedChangeListener((button, checked) -> unlockAt.setVisibility(checked ? View.VISIBLE : View.GONE));
-        form.addView(paid); form.addView(price); form.addView(scheduled); form.addView(unlockAt); form.addView(preview);
+        form.addView(guidance); form.addView(paid); form.addView(price); form.addView(scheduled); form.addView(unlockAt); form.addView(preview);
         AlertDialog dialog = new YiyunyingDialogBuilder(this)
             .setTitle("附件 " + (position + 1) + " 的解锁规则")
             .setView(form)
@@ -706,9 +760,12 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
             String type = ForumUnlockPolicy.from(paid.isChecked(), scheduled.isChecked());
             double amount = number(text(price));
             String time = unlockAtIso(unlockAt);
+            boolean invalidPrice = ForumUnlockPolicy.needsPayment(type) && !validMoney(text(price));
             boolean invalidSchedule = ForumUnlockPolicy.needsSchedule(type) && !isFutureUnlockAt(time);
-            if (!ForumUnlockPolicy.valid(type, amount, time) || invalidSchedule) {
-                Snackbar.make(binding.getRoot(), invalidSchedule
+            if (invalidPrice || !ForumUnlockPolicy.valid(type, amount, time) || invalidSchedule) {
+                Snackbar.make(binding.getRoot(), invalidPrice
+                    ? "附件解锁价格最低 0.01，且最多保留两位小数"
+                    : invalidSchedule
                     ? "自动解锁时间必须晚于当前时间"
                     : "请补全附件需要的价格和自动解锁时间", Snackbar.LENGTH_LONG).show();
                 return;
@@ -1175,7 +1232,9 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     private boolean validMoney(String value) {
         return value != null
             && value.matches("^\\d+(\\.\\d{1,2})?$")
-            && number(value) >= 0.01d;
+            && Double.isFinite(number(value))
+            && number(value) >= 0.01d
+            && number(value) <= 1_000_000_000d;
     }
 
     private String attachmentSummaryText() {
@@ -1204,6 +1263,7 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
     private void updateComposerState() {
         if (binding == null) return;
         boolean post = MODE_POST.equals(mode());
+        if (post) updateUnlockRuleSummary();
         String title = text(binding.titleInput);
         String content = text(binding.contentInput);
         int tagCount = enteredTags().size();
@@ -1241,9 +1301,18 @@ public final class ForumComposerActivity extends xyz.jjmxg.yiyunying.ui.common.S
         } else {
             binding.publishReadiness.setText(post ? "内容已就绪，发布后按板块规则进入展示或审核" : "评论内容已就绪");
         }
-        binding.submitButton.setText(post ? "发布帖子" : "发表评论");
-        ActionIconResolver.apply(binding.submitButton,
-            post ? "发布帖子" : "发表评论", R.drawable.ic_send, true);
+        styleSubmitButton(post);
+    }
+
+    private void styleSubmitButton(boolean post) {
+        String label = post ? "发布帖子" : "发表评论";
+        binding.submitButton.setText(label);
+        ActionIconResolver.apply(binding.submitButton, label, R.drawable.ic_send, true);
+        int foreground = getColor(R.color.on_forum_publish_container);
+        binding.submitButton.setTextColor(foreground);
+        binding.submitButton.setIconTint(ColorStateList.valueOf(foreground));
+        binding.submitButton.setBackgroundTintList(ColorStateList.valueOf(
+            getColor(R.color.forum_publish_container)));
     }
 
     private String preview(String value) { return value.length() <= 42 ? value : value.substring(0, 42) + "…"; }

@@ -149,8 +149,6 @@ final class ForumStructureController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'forum');
-        return $user;
+        return AuthService::user($request, 'forum');
     }
 }

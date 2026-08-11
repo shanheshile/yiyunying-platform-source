@@ -41,6 +41,18 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/auditFilterButton"
+                style="@style/Widget.Material3.Button.IconButton.Outlined"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="审核状态筛选：全部"
+                android:tooltipText="筛选审核状态"
+                android:visibility="gone"
+                app:icon="@drawable/ic_document"
+                app:iconPadding="0dp" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/dateFilterButton"
                 style="@style/Widget.Material3.Button.IconButton.Outlined"
                 android:layout_width="52dp"

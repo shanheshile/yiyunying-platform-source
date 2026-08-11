@@ -153,7 +153,7 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
         profileSubtitle.setText(isPrivate()
             ? R.string.private_chat_subtitle
             : (isChatRoom() ? R.string.chat_room_subtitle : R.string.group_chat_subtitle));
-        avatar.setImageResource(isPrivate() ? R.drawable.ic_person : R.drawable.ic_group);
+        avatar.setImageResource(isPrivate() ? R.drawable.ic_person : R.drawable.bg_group_avatar_placeholder);
         friendSection.setVisibility(isPrivate() && peerId() > 0L ? View.VISIBLE : View.GONE);
         configureActions();
         renderBackgroundState();
@@ -248,7 +248,8 @@ public final class ConversationPermissionActivity extends SystemInsetActivity {
                     effectiveTargetId = Jsons.longValue(item, "target_id");
                     profileTitle.setText(displayName(item));
                     String image = ImageLoader.get().absoluteUrl(this, Jsons.string(item, "avatar"));
-                    ImageLoader.get().load(image, avatar, isPrivate() ? R.drawable.ic_person : R.drawable.ic_group);
+                    ImageLoader.get().load(image, avatar,
+                        isPrivate() ? R.drawable.ic_person : R.drawable.bg_group_avatar_placeholder);
                     loadingControls = true;
                     pinnedSwitch.setChecked(bool(item, "is_pinned"));
                     bottomedSwitch.setChecked(bool(item, "is_bottomed"));

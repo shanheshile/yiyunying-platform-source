@@ -25,6 +25,12 @@
     },
     {
         "method":  "GET",
+        "path":  "/api/public/branding",
+        "scope":  "public",
+        "handler":  "PublicBranding::show"
+    },
+    {
+        "method":  "GET",
         "path":  "/api/public/features",
         "scope":  "public",
         "handler":  "PublicBootstrap::features"
@@ -1093,6 +1099,60 @@
     },
     {
         "method":  "GET",
+        "path":  "/api/admin/security/sessions",
+        "scope":  "admin",
+        "handler":  "AdminAuth::sessions"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/security/sessions/{session_id}",
+        "scope":  "admin",
+        "handler":  "AdminAuth::revokeSession"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/account",
+        "scope":  "admin",
+        "handler":  "AdminAuth::deleteAccount"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/workbench",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::overview"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/workbench/public-profile",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::savePublicProfile"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/sponsors",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::sponsors"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/sponsors",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::createSponsor"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/sponsors/{sponsor_id}",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::updateSponsor"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/sponsors/{sponsor_id}",
+        "scope":  "admin",
+        "handler":  "AdminManagementWorkbench::deleteSponsor"
+    },
+    {
+        "method":  "GET",
         "path":  "/api/admin/identity-unbind-requests",
         "scope":  "admin",
         "handler":  "AdminIdentity::index"
@@ -1216,6 +1276,18 @@
         "path":  "/api/admin/community/posts/{post_id}/reactions",
         "scope":  "admin",
         "handler":  "AdminCommunity::reaction"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/community/posts/{post_id}/pin",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::pin"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/community/posts/{post_id}/reports",
+        "scope":  "admin",
+        "handler":  "AdminCommunity::report"
     },
     {
         "method":  "DELETE",
@@ -1390,6 +1462,12 @@
         "path":  "/api/admin/apps/{app_id}/secret/reset",
         "scope":  "admin",
         "handler":  "AdminApp::resetSecret"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/key/verify",
+        "scope":  "admin",
+        "handler":  "AdminApp::verifyKey"
     },
     {
         "method":  "GET",
@@ -1884,6 +1962,48 @@
         "handler":  "AdminResource::resources"
     },
     {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resource-comments",
+        "scope":  "admin",
+        "handler":  "AdminResource::resourceComments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resource-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::showResourceComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/resource-comments/{comment_id}/hide",
+        "scope":  "admin",
+        "handler":  "AdminResource::hideResourceComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/resource-comments/{comment_id}/restore",
+        "scope":  "admin",
+        "handler":  "AdminResource::restoreResourceComment"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/resource-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::deleteResourceComment"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resources/{resource_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::showResource"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/resources/{resource_id}/download",
+        "scope":  "admin",
+        "handler":  "AdminResource::downloadResource"
+    },
+    {
         "method":  "PUT",
         "path":  "/api/admin/apps/{app_id}/resources/{resource_id}/audit",
         "scope":  "admin",
@@ -1914,6 +2034,18 @@
         "handler":  "AdminResource::createStoreCategory"
     },
     {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/store-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::updateStoreCategory"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/store-categories/{category_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::deleteStoreCategory"
+    },
+    {
         "method":  "GET",
         "path":  "/api/admin/apps/{app_id}/store-apps",
         "scope":  "admin",
@@ -1926,10 +2058,34 @@
         "handler":  "AdminResource::createStoreApp"
     },
     {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::showStoreApp"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}/download",
+        "scope":  "admin",
+        "handler":  "AdminResource::downloadStoreApp"
+    },
+    {
         "method":  "PUT",
         "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
         "scope":  "admin",
         "handler":  "AdminResource::auditStoreApp"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::updateStoreApp"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/store-apps/{store_app_id}",
+        "scope":  "admin",
+        "handler":  "AdminResource::deleteStoreApp"
     },
     {
         "method":  "GET",
@@ -2209,6 +2365,42 @@
     },
     {
         "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/short-videos",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::shortVideos"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/short-videos/{moment_id}",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::showShortVideo"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/short-videos/{moment_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::auditShortVideo"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/short-video-comments",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::shortVideoComments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/short-video-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::showShortVideoComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/short-video-comments/{comment_id}/audit",
+        "scope":  "admin",
+        "handler":  "AdminContentModeration::auditShortVideoComment"
+    },
+    {
+        "method":  "GET",
         "path":  "/api/admin/apps/{app_id}/forum-report-tags",
         "scope":  "admin",
         "handler":  "AdminForum::reportTags"
@@ -2302,6 +2494,12 @@
         "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
         "scope":  "admin",
         "handler":  "AdminGroup::update"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/admin/apps/{app_id}/chat-rooms/{room_id}/avatar",
+        "scope":  "admin",
+        "handler":  "AdminGroup::avatar"
     },
     {
         "method":  "DELETE",
@@ -2458,6 +2656,36 @@
         "path":  "/api/admin/apps/{app_id}/shop-goods/{goods_id}",
         "scope":  "admin",
         "handler":  "AdminCommerce::deleteGoods"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/shop-goods-comments",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::shopGoodsComments"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::showShopGoodsComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/hide",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::hideShopGoodsComment"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/restore",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::restoreShopGoodsComment"
+    },
+    {
+        "method":  "DELETE",
+        "path":  "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}",
+        "scope":  "admin",
+        "handler":  "AdminCommerce::deleteShopGoodsComment"
     },
     {
         "method":  "GET",
@@ -2656,6 +2884,12 @@
         "path":  "/api/user/permissions",
         "scope":  "user",
         "handler":  "UserAuth::permissions"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/features",
+        "scope":  "user",
+        "handler":  "UserAuth::features"
     },
     {
         "method":  "POST",
@@ -3132,6 +3366,12 @@
         "handler":  "UserResource::buy"
     },
     {
+        "method":  "GET",
+        "path":  "/api/user/resources/{resource_id}/download",
+        "scope":  "user",
+        "handler":  "UserResource::downloadResource"
+    },
+    {
         "method":  "POST",
         "path":  "/api/user/resources/{resource_id}/comments",
         "scope":  "user",
@@ -3202,6 +3442,18 @@
         "path":  "/api/user/store-apps/{store_app_id}",
         "scope":  "user",
         "handler":  "UserResource::showStoreApp"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/user/store-apps/{store_app_id}/buy",
+        "scope":  "user",
+        "handler":  "UserResource::buyStoreApp"
+    },
+    {
+        "method":  "GET",
+        "path":  "/api/user/store-apps/{store_app_id}/download",
+        "scope":  "user",
+        "handler":  "UserResource::downloadStoreApp"
     },
     {
         "method":  "POST",

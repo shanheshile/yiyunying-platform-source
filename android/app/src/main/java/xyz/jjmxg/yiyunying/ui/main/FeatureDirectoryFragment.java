@@ -39,6 +39,7 @@ public final class FeatureDirectoryFragment extends BaseFragment {
     private static final long SEARCH_RENDER_DELAY_MS = 140L;
     private static final String ARG_MODE = "mode";
     private static final String ARG_EMBEDDED = "embedded";
+    private static final String ARG_EXCLUDE_DASHBOARD = "exclude_dashboard";
     private FragmentFeatureDirectoryBinding binding;
     private final Handler renderHandler = new Handler(Looper.getMainLooper());
     private String lastRenderedQuery;
@@ -65,10 +66,15 @@ public final class FeatureDirectoryFragment extends BaseFragment {
     public static FeatureDirectoryFragment newInstance() { return new FeatureDirectoryFragment(); }
 
     public static FeatureDirectoryFragment newEmbeddedInstance(String mode) {
+        return newEmbeddedInstance(mode, false);
+    }
+
+    public static FeatureDirectoryFragment newEmbeddedInstance(String mode, boolean excludeDashboard) {
         FeatureDirectoryFragment fragment = new FeatureDirectoryFragment();
         Bundle args = new Bundle();
         args.putString(ARG_MODE, mode);
         args.putBoolean(ARG_EMBEDDED, true);
+        args.putBoolean(ARG_EXCLUDE_DASHBOARD, excludeDashboard);
         fragment.setArguments(args);
         return fragment;
     }
@@ -141,6 +147,7 @@ public final class FeatureDirectoryFragment extends BaseFragment {
         List<ModuleSpec> visible = new ArrayList<>();
         for (ModuleSpec module : app().modules().forRole(app().session().role())) {
             if ("home".equals(module.id())) continue;
+            if ("dashboard".equals(module.id()) && excludeDashboard()) continue;
             if ("dashboard".equals(module.id()) && !"apps".equals(mode())) continue;
             if (app().session().role() == Role.USER && "blacklist".equals(module.id())) continue;
             if (!matchesMode(module)) continue;
@@ -255,6 +262,10 @@ public final class FeatureDirectoryFragment extends BaseFragment {
         return getArguments() == null ? "all" : getArguments().getString(ARG_MODE, "all");
     }
 
+    private boolean excludeDashboard() {
+        return getArguments() != null && getArguments().getBoolean(ARG_EXCLUDE_DASHBOARD, false);
+    }
+
     private boolean matchesMode(ModuleSpec module) {
         String mode = mode();
         if ("all".equals(mode)) return true;
@@ -266,8 +277,7 @@ public final class FeatureDirectoryFragment extends BaseFragment {
                 || "生命周期".equals(group);
         }
         if ("source".equals(mode)) {
-            return containsAny(id, "resource", "source", "store_app", "upload", "file", "document",
-                "api_", "sdk", "template", "code") || "文件".equals(group) || "开发".equals(group);
+            return ManagementNavigationPolicy.sourceDirectoryModule(id, group);
         }
         if ("community".equals(mode)) {
             return "内容".equals(group) || "社区".equals(group) || "互动".equals(group)

@@ -104,7 +104,7 @@
                             android:minWidth="22dp"
                             android:paddingStart="6dp"
                             android:paddingEnd="6dp"
-                            android:textColor="@color/white"
+                            android:textColor="?attr/colorOnError"
                             android:textSize="12sp"
                             android:visibility="gone" />
                     </LinearLayout>
@@ -233,7 +233,7 @@
                             android:minWidth="22dp"
                             android:paddingStart="6dp"
                             android:paddingEnd="6dp"
-                            android:textColor="@color/white"
+                            android:textColor="?attr/colorOnError"
                             android:textSize="12sp"
                             android:visibility="gone" />
                     </LinearLayout>

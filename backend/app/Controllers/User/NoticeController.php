@@ -13,7 +13,7 @@ final class NoticeController
 {
     public static function index(Request $request): \Yiyunying\Core\ApiResponse
     {
-        $user = AuthService::user($request); AppService::requireFeature((int) $user['app_id'], 'notices');
+        $user = AuthService::user($request, 'notices');
         $wallet = Database::one('SELECT level_code, vip_expired_at FROM user_wallets WHERE user_id = ?', [(int) $user['id']]) ?? [];
         $tags = array_merge(
             array_map('strval', array_column(Database::all('SELECT t.id FROM user_tag_relations r INNER JOIN user_tags t ON t.id = r.tag_id WHERE r.user_id = ?', [(int) $user['id']]), 'id')),

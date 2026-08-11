@@ -39,14 +39,7 @@ public final class SessionManager implements SessionProvider {
     public SessionManager(Context context) {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         secureStore = new SecureValueStore(preferences);
-        if (!preferences.contains(KEY_BASE_URL)) {
-            preferences.edit()
-                .putString(KEY_BASE_URL, BuildConfig.DEFAULT_API_BASE_URL)
-                .putString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY)
-                .putString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY)
-                .apply();
-        }
-        migrateEditionDefaults();
+        reconcileEditionIdentity();
     }
 
     public synchronized void configureConnection(String baseUrl, String appKey, String platformKey) {
@@ -149,6 +142,11 @@ public final class SessionManager implements SessionProvider {
             String selected = selectedAppKey();
             if (!selected.isEmpty()) return selected;
         }
+        return preferences.getString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY);
+    }
+
+    /** The compiled login identity, unaffected by an admin's current app selection. */
+    public String configuredAppKey() {
         return preferences.getString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY);
     }
 
@@ -256,11 +254,41 @@ public final class SessionManager implements SessionProvider {
         return value == null ? "" : value.trim();
     }
 
-    private void migrateEditionDefaults() {
-        if (!"authorized_platform".equals(BuildConfig.APP_EDITION)) return;
-        String configured = preferences.getString(KEY_PLATFORM_KEY, "");
-        if (configured == null || configured.isEmpty() || "yiyunying-root".equals(configured)) {
-            preferences.edit().putString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY).apply();
+    private void reconcileEditionIdentity() {
+        final String buildBase;
+        try {
+            buildBase = EndpointPolicy.normalize(BuildConfig.DEFAULT_API_BASE_URL);
+        } catch (IllegalArgumentException exception) {
+            // Do not crash before LoginActivity can show its Chinese configuration error. The
+            // invalid build must also never fall back to a previously persisted endpoint.
+            clearAuthentication();
+            preferences.edit()
+                .putString(KEY_BASE_URL, "")
+                .putString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY)
+                .putString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY)
+                .apply();
+            return;
         }
+        boolean hadConnectionIdentity = preferences.contains(KEY_BASE_URL)
+            || preferences.contains(KEY_APP_KEY)
+            || preferences.contains(KEY_PLATFORM_KEY);
+        boolean endpointChanged = !buildBase.equals(preferences.getString(KEY_BASE_URL, buildBase));
+        boolean tenantChanged;
+        if (AppEdition.role() == Role.USER) {
+            tenantChanged = !BuildConfig.DEFAULT_APP_KEY.equals(preferences.getString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY));
+        } else if (AppEdition.role() == Role.ADMIN) {
+            tenantChanged = !BuildConfig.DEFAULT_PLATFORM_KEY.equals(preferences.getString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY))
+                || !BuildConfig.DEFAULT_APP_KEY.equals(preferences.getString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY));
+        } else {
+            tenantChanged = !BuildConfig.DEFAULT_PLATFORM_KEY.equals(preferences.getString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY));
+        }
+        if (hadConnectionIdentity && isAuthenticated() && (endpointChanged || tenantChanged)) {
+            clearAuthentication();
+        }
+        preferences.edit()
+            .putString(KEY_BASE_URL, buildBase)
+            .putString(KEY_APP_KEY, BuildConfig.DEFAULT_APP_KEY)
+            .putString(KEY_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY)
+            .apply();
     }
 }

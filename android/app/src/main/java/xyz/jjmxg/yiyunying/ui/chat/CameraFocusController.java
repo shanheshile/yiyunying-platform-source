@@ -7,6 +7,7 @@ import android.hardware.camera2.params.MeteringRectangle;
 /** Camera2 touch-focus geometry and pointer state kept independent from the camera device. */
 final class CameraFocusController {
     static final float DEFAULT_REGION_FRACTION = 0.16f;
+    static final int ZOOM_PROGRESS_MAX = 1000;
 
     private CameraFocusController() { }
 
@@ -74,6 +75,55 @@ final class CameraFocusController {
             : CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
         if (contains(availableModes, preferred)) return preferred;
         return touchAfMode(availableModes);
+    }
+
+    static float maxZoom(Float advertisedMaximum) {
+        if (advertisedMaximum == null || !Float.isFinite(advertisedMaximum)) return 1f;
+        return Math.max(1f, advertisedMaximum);
+    }
+
+    static float clampZoom(float zoom, float maximumZoom) {
+        float maximum = maxZoom(maximumZoom);
+        if (!Float.isFinite(zoom)) return 1f;
+        return clamp(zoom, 1f, maximum);
+    }
+
+    static float zoomAfterScale(float currentZoom, float scaleFactor, float maximumZoom) {
+        float safeScale = Float.isFinite(scaleFactor) && scaleFactor > 0f ? scaleFactor : 1f;
+        return clampZoom(currentZoom * safeScale, maximumZoom);
+    }
+
+    static float zoomFromProgress(int progress, int maximumProgress, float maximumZoom) {
+        int maximum = Math.max(1, maximumProgress);
+        float fraction = clamp(progress / (float) maximum, 0f, 1f);
+        return 1f + (maxZoom(maximumZoom) - 1f) * fraction;
+    }
+
+    static int progressFromZoom(float zoom, int maximumProgress, float maximumZoom) {
+        int maximum = Math.max(1, maximumProgress);
+        float available = maxZoom(maximumZoom) - 1f;
+        if (available <= 0f) return 0;
+        return Math.round((clampZoom(zoom, maximumZoom) - 1f) / available * maximum);
+    }
+
+    static Rect zoomCropRegion(Rect activeArray, float zoom, float maximumZoom) {
+        Rect active = activeArray == null ? new Rect() : new Rect(activeArray);
+        if (active.isEmpty()) active.set(0, 0, 1, 1);
+        float safeZoom = clampZoom(zoom, maximumZoom);
+        int width = Math.max(1, Math.round(active.width() / safeZoom));
+        int height = Math.max(1, Math.round(active.height() / safeZoom));
+        int left = active.left + Math.max(0, (active.width() - width) / 2);
+        int top = active.top + Math.max(0, (active.height() - height) / 2);
+        return new Rect(left, top, Math.min(active.right, left + width),
+            Math.min(active.bottom, top + height));
+    }
+
+    static boolean canAcceptFocus(boolean cameraReady, boolean sessionReady,
+                                  boolean requestBuilderReady, boolean captureBusy,
+                                  boolean recording, boolean recordingStarting,
+                                  boolean reviewingCapture) {
+        return cameraReady && sessionReady && requestBuilderReady && !recordingStarting
+            && !reviewingCapture && (recording || !captureBusy);
     }
 
     private static boolean contains(int[] values, int wanted) {

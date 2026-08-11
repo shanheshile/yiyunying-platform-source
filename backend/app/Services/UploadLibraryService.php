@@ -12,6 +12,7 @@ final class UploadLibraryService
 {
     public static function list(int $adminId, int $appId, ?int $userId, Request $request): array
     {
+        self::reconcilePendingDeletions(10);
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
@@ -112,24 +113,94 @@ final class UploadLibraryService
                 );
             }
 
+            $resourceReference = Database::one(
+                'SELECT id FROM resources
+                 WHERE admin_id = ? AND app_id = ?
+                   AND (source_upload_id = ? OR cover_upload_id = ?)
+                   AND (deleted_at IS NULL OR EXISTS(
+                     SELECT 1 FROM resource_purchases rp WHERE rp.resource_id = resources.id
+                       AND rp.admin_id = resources.admin_id AND rp.app_id = resources.app_id
+                   ))
+                 LIMIT 1 FOR UPDATE',
+                [$adminId, $appId, $uploadId, $uploadId]
+            );
+            if ($resourceReference !== null) {
+                throw new HttpException(
+                    '该上传文件仍被资源文件或封面引用，不能删除；请先在资源管理中处理对应条目',
+                    0,
+                    409
+                );
+            }
+            $storeReference = Database::one(
+                'SELECT id FROM store_apps
+                 WHERE admin_id = ? AND app_id = ?
+                   AND (source_upload_id = ? OR icon_upload_id = ?)
+                   AND (deleted_at IS NULL OR EXISTS(
+                     SELECT 1 FROM store_app_purchases sap WHERE sap.store_app_id = store_apps.id
+                       AND sap.admin_id = store_apps.admin_id AND sap.app_id = store_apps.app_id
+                   ))
+                 LIMIT 1 FOR UPDATE',
+                [$adminId, $appId, $uploadId, $uploadId]
+            );
+            if ($storeReference !== null) {
+                throw new HttpException(
+                    '该上传文件仍被应用安装包或图标引用，不能删除；请先在应用管理中处理对应条目',
+                    0,
+                    409
+                );
+            }
+
+            $stickerReference = Database::one(
+                'SELECT id FROM stickers
+                 WHERE admin_id = ? AND app_id = ? AND upload_id = ? AND status = 1
+                 LIMIT 1 FOR UPDATE',
+                [$adminId, $appId, $uploadId]
+            );
+            if ($stickerReference !== null) {
+                throw new HttpException(
+                    '该上传文件仍被活跃表情引用，不能删除；请先停用或删除对应表情',
+                    0,
+                    409
+                );
+            }
+
             Database::execute('UPDATE uploads SET status = 0 WHERE id = ?', [$uploadId]);
             $filePath = (string) ($upload['file_path'] ?? '');
             $remainingReferences = $filePath === '' ? 0 : (int) (Database::one(
                 'SELECT COUNT(*) AS total FROM uploads WHERE file_path = ? AND status = 1',
                 [$filePath]
             )['total'] ?? 0);
+            $cleanupPending = $filePath !== '' && $remainingReferences === 0;
+            if ($cleanupPending) {
+                $pathSha256 = hash('sha256', ltrim(str_replace('\\', '/', $filePath), '/'));
+                Database::execute(
+                    "INSERT INTO upload_file_deletions
+                     (upload_id, file_path, path_sha256, cleanup_status, cleanup_error, created_at, updated_at)
+                     VALUES (?, ?, ?, 'cleanup_pending', '', NOW(), NOW())
+                     ON DUPLICATE KEY UPDATE upload_id = VALUES(upload_id), file_path = VALUES(file_path),
+                       cleanup_status = 'cleanup_pending', cleanup_error = '', cleaned_at = NULL, updated_at = NOW()",
+                    [$uploadId, $filePath, $pathSha256]
+                );
+            }
             return [
                 'upload_id' => $uploadId,
                 'original_name' => (string) $upload['original_name'],
                 'file_path' => $filePath,
-                'physical_file_removed' => $remainingReferences === 0,
+                'path_sha256' => $cleanupPending ? hash('sha256', ltrim(str_replace('\\', '/', $filePath), '/')) : '',
+                'physical_file_removed' => $filePath === '',
+                'cleanup_pending' => $cleanupPending,
                 'remaining_references' => $remainingReferences,
             ];
         });
-        if ((bool) $result['physical_file_removed']) {
-            self::removePhysicalFile((string) $result['file_path']);
+        if ((bool) $result['cleanup_pending']) {
+            $result['physical_file_removed'] = self::reconcilePhysicalDeletion(
+                (string) $result['file_path'],
+                (string) $result['path_sha256']
+            );
+            $result['cleanup_pending'] = !(bool) $result['physical_file_removed'];
         }
         unset($result['file_path']);
+        unset($result['path_sha256']);
         return $result;
     }
 
@@ -174,14 +245,82 @@ final class UploadLibraryService
         };
     }
 
-    private static function removePhysicalFile(string $relative): void
+    private static function reconcilePendingDeletions(int $limit): void
+    {
+        $limit = max(1, min(100, $limit));
+        $rows = Database::all(
+            "SELECT file_path, path_sha256 FROM upload_file_deletions
+             WHERE cleanup_status <> 'cleaned' ORDER BY updated_at, id LIMIT {$limit}"
+        );
+        foreach ($rows as $row) {
+            try {
+                self::reconcilePhysicalDeletion((string) $row['file_path'], (string) $row['path_sha256']);
+            } catch (\Throwable) {
+                // The durable journal remains pending/failed for the next retry.
+            }
+        }
+    }
+
+    private static function reconcilePhysicalDeletion(string $relative, string $pathSha256): bool
     {
         $relative = ltrim(str_replace('\\', '/', $relative), '/');
-        if ($relative === '' || !str_starts_with($relative, 'uploads/')) return;
-        $public = realpath(YIYUNYING_ROOT . '/public');
-        $path = realpath(YIYUNYING_ROOT . '/public/' . $relative);
-        if ($public !== false && $path !== false && str_starts_with($path, $public . DIRECTORY_SEPARATOR) && is_file($path)) {
-            @unlink($path);
-        }
+        if ($relative === '' || !hash_equals(hash('sha256', $relative), strtolower($pathSha256))) return false;
+        return Database::transaction(static function () use ($relative, $pathSha256): bool {
+            $journal = Database::one(
+                'SELECT * FROM upload_file_deletions WHERE path_sha256 = ? FOR UPDATE',
+                [$pathSha256]
+            );
+            if ($journal === null) return false;
+            if ((string) $journal['cleanup_status'] === 'cleaned') return true;
+            $reference = Database::one(
+                'SELECT id FROM uploads WHERE file_path = ? AND status = 1 LIMIT 1 FOR UPDATE',
+                [$relative]
+            );
+            if ($reference !== null) {
+                Database::execute(
+                    "UPDATE upload_file_deletions SET cleanup_status = 'cleanup_failed',
+                     cleanup_error = '仍有有效上传记录引用该文件', updated_at = NOW() WHERE id = ?",
+                    [(int) $journal['id']]
+                );
+                return false;
+            }
+            $state = UploadStorageService::storedPathState($relative);
+            if (($state['status'] ?? '') === 'unsafe') {
+                Database::execute(
+                    "UPDATE upload_file_deletions SET cleanup_status = 'cleanup_failed',
+                     cleanup_error = '文件路径包含链接、越界或异常对象', updated_at = NOW() WHERE id = ?",
+                    [(int) $journal['id']]
+                );
+                return false;
+            }
+            if (($state['status'] ?? '') === 'file') {
+                $path = (string) $state['path'];
+                $stat = @lstat($path);
+                if (!is_array($stat) || (int) ($stat['nlink'] ?? 0) !== 1) {
+                    Database::execute(
+                        "UPDATE upload_file_deletions SET cleanup_status = 'cleanup_failed',
+                         cleanup_error = '文件存在硬链接或文件状态异常，拒绝自动删除', updated_at = NOW() WHERE id = ?",
+                        [(int) $journal['id']]
+                    );
+                    return false;
+                }
+                if (!@unlink($path) || file_exists($path) || is_link($path)) {
+                    Database::execute(
+                        "UPDATE upload_file_deletions SET cleanup_status = 'cleanup_failed',
+                         cleanup_error = '物理文件删除失败', updated_at = NOW() WHERE id = ?",
+                        [(int) $journal['id']]
+                    );
+                    return false;
+                }
+                $integrityCache = $path . '.integrity.json';
+                if (is_file($integrityCache) && !is_link($integrityCache)) @unlink($integrityCache);
+            }
+            Database::execute(
+                "UPDATE upload_file_deletions SET cleanup_status = 'cleaned', cleanup_error = '',
+                 cleaned_at = NOW(), updated_at = NOW() WHERE id = ?",
+                [(int) $journal['id']]
+            );
+            return true;
+        });
     }
 }

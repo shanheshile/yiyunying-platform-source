@@ -8,6 +8,7 @@ use Yiyunying\Core\HttpException;
 use Yiyunying\Core\Pagination;
 use Yiyunying\Core\Request;
 use Yiyunying\Core\Response;
+use Yiyunying\Core\Validator;
 use Yiyunying\Services\AdminAccessService;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\PlatformService;
@@ -130,15 +131,6 @@ final class DashboardController
         $actor = PlatformService::auth($request);
         PlatformService::requireCapability($actor, 'settings.manage');
         $settings = $request->input('settings', []);
-        if (!is_array($settings) || $settings === []) {
-            $all = $request->all();
-            $settings = [];
-            foreach (['resource_user_submit_enabled', 'resource_submit_audit'] as $key) {
-                if (array_key_exists($key, $all)) {
-                    $settings[$key] = (bool) $all[$key];
-                }
-            }
-        }
         if (!is_array($settings) || $settings === []) {
             throw new HttpException('settings 必须是非空对象', 0, 422);
         }
@@ -303,6 +295,17 @@ final class DashboardController
         PlatformService::requireCapability($actor, 'data.manage');
         $app = PlatformService::ownedApp($actor, (int) $params['app_id']);
         $settings = $request->input('settings', []);
+        if (!is_array($settings) || $settings === []) {
+            $settings = [];
+            foreach ([
+                'resource_user_submit_enabled', 'resource_submit_audit',
+                'store_user_submit_enabled', 'store_submit_audit',
+            ] as $key) {
+                if ($request->input($key) !== null) {
+                    $settings[$key] = Validator::boolean($request->input($key), $key);
+                }
+            }
+        }
         if (!is_array($settings) || $settings === []) {
             throw new HttpException('settings 必须是非空对象', 0, 422);
         }

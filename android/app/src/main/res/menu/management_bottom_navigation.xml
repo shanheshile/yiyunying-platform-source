@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/managementTabDashboard" android:icon="@drawable/ic_apps" android:title="应用" />
-    <item android:id="@+id/managementTabOrganization" android:icon="@drawable/ic_document" android:title="源码" />
+    <item android:id="@+id/managementTabDashboard" android:icon="@drawable/ic_dashboard" android:title="主页" />
+    <item android:id="@+id/managementTabOrganization" android:icon="@drawable/ic_document" android:title="源码示例" />
     <item android:id="@+id/managementTabContent" android:icon="@drawable/ic_forum" android:title="交流" />
     <item android:id="@+id/managementTabMine" android:icon="@drawable/ic_person" android:title="我的" />
 </menu>

@@ -17,6 +17,8 @@ import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -43,6 +45,7 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityForumListBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemForumBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
+import xyz.jjmxg.yiyunying.domain.forum.ForumSortPolicy;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.GlassActionDialog;
 import xyz.jjmxg.yiyunying.ui.common.SafeTextInput;
@@ -55,6 +58,13 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private static final String EXTRA_KEYWORD = "keyword";
     private static final String EXTRA_APP_ID = "app_id";
     private static final String EXTRA_APP_NAME = "app_name";
+    private static final String STATE_KEYWORD = "forum_list_keyword";
+    private static final String STATE_CATEGORY_ID = "forum_list_category_id";
+    private static final String STATE_TAG = "forum_list_tag";
+    private static final String STATE_DATE_FROM = "forum_list_date_from";
+    private static final String STATE_DATE_TO = "forum_list_date_to";
+    private static final String STATE_SORT = "forum_list_sort";
+    private static final String STATE_SCROLL_POSITION = "forum_list_scroll_position";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable delayedSearch = this::load;
@@ -63,8 +73,11 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private ActivityForumListBinding binding;
     private ForumAdapter adapter;
     private RequestHandle request;
+    private RequestHandle cachedRequest;
     private RequestHandle taxonomyRequest;
     private RequestHandle actionRequest;
+    private long loadGeneration;
+    private long networkAppliedGeneration;
     private long plateId;
     private long appId;
     private long selectedCategoryId;
@@ -75,6 +88,8 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private String selectedTag = "";
     private String dateFrom = "";
     private String dateTo = "";
+    private String postSort = ForumSortPolicy.COMPREHENSIVE;
+    private int pendingScrollPosition = RecyclerView.NO_POSITION;
 
     public static void open(Context context) {
         context.startActivity(new Intent(context, ForumListActivity.class));
@@ -115,6 +130,17 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         plateId = getIntent().getLongExtra(EXTRA_PLATE_ID, 0);
         initialKeyword = getIntent().getStringExtra(EXTRA_KEYWORD);
         if (initialKeyword == null) initialKeyword = "";
+        if (state != null) {
+            initialKeyword = state.getString(STATE_KEYWORD, initialKeyword);
+            selectedCategoryId = Math.max(0L, state.getLong(STATE_CATEGORY_ID, 0L));
+            selectedTag = state.getString(STATE_TAG, "");
+            dateFrom = state.getString(STATE_DATE_FROM, "");
+            dateTo = state.getString(STATE_DATE_TO, "");
+            postSort = ForumSortPolicy.normalize(state.getString(
+                STATE_SORT, ForumSortPolicy.COMPREHENSIVE));
+            pendingScrollPosition = Math.max(RecyclerView.NO_POSITION,
+                state.getInt(STATE_SCROLL_POSITION, RecyclerView.NO_POSITION));
+        }
         showingPosts = plateId > 0 || !initialKeyword.isEmpty();
 
         binding = ActivityForumListBinding.inflate(getLayoutInflater());
@@ -133,6 +159,11 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
 
         binding.startDateButton.setOnClickListener(view -> pickDate(true));
         binding.endDateButton.setOnClickListener(view -> pickDate(false));
+        binding.sortButton.setText(ForumSortPolicy.label(postSort));
+        if (!dateFrom.isEmpty()) binding.startDateButton.setText("从 " + dateFrom);
+        if (!dateTo.isEmpty()) binding.endDateButton.setText("到 " + dateTo);
+        binding.sortButton.setOnClickListener(view -> selectPostSort());
+        binding.sortButton.setVisibility(role == Role.USER ? View.VISIBLE : View.GONE);
         binding.clearFilterButton.setOnClickListener(view -> {
             dateFrom = "";
             dateTo = "";
@@ -144,7 +175,12 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.createButton.setOnClickListener(view -> createPost());
         if (role == Role.USER && plateId > 0) {
             MenuItem create = binding.toolbar.getMenu().add("发布帖子");
-            create.setIcon(R.drawable.ic_add);
+            android.graphics.drawable.Drawable createIcon = AppCompatResources.getDrawable(this, R.drawable.ic_add);
+            if (createIcon != null) {
+                createIcon = DrawableCompat.wrap(createIcon.mutate());
+                DrawableCompat.setTint(createIcon, getColor(R.color.on_forum_publish_container));
+            }
+            create.setIcon(createIcon);
             create.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
             create.setOnMenuItemClickListener(item -> { createPost(); return true; });
         }
@@ -196,6 +232,8 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         if (!isUiActive()) return;
         handler.removeCallbacks(delayedSearch);
         if (request != null) request.cancel();
+        if (cachedRequest != null) cachedRequest.cancel();
+        long generation = ++loadGeneration;
         binding.progress.setVisibility(View.VISIBLE);
         Map<String, String> query = new LinkedHashMap<>();
         String path;
@@ -209,18 +247,23 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             if (!keyword.isEmpty()) query.put("keyword", keyword);
             if (!dateFrom.isEmpty()) query.put("date_from", dateFrom);
             if (!dateTo.isEmpty()) query.put("date_to", dateTo);
+            query.put("sort", ForumSortPolicy.normalize(postSort));
         } else {
             path = forumPrefix() + "/forum-plates";
             if (!keyword.isEmpty()) query.put("keyword", keyword);
         }
-        AppAccess.from(this).repository().getCached(path, query, cached -> {
+        cachedRequest = AppAccess.from(this).repository().getCached(path, query, cached -> {
+            if (generation != loadGeneration || networkAppliedGeneration >= generation) return;
+            cachedRequest = null;
             if (binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
             List<JsonObject> cachedItems = objects(cached.items());
             adapter.submit(cachedItems);
+            restorePendingScrollPosition();
             binding.emptyText.setVisibility(cachedItems.isEmpty() ? View.VISIBLE : View.GONE);
             binding.progress.setVisibility(View.INVISIBLE);
         });
         request = AppAccess.from(this).repository().get(path, query, result -> {
+            if (generation != loadGeneration) return;
             request = null;
             if (!isUiActive()) return;
             binding.progress.setVisibility(View.INVISIBLE);
@@ -230,11 +273,28 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "论坛加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
                 return;
             }
+            networkAppliedGeneration = generation;
             List<JsonObject> items = objects(result.items());
             adapter.submit(items);
+            restorePendingScrollPosition();
             binding.emptyText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
             binding.emptyText.setText(showingPosts ? "没有找到符合条件的帖子" : "还没有符合条件的论坛板块");
         });
+    }
+
+    private void selectPostSort() {
+        String[] labels = ForumSortPolicy.labels();
+        new YiyunyingDialogBuilder(this)
+            .setTitle("帖子排序")
+            .setSingleChoiceItems(labels, ForumSortPolicy.selectedIndex(postSort), (dialog, which) -> {
+                postSort = ForumSortPolicy.valueAt(which);
+                binding.sortButton.setText(ForumSortPolicy.label(postSort));
+                binding.recycler.scrollToPosition(0);
+                dialog.dismiss();
+                load();
+            })
+            .setNegativeButton("取消", null)
+            .show();
     }
 
     private void loadCategories() {
@@ -771,6 +831,28 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         }
     }
 
+    private void restorePendingScrollPosition() {
+        if (binding == null || pendingScrollPosition == RecyclerView.NO_POSITION
+            || adapter == null || adapter.getItemCount() <= 0) return;
+        int position = Math.min(pendingScrollPosition, adapter.getItemCount() - 1);
+        pendingScrollPosition = RecyclerView.NO_POSITION;
+        binding.recycler.scrollToPosition(position);
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(STATE_KEYWORD, binding == null ? initialKeyword : text(binding.searchInput));
+        outState.putLong(STATE_CATEGORY_ID, selectedCategoryId);
+        outState.putString(STATE_TAG, selectedTag);
+        outState.putString(STATE_DATE_FROM, dateFrom);
+        outState.putString(STATE_DATE_TO, dateTo);
+        outState.putString(STATE_SORT, ForumSortPolicy.normalize(postSort));
+        if (binding != null && binding.recycler.getLayoutManager() instanceof LinearLayoutManager) {
+            outState.putInt(STATE_SCROLL_POSITION,
+                ((LinearLayoutManager) binding.recycler.getLayoutManager()).findFirstVisibleItemPosition());
+        }
+        super.onSaveInstanceState(outState);
+    }
+
     private void login() {
         AppAccess.from(this).session().clearAuthentication();
         startActivity(new Intent(this, LoginActivity.class).putExtra(LoginActivity.EXTRA_FORCE_LOGIN, true)
@@ -843,6 +925,8 @@ public final class ForumListActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     @Override protected void onDestroy() {
         handler.removeCallbacks(delayedSearch);
         if (request != null) request.cancel();
+        if (cachedRequest != null) cachedRequest.cancel();
+        loadGeneration++;
         if (taxonomyRequest != null) taxonomyRequest.cancel();
         if (actionRequest != null) actionRequest.cancel();
         binding = null;

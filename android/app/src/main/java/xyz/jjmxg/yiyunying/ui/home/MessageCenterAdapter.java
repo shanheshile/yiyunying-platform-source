@@ -169,11 +169,13 @@ final class MessageCenterAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
         String type = Jsons.string(item, "type");
         String avatarUrl = Jsons.string(item, "avatar");
-        if (!avatarUrl.isEmpty()) {
+        boolean groupAvatar = "group".equals(type) || "chat_room".equals(type);
+        if (!avatarUrl.isEmpty() || groupAvatar) {
             itemHolder.binding.avatarImage.setVisibility(View.VISIBLE);
             itemHolder.binding.avatar.setVisibility(View.GONE);
             ImageLoader.get().loadThumbnail(ImageLoader.get().absoluteUrl(itemHolder.itemView.getContext(), avatarUrl),
-                itemHolder.binding.avatarImage, R.drawable.ic_person);
+                itemHolder.binding.avatarImage,
+                groupAvatar ? R.drawable.bg_group_avatar_placeholder : R.drawable.ic_person);
         } else {
             itemHolder.binding.avatarImage.setVisibility(View.GONE);
             itemHolder.binding.avatar.setVisibility(View.VISIBLE);

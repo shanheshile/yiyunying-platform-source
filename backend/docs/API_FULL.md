@@ -2,7 +2,7 @@
 
 本文档对应“易运盈后台”全新重构后的完整后端。它不兼容旧易云后台，也不是把星光文档、水仙后台、APP 通用后台简单拼接，而是统一为一套多应用、强隔离、可审计的业务系统。
 
-当前实现包含 193 张数据表和 686 条实际路由，并形成“1 级平台所有者 -> 2 级授权平台 -> 3 级 admin -> 4 级 user”的完整治理链。实际注册路由见 [ROUTES.md](ROUTES.md)，精确字段、索引与外键见 [SCHEMA.md](SCHEMA.md)，分级规则见 [PLATFORM_GOVERNANCE.md](PLATFORM_GOVERNANCE.md)，简云能力映射见 [JIANYUN_CAPABILITY_MAPPING.md](JIANYUN_CAPABILITY_MAPPING.md)，论坛增强规则见 [FORUM_EXPERIENCE.md](FORUM_EXPERIENCE.md)，通信监管规则见 [COMMUNICATION_TAKEOVER.md](COMMUNICATION_TAKEOVER.md)。完整 686 条接口的可检索网页以 `/api-docs.html` 为准。
+当前实现包含 221 张数据表和 811 条实际路由，并形成“1 级平台所有者 -> 2 级授权平台 -> 3 级 admin -> 4 级 user”的完整治理链。实际注册路由见 [ROUTES.md](ROUTES.md)，精确字段、索引与外键见 [SCHEMA.md](SCHEMA.md)，分级规则见 [PLATFORM_GOVERNANCE.md](PLATFORM_GOVERNANCE.md)，简云能力映射见 [JIANYUN_CAPABILITY_MAPPING.md](JIANYUN_CAPABILITY_MAPPING.md)，论坛增强规则见 [FORUM_EXPERIENCE.md](FORUM_EXPERIENCE.md)，通信监管规则见 [COMMUNICATION_TAKEOVER.md](COMMUNICATION_TAKEOVER.md)。完整 811 条接口的可检索网页以 `/api-docs.html` 为准。
 
 ## 1. 核心定义
 
@@ -10,9 +10,9 @@
 
 | 名称 | 含义 | 说明 |
 | --- | --- | --- |
-| `platform level=1` | 最高平台所有者 | 默认 `root/123456`，管理自己的整棵 1/2/3/4 级数据树。 |
+| `platform level=1` | 最高平台所有者 | 由部署者显式注入安全身份，管理自己的整棵 1/2/3/4 级数据树。 |
 | `platform level=2` | 授权运营平台 | 由 1 级创建，只管理自己直属的 3 级及其 4 级数据。 |
-| `admin` | 3 级后台管理员 | 默认 `admin/123456`，只管理自己的应用和数据。 |
+| `admin` | 3 级后台管理员 | 由所属平台创建或由部署者显式注入，只管理自己的应用和数据。 |
 | `app` | 应用 | 旧易云里的 `api` 实际是应用标识，新后台统一改为 `app`。 |
 | `app_id` | 应用主键 ID | MySQL 自增或雪花 ID，用于表关联。 |
 | `app_key` | 应用公开标识 | 客户端可以携带，用于识别应用，不等于密钥。 |
@@ -319,9 +319,9 @@ public 接口：app_key 必填
 
 | 方法 | 路径 | 功能 | 主要参数 |
 | --- | --- | --- | --- |
-| POST | `/api/platform/login` | 1/2 级平台登录 | `account,password,device` |
+| POST | `/api/platform/login` | 1/2 级平台登录并校验当前安装版本的平台唯一 KEY | `platform_key,account,password,device` |
 | POST | `/api/platform/logout` | 平台退出 | 无 |
-| GET | /api/platform/me | 当前平台、设置与轮询策略 | 无 |
+| GET | /api/platform/me | 当前平台、设置与轮询策略；客户端恢复会同时校验实时平台等级、安装版要求等级和本地会话等级 | 无 |
 | GET | /api/platform/permissions | 当前1/2级账号的最终生效权限、来源和锁定状态 | 无 |
 | PUT | `/api/platform/profile` | 修改平台资料 | `nickname,avatar,email,phone` |
 | PUT | `/api/platform/password` | 修改平台密码 | `old_password,new_password` |
@@ -346,7 +346,7 @@ public 接口：app_key 必填
 | GET | /api/platform/operators/{operator_id}/permissions | 1级查看指定2级的本级配置与最终权限 | 无 |
 | PUT | /api/platform/operators/{operator_id}/permissions | 1级保存指定2级的分支管理权限 | permissions |
 | GET | `/api/platform/admins` | 管理范围内的 3 级列表 | `platform_id,keyword,status,membership_status,ip,page,limit` |
-| POST | `/api/platform/admins` | 直接创建 3 级 | `platform_id,account,password,grant` |
+| POST | `/api/platform/admins` | 直接创建 3 级及其首个可登录应用 | `platform_id,account,password,app_key,app_name,vip_days,app_quota,remote_document_quota,balance`；成功响应含 `initial_app`、`registration_gift`、仅本次返回的 `app_secret` |
 | GET | `/api/platform/admins/{admin_id}` | 3 级详情、权限和数量 | 无 |
 | PUT | `/api/platform/admins/{admin_id}` | 修改 3 级账号资料 | `account,nickname,avatar,email,phone` |
 | PUT | `/api/platform/admins/{admin_id}/password` | 重置 3 级密码 | `new_password` |
@@ -382,14 +382,16 @@ public 接口：app_key 必填
 | POST | `/api/platform/exchanges/{exchange_id}/refund` | 原子退款并回收未使用权益 | `refund_reason` |
 | GET | `/api/platform/balance-logs` | admin 平台余额流水 | `platform_id,admin_id,scene,page,limit` |
 
+> 首个应用密钥一次性语义：平台直接创建管理员和管理员自助注册均会在同一事务内创建首个 `app_key` 应用。`app_secret` 仅在该次成功响应中明文返回，不写入后续查询、列表、日志或再次读取接口；调用方必须立即交付并保存到服务端安全配置。创建失败、应用唯一 ID 冲突、额度不足或默认数据初始化失败会整体回滚，不会留下可登录但没有首个应用的管理员。
+
 ### 4.2 admin 管理员接口
 
 #### 管理员账号
 
 | 方法 | 路径 | 功能 | 主要参数 |
 | --- | --- | --- | --- |
-| POST | `/api/admin/register` | 注册 3 级，默认直属 1 级 | `platform_key,account,password,nickname,email,phone` |
-| POST | `/api/admin/login` | 管理员登录 | `platform_key,account,password` |
+| POST | `/api/admin/register` | 注册 3 级并原子创建首个可登录应用 | `platform_key,app_key,app_name,account,password,password_confirmation,nickname,email,phone`；成功响应含 `initial_app`、`registration_gift`、仅本次返回的 `app_secret` |
+| POST | `/api/admin/login` | 管理员登录并同时校验所属平台 KEY、账号密码及其名下应用 API 唯一 ID | `platform_key,app_key,account,password` |
 | POST | `/api/admin/logout` | 退出登录 | 无 |
 | GET | /api/admin/me | 当前管理员资料 | 无 |
 | GET | /api/admin/permissions | 当前3级管理员的最终生效权限、来源和锁定状态 | 无 |
@@ -409,6 +411,26 @@ public 接口：app_key 必填
 | GET | `/api/admin/exchanges/{exchange_id}` | 我的兑换订单详情 | 无 |
 | GET | `/api/admin/balance-logs` | 我的平台余额流水 | `scene,page,limit` |
 
+#### 管理工作台、安全与管理员交流
+
+| 方法 | 路径 | 功能 | 主要参数 |
+| --- | --- | --- | --- |
+| GET | `/api/admin/workbench` | 聚合当前资料、会员、应用/API/文档额度、设备数、公开信息与赞助排行 | 无 |
+| PUT | `/api/admin/workbench/public-profile` | 保存官网、下载地址、官方群、软件介绍、关于我们和收款码图片链接 | `official_url,download_url,official_qq_group,official_qq_group_link,alipay_qr_url,wechat_qr_url,software_intro,about_us` |
+| GET | `/api/admin/sponsors` | 分页查看手工确认到账的赞助记录和自动金额排行 | `page,limit` |
+| POST | `/api/admin/sponsors` | 登记一笔已人工确认到账的赞助 | `sponsor_name,amount,channel,note,paid_at,status` |
+| PUT | `/api/admin/sponsors/{sponsor_id}` | 修改赞助记录并重新排序 | 同创建参数 |
+| DELETE | `/api/admin/sponsors/{sponsor_id}` | 软删除赞助记录 | 无 |
+| GET | `/api/admin/security/sessions` | 查看当前账号设备会话、当前设备标记和实时有效状态；不返回 Token 哈希 | 无 |
+| DELETE | `/api/admin/security/sessions/{session_id}` | 撤销指定设备会话；可识别是否撤销当前会话 | 无 |
+| DELETE | `/api/admin/account` | 密码和中文确认词双重校验后停用账号、应用与全部 Token，保留审计历史 | `password,confirm=注销账号` |
+| GET | `/api/admin/community/posts` | 按综合、技术、求助、分享、交流分类查看管理员交流帖子 | `category_code,page,limit` |
+| POST | `/api/admin/community/posts` | 发布管理员交流帖子 | `category_code,title,content,attachments` |
+| POST | `/api/admin/community/posts/{post_id}/pin` | 在同一平台范围内置顶或取消置顶 | `pinned` |
+| POST | `/api/admin/community/posts/{post_id}/reports` | 举报交流帖子；待处理举报幂等复用 | `reason` |
+
+支付宝和微信收款码只保存经过 URL 协议校验的 `http/https` 图片地址，不复用头像上传接口，也不伪造支付回调。赞助榜只根据管理员手工确认的到账记录排序。
+
 #### 应用管理
 
 | 方法 | 路径 | 功能 | 主要参数 |
@@ -421,6 +443,7 @@ public 接口：app_key 必填
 | POST | `/api/admin/apps/{app_id}/disable` | 停用应用 | `reason` |
 | DELETE | `/api/admin/apps/{app_id}` | 删除应用 | `confirm` |
 | POST | `/api/admin/apps/{app_id}/secret/reset` | 重置密钥 | 无 |
+| POST | `/api/admin/apps/{app_id}/key/verify` | 实时校验当前管理员 Token、应用归属和应用唯一 KEY | `app_key` |
 | GET | `/api/admin/apps/{app_id}/settings` | 配置列表 | 无 |
 | PUT | `/api/admin/apps/{app_id}/settings` | 保存配置 | `settings_json` |
 | GET | `/api/admin/apps/{app_id}/features` | 功能开关列表 | 无 |
@@ -481,14 +504,23 @@ public 接口：app_key 必填
 
 | 方法 | 路径 | 功能 | 主要参数 |
 | --- | --- | --- | --- |
-| GET | `/api/admin/apps/{app_id}/resource-categories` | 资源分类 | 无 |
-| POST | `/api/admin/apps/{app_id}/resource-categories` | 新增分类 | `name,icon,sort_order` |
-| GET | `/api/admin/apps/{app_id}/resources` | 资源列表 | `category_id,audit_status,status,page,limit` |
-| PUT | `/api/admin/apps/{app_id}/resources/{resource_id}/audit` | 审核资源 | `audit_status,reason` |
+| GET | `/api/admin/apps/{app_id}/resource-categories` | 源码分类列表 | `resource_type`，管理端默认源码商城 |
+| POST | `/api/admin/apps/{app_id}/resource-categories` | 新增源码分类 | `name,description,sort_order,resource_type` |
+| PUT/DELETE | `/api/admin/apps/{app_id}/resource-categories/{category_id}` | 修改/删除源码分类 | 分类字段；有资源时禁止删除 |
+| GET | `/api/admin/apps/{app_id}/resources` | 资源审核列表与四态汇总 | `category_id,audit_status,status,resource_type,risk_level,keyword,page,limit` |
+| GET | `/api/admin/apps/{app_id}/resources/{resource_id}` | 资源审核详情 | 无 |
+| PUT | `/api/admin/apps/{app_id}/resources/{resource_id}/audit` | 资源审核：通过/不通过/暂定 | `audit_status=approved/rejected/on_hold,reason,expected_audit_status,expected_review_revision,override_risk` |
+| GET | `/api/admin/apps/{app_id}/resources/{resource_id}/download` | 管理员鉴权下载受控源码文件 | 无 |
 | PUT | `/api/admin/apps/{app_id}/resources/{resource_id}` | 修改资源 | `title,description,price_balance,status` |
 | DELETE | `/api/admin/apps/{app_id}/resources/{resource_id}` | 删除资源 | 无 |
-| GET | `/api/admin/apps/{app_id}/store-apps` | 应用商店列表 | `keyword,status,page,limit` |
-| POST | `/api/admin/apps/{app_id}/store-apps` | 新增应用 | `name,package_name,version,icon_url,apk_url,images` |
+| GET/POST | `/api/admin/apps/{app_id}/store-categories` | 应用商店分类列表/新增分类 | `name,icon,sort_order` |
+| PUT/DELETE | `/api/admin/apps/{app_id}/store-categories/{category_id}` | 修改/删除应用分类 | 分类字段；有应用时禁止删除 |
+| GET | `/api/admin/apps/{app_id}/store-apps` | 应用审核列表与四态汇总 | `keyword,audit_status,risk_level,status,page,limit` |
+| POST | `/api/admin/apps/{app_id}/store-apps` | 新增应用 | `name,package_name,version_name,version_code,icon_url,apk_url,images` |
+| GET | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | 应用审核详情 | 无 |
+| PUT | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit` | 应用审核：通过/不通过/暂定 | `audit_status=approved/rejected/on_hold,reason,expected_audit_status,expected_review_revision,override_risk` |
+| GET | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/download` | 管理员鉴权下载安装包 | 无 |
+| PUT/DELETE | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | 修改/删除应用 | 应用字段；安装包变更后自动回到待审核 |
 | GET | `/api/admin/apps/{app_id}/forum-plates` | 板块列表 | 无 |
 | POST | `/api/admin/apps/{app_id}/forum-plates` | 新增板块 | `name,icon,description,sort_order` |
 | POST | `/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar` | 上传并替换板块头像（受 `forum_plate_avatar_upload` 控制） | `multipart file` |
@@ -562,6 +594,7 @@ public 接口：app_key 必填
 | POST | `/api/user/token/refresh` | 刷新令牌 | `refresh_token` |
 | GET | /api/user/me | 我的资料 | 无 |
 | GET | /api/user/permissions | 当前4级用户的最终生效权限、来源和锁定状态 | 无 |
+| GET | /api/user/features | 当前登录用户的有效功能开关；短视频六项已合并应用开关、上级强制规则、用户定向规则与个人角色权限，仅返回安全的最终布尔值 | 无 |
 | PUT | `/api/user/profile` | 修改资料 | `nickname,qq,email,signature,avatar,background,gender` |
 | PUT | `/api/user/password` | 修改密码 | `old_password,new_password` |
 | POST | `/api/user/password/reset` | 找回密码 | `app_key,account,email_or_phone,code,new_password` |
@@ -589,20 +622,28 @@ public 接口：app_key 必填
 
 | 方法 | 路径 | 功能 | 主要参数 |
 | --- | --- | --- | --- |
-| GET | `/api/user/resource-categories` | 资源分类 | 无 |
-| GET | `/api/user/resources` | 资源列表 | `category_id,keyword,page,limit` |
+| GET | `/api/user/resource-categories` | 资源分类 | `resource_type`，源码商城使用 `source_market` |
+| GET | `/api/user/resource-submission-policy` | 资源投稿开关与审核策略 | 无 |
+| GET | `/api/user/resources` | 资源列表；公开、我的投稿或历史已购三种范围 | `category_id,resource_type,keyword,mine,purchased,audit_status,page,limit` |
 | GET | `/api/user/resources/{resource_id}` | 资源详情 | 无 |
-| POST | `/api/user/resources` | 投稿资源 | `category_id,title,description,cover_url,download_url,price_balance` |
-| POST | `/api/user/resources/{resource_id}/buy` | 购买资源 | 无 |
+| POST | `/api/user/resources` | 投稿源码资源 | `resource_type=source_market,category_id,title,description,cover_url,source_upload_id,price_balance` |
+| POST | `/api/user/resources/{resource_id}/buy` | 按确认快照购买资源 | `expected_price_balance,expected_source_upload_id` |
+| GET | `/api/user/resources/{resource_id}/download` | 作者或已购用户鉴权下载；支持 ETag/If-Range 续传 | 无 |
 | POST | `/api/user/resources/{resource_id}/comments` | 评论资源 | `content` |
 | POST | `/api/user/resources/{resource_id}/rating` | 资源评分 | `score` |
-| GET | `/api/user/store-apps` | 应用商店列表 | `category_id,keyword,page,limit` |
+| GET | `/api/user/store-categories` | 应用商店分类 | 无 |
+| GET | `/api/user/store-submission-policy` | 应用投稿开关与审核策略 | 无 |
+| GET | `/api/user/store-apps` | 应用商店列表；公开、我的投稿或历史已购三种范围 | `category_id,keyword,mine,purchased,audit_status,page,limit` |
+| POST | `/api/user/store-apps` | 投稿应用安装包 | `category_id,name,package_name,version_name,version_code,source_upload_id,icon_url,price_balance` |
 | GET | `/api/user/store-apps/{store_app_id}` | 应用详情 | 无 |
+| POST | `/api/user/store-apps/{store_app_id}/buy` | 按确认快照购买应用 | `expected_price_balance,expected_source_upload_id,expected_version_code` |
+| GET | `/api/user/store-apps/{store_app_id}/download` | 作者或已购用户鉴权下载；支持 ETag/If-Range 续传 | 无 |
+| POST | `/api/user/store-apps/{store_app_id}/reactions` | 点赞/收藏或取消 | `reaction_type=like/favorite` |
 | GET | `/api/user/forum-plates` | 论坛板块 | 无 |
 | GET | `/api/user/forum-categories` | 二级分类 | `plate_id,keyword` |
 | GET | `/api/user/forum-tags` | 可选规范标签与别名 | `plate_id,category_id,keyword` |
 | GET/POST | `/api/user/forum-structure-requests` | 我的结构申请/申请新板块或分类 | `request_type,plate_id,name,description,reason` |
-| GET | `/api/user/forum-posts` | 帖子列表 | `plate_id,category_id,tag,keyword,date_from,date_to,page,limit` |
+| GET | `/api/user/forum-posts` | 帖子列表 | `plate_id,category_id,tag,keyword,date_from,date_to,sort=comprehensive/hot/latest/earliest,page,limit` |
 | POST | `/api/user/forum-posts` | 发帖 | `plate_id,category_id,title,content,attachments,tags,price_balance,sections` |
 | GET | `/api/user/forum-posts/{post_id}` | 帖子详情 | 无 |
 | PUT | `/api/user/forum-posts/{post_id}` | 编辑自己的帖子 | `title,content,images` |
@@ -705,6 +746,7 @@ public 接口：app_key 必填
 | --- | --- | --- | --- |
 | GET | `/api/public/app` | 应用公开信息 | `app_key` |
 | GET | `/api/public/bootstrap` | 启动配置 | `app_key,version_code,device` |
+| GET | `/api/public/branding` | 获取应用所属管理员已发布且带版本哈希的官网、官方群、介绍与收款码链接 | `app_key` 或 `X-App-Key` |
 | GET | `/api/public/features` | 功能开关 | `app_key` |
 | GET | `/api/public/notices` | 公告列表 | `app_key,type` |
 | GET | `/api/public/banners` | 轮播/启动图 | `app_key,position` |
@@ -833,12 +875,15 @@ public 接口：app_key 必填
 | GET | `/api/user/forum-posts/liked` | 我点赞过的帖子 |
 | GET | `/api/user/forum-report-tags` | 当前应用的举报标签 |
 | GET | `/api/user/forum-reports` | 我的举报和处理进度 |
-| GET | `/api/user/forum-posts/{post_id}/comments` | 帖内评论列表，不跳离帖子上下文 |
+| GET | `/api/user/forum-posts/{post_id}/comments` | 帖内评论分页；`scope=roots/thread`，`sort=comprehensive/hot/latest/earliest`；评论串传 `root_comment_id` 或通知深链的 `comment_id`，返回 `resolved_root_comment_id`，且 `items[0]` 固定为主评论；`pagination`/`reply_total` 只统计回复，`thread_total` 含主评论；未指定页码的深链会自动返回目标所在页并回显 `focused_reply_page` |
 | GET | `/api/user/forum-posts/{post_id}/likes` | 帖子点赞用户列表 |
-| PUT | `/api/admin/apps/{app_id}/forum-posts/{post_id}/audit` | 管理员审核帖子 |
+| PUT | `/api/admin/apps/{app_id}/forum-posts/{post_id}/audit` | 管理员审核帖子：通过/不通过/暂定；`audit_status=approved/rejected/on_hold,reason`，不通过原因必填，暂定说明可选 |
 | GET | `/api/admin/apps/{app_id}/forum-comments` | 管理员查看评论和待审核队列 |
-| PUT | `/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit` | 管理员审核评论 |
+| PUT | `/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit` | 管理员审核评论：`audit_status=approved/rejected/on_hold,reason`，并校验帖子和上级回复状态 |
 | DELETE | `/api/admin/apps/{app_id}/forum-comments/{comment_id}` | 管理员删除违规评论 |
+| PUT | `/api/admin/apps/{app_id}/moments/{moment_id}/audit` | 管理员审核动态：`audit_status=approved/rejected/on_hold,reason` |
+| GET | `/api/admin/apps/{app_id}/moment-comments` | 管理员查看动态评论审核队列；`audit_status,keyword,page,limit` |
+| PUT | `/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit` | 管理员审核动态评论；`audit_status=approved/rejected/on_hold,reason`，并校验动态和上级回复状态 |
 | GET | `/api/admin/apps/{app_id}/forum-report-tags` | 查询举报标签 |
 | POST | `/api/admin/apps/{app_id}/forum-report-tags` | 新增举报标签 |
 | PUT | `/api/admin/apps/{app_id}/forum-report-tags/{tag_id}` | 修改举报标签 |
@@ -968,7 +1013,7 @@ GIF 与手机拍摄的动态照片是两个独立类型：GIF 依据 MIME、扩�
 24. `tools/smoke-jianyun-capabilities.ps1` 验证访问统计、用户搜索、关注、论坛审核举报、群恢复、登录卡设备绑定、心跳和资产账单；错误密钥与跨设备重复绑卡均被拒绝。
 25. 2/3 级通信监管支持私聊、群聊、聊天室和客服查看/接管，成员列表隐身，公开系统身份与真实审计身份分离，并支持正文、文件、标签和只读聊天快照搜索。
 26. `tools/smoke-chat-commerce.ps1` 完成 99 项红包、转账、名片、礼物和订单断言；`tools/smoke-group-space.ps1` 完成 52 项群文件夹、目录导航、下载计数、递归删除、50 MB 图片、100 MB 视频、相册、投票、接龙和系统通知断言。
-27. 当前仓库的闭环脚本覆盖四级租户、身份、通信、支付、群空间和媒体链路；全新数据库安装包含 193 张表，API 工作台由 686 条真实路由生成。
+27. 当前仓库的闭环脚本覆盖四级租户、身份、通信、支付、群空间和媒体链路；全新数据库安装包含 221 张表，API 工作台由 811 条真实路由生成。
 28. 本地 AI 完成实时工具、四级租户知识库、连续会话、本机大模型和离线兜底闭环，并提供 Ollama、模型、PHP 扩展和真实问答联合自检。
 
 ## 6. 从旧源码吸收的方向

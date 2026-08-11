@@ -566,8 +566,6 @@ final class VoiceCallController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'messages');
-        return $user;
+        return AuthService::user($request, 'messages');
     }
 }

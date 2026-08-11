@@ -6,6 +6,17 @@ client_body_buffer_size 2m;
 fastcgi_read_timeout 900s;
 fastcgi_send_timeout 900s;
 
+# 同源上传目录禁止直接提供 SVG；部署前还必须盘点并隔离历史 SVG 文件。
+location ~* ^/uploads/.*\.svg$ {
+    add_header X-Content-Type-Options nosniff always;
+    return 404;
+}
+
+location /uploads/ {
+    add_header X-Content-Type-Options nosniff always;
+    try_files $uri =404;
+}
+
 # PHP 8.0 还需要在 php.ini 中同步设置：
 # upload_max_filesize = 1024M
 # post_max_size = 1100M

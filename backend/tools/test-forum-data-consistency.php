@@ -31,7 +31,8 @@ $checks = [
         && str_contains($source['favorite'], 'OR p.user_id = ?)'),
     'content actions enforce parent post and comment visibility' =>
         substr_count($source['forum'], 'self::assertContentVisible') >= 3
-        && str_contains($source['forum'], "(comment.audit_status = 'approved' OR comment.user_id = ?)"),
+        && substr_count($source['forum'], "comment.audit_status = 'approved'") >= 2
+        && substr_count($source['forum'], "post.audit_status = 'approved'") >= 2,
     'category counts do not leak pending posts' =>
         str_contains($source['structure'], 'OR p.user_id = ?)'),
     'profile post list shows pending posts only to their author' =>

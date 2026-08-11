@@ -42,6 +42,16 @@
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
             android:textColor="@color/on_surface_variant" />
 
+        <TextView
+            android:id="@+id/connectionSecurityNotice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:text="@string/login_connection_security_notice"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+            android:textColor="@color/on_surface_variant" />
+
         <com.google.android.material.button.MaterialButtonToggleGroup
             android:id="@+id/roleToggle"
             android:layout_width="match_parent"
@@ -82,7 +92,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:hint="@string/server_url">
+            android:hint="@string/server_url"
+            android:visibility="gone">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/serverInput"
@@ -98,7 +109,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:hint="@string/platform_key">
+            android:hint="@string/platform_key"
+            android:visibility="gone">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/platformKeyInput"
@@ -114,7 +126,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:hint="@string/app_key">
+            android:hint="@string/app_key"
+            android:visibility="gone">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/appKeyInput"
@@ -180,21 +193,21 @@
             android:layout_width="match_parent"
             android:layout_height="52dp"
             android:layout_marginTop="10dp"
-            android:text="登录卡密" />
+            android:text="@string/card_login" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/cardAutoLoginButton"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="使用本机已绑定卡密登录" />
+            android:text="@string/card_auto_login" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/forgotPasswordButton"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
-            android:text="找回密码" />
+            android:text="@string/forgot_password" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/registerButton"

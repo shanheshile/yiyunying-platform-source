@@ -8,6 +8,7 @@ import android.content.Context;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ImageView;
 
 import androidx.test.core.app.ApplicationProvider;
 
@@ -40,7 +41,11 @@ public final class ProfileSpaceUiTest {
 
     @Test public void groupAndChatroomProfileHasAvatarManagementSurface() {
         View root = LayoutInflater.from(context).inflate(R.layout.activity_group_space, null, false);
-        assertTrue(root.findViewById(R.id.groupAvatar) instanceof ShapeableImageView);
+        ShapeableImageView avatar = root.findViewById(R.id.groupAvatar);
+        assertNotNull(avatar);
+        assertEquals(ImageView.ScaleType.CENTER_CROP, avatar.getScaleType());
+        assertNotNull(avatar.getDrawable());
+        assertNotNull(avatar.getBackground());
         MaterialButton upload = root.findViewById(R.id.groupAvatarButton);
         assertNotNull(upload);
         assertEquals(View.GONE, upload.getVisibility());
@@ -80,5 +85,30 @@ public final class ProfileSpaceUiTest {
         assertNotNull(avatar);
         assertTrue(avatar.title().contains("头像"));
         assertTrue(avatar.pathTemplate().endsWith("/{plate_id}/avatar"));
+    }
+
+    @Test public void groupAdminModuleOffersLocalAvatarUpload() {
+        ModuleSpec rooms = new ModuleRegistry().find(Role.ADMIN, "chat_rooms");
+        assertNotNull(rooms);
+        ActionSpec avatar = rooms.itemActions().stream()
+            .filter(action -> "UPLOAD_IMAGE".equals(action.method()))
+            .filter(action -> action.pathTemplate().contains("/chat-rooms/"))
+            .findFirst()
+            .orElse(null);
+        assertNotNull(avatar);
+        assertTrue(avatar.title().contains("头像"));
+        assertTrue(avatar.pathTemplate().endsWith("/{room_id}/avatar"));
+    }
+
+    @Test
+    @Config(sdk = 35, qualifiers = "night")
+    public void groupAvatarPlaceholderInflatesInDarkTheme() {
+        Context nightContext = new ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext(), R.style.Theme_Yiyunying);
+        View root = LayoutInflater.from(nightContext)
+            .inflate(R.layout.activity_group_space, null, false);
+        ShapeableImageView avatar = root.findViewById(R.id.groupAvatar);
+        assertNotNull(avatar.getDrawable());
+        assertNotNull(avatar.getBackground());
     }
 }

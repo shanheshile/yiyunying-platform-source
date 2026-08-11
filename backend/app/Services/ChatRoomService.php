@@ -127,6 +127,12 @@ final class ChatRoomService
             $member = self::member((int) $room['id'], $currentUserId);
             $result['joined'] = $member !== null;
             $result['current_role'] = $member['role'] ?? null;
+            $manager = $member !== null && in_array((string) $member['role'], ['owner', 'admin'], true);
+            $result['can_manage'] = $manager;
+            $result['can_manage_members'] = $manager;
+            $result['can_change_member_roles'] = $member !== null && (string) $member['role'] === 'owner';
+            $result['can_invite'] = $member !== null
+                && ($manager || (bool) $policy['allow_member_invite']);
             $result['mute_until'] = $member['mute_until'] ?? null;
             $result['history_visible_from'] = $member['history_visible_from'] ?? null;
             $read = Database::one(

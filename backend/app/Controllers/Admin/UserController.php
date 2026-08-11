@@ -441,6 +441,12 @@ final class UserController
                 Database::execute('UPDATE users SET status = 0, updated_at = NOW() WHERE id = ? AND app_id = ?', [$userId, $appId]);
                 Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
             }
+            if (in_array($banType, ['all', 'resource'], true)) {
+                self::freezeCatalogSubmissions((int) $admin['id'], $appId, $userId, 'resource', '发布者账号已被封禁，资源暂定并停止新购买');
+            }
+            if (in_array($banType, ['all', 'store', 'shop'], true)) {
+                self::freezeCatalogSubmissions((int) $admin['id'], $appId, $userId, 'store', '发布者账号已被封禁，应用暂定并停止新购买');
+            }
         });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'user', 'ban', $userId, null, ['type' => $banType, 'reason' => $reason]);
         return Response::success([], '用户已封禁');
@@ -483,9 +489,31 @@ final class UserController
             );
             Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
             Database::execute('UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
+            self::freezeCatalogSubmissions(
+                (int) $admin['id'], $appId, $userId, 'resource', '发布者账号已删除，资源暂定并停止新购买'
+            );
+            self::freezeCatalogSubmissions(
+                (int) $admin['id'], $appId, $userId, 'store', '发布者账号已删除，应用暂定并停止新购买'
+            );
         });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'user', 'delete', $userId, $user);
         return Response::success([], '用户已删除');
+    }
+
+    private static function freezeCatalogSubmissions(
+        int $adminId,
+        int $appId,
+        int $userId,
+        string $kind,
+        string $reason
+    ): void {
+        $table = $kind === 'store' ? 'store_apps' : 'resources';
+        Database::execute(
+            "UPDATE {$table} SET audit_status = 'on_hold', audit_reason = ?, status = 0,
+             audited_by = NULL, audited_at = NULL, updated_at = NOW()
+             WHERE admin_id = ? AND app_id = ? AND user_id = ? AND deleted_at IS NULL",
+            [mb_substr($reason, 0, 500), $adminId, $appId, $userId]
+        );
     }
 
     public static function import(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -560,7 +588,7 @@ final class UserController
         $user = self::ownedUser((int) $admin['id'], $appId, $userId);
         $asset = trim((string) $request->input('asset_type', ''));
         if ($asset === 'activity_credit') $asset = 'integral';
-        $change = (float) $request->input('change_value', 0);
+        $change = $request->input('change_value', null);
         $wallet = Database::transaction(static fn() => WalletService::adjust(
             $user,
             $asset,

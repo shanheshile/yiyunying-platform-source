@@ -39,14 +39,66 @@ final class PrivateForumMediaService
              FROM media_attachments ma
              INNER JOIN uploads up
                ON up.id = ma.upload_id AND up.admin_id = ma.admin_id AND up.app_id = ma.app_id
-             WHERE ma.id = ? AND ma.app_id = ? AND ma.target_type IN ('forum_post', 'forum_section')
-               AND up.status = 1 AND up.file_path LIKE 'private/%'",
+             WHERE ma.id = ? AND ma.app_id = ? AND ma.target_type = 'forum_section'
+               AND up.status = 1 AND up.scene = 'forum_section' AND up.file_path LIKE 'private/%'",
             [$attachmentId, $appId]
         );
         if ($media === null) throw new HttpException('媒体文件不存在', 404, 404);
         $path = UploadStorageService::privatePhysicalPath((string) $media['file_path']);
         if ($path === null) throw new HttpException('媒体文件不存在', 404, 404);
-        return Response::file($path, (string) ($media['mime_type'] ?: 'application/octet-stream'));
+        $declaredMime = strtolower(trim((string) ($media['mime_type'] ?? '')));
+        $actualMime = function_exists('mime_content_type')
+            ? strtolower(trim((string) @mime_content_type($path)))
+            : '';
+        $delivery = self::deliveryPolicy($declaredMime, $actualMime, $path, $attachmentId);
+        if ($delivery['blocked']) {
+            throw new HttpException('该媒体格式已被禁用，请重新上传安全的图片格式', 0, 415);
+        }
+        return Response::file(
+            $path,
+            (string) $delivery['mime_type'],
+            (string) $delivery['disposition'],
+            (string) $delivery['download_name']
+        );
+    }
+
+    private static function deliveryPolicy(
+        string $declaredMime,
+        string $actualMime,
+        string $path,
+        int $attachmentId
+    ): array {
+        $declaredMime = strtolower(trim($declaredMime));
+        $actualMime = strtolower(trim($actualMime));
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if ($extension === 'svg' || $declaredMime === 'image/svg+xml' || $actualMime === 'image/svg+xml') {
+            return ['blocked' => true, 'mime_type' => 'application/octet-stream',
+                'disposition' => 'attachment', 'download_name' => ''];
+        }
+
+        $safeImages = [
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'image/bmp', 'image/avif', 'image/heic', 'image/heif',
+        ];
+        $sameVerifiedMime = $declaredMime !== '' && $declaredMime === $actualMime;
+        $safeInline = $sameVerifiedMime && (
+            in_array($declaredMime, $safeImages, true)
+            || str_starts_with($declaredMime, 'audio/')
+            || str_starts_with($declaredMime, 'video/')
+        );
+        if ($safeInline) {
+            return ['blocked' => false, 'mime_type' => $declaredMime,
+                'disposition' => 'inline', 'download_name' => ''];
+        }
+
+        $downloadExtensions = [
+            'pdf', 'txt', 'md', 'json', 'csv', 'doc', 'docx', 'xls', 'xlsx',
+            'ppt', 'pptx', 'zip', 'rar', '7z', 'apk',
+        ];
+        $suffix = in_array($extension, $downloadExtensions, true) ? '.' . $extension : '.bin';
+        return ['blocked' => false, 'mime_type' => 'application/octet-stream',
+            'disposition' => 'attachment',
+            'download_name' => 'forum-attachment-' . max(1, $attachmentId) . $suffix];
     }
 
     private static function signature(int $attachmentId, int $appId, int $expires): string

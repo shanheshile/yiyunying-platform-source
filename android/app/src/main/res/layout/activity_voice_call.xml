@@ -271,7 +271,7 @@
                 android:focusable="true"
                 android:gravity="center"
                 android:orientation="vertical">
-                <com.google.android.material.button.MaterialButton android:id="@+id/hangupButton" style="@style/Widget.Material3.Button.IconButton.Filled" android:layout_width="64dp" android:layout_height="64dp" android:contentDescription="挂断" app:backgroundTint="@color/error" app:icon="@drawable/ic_call_end" app:iconTint="@color/white" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/hangupButton" style="@style/Widget.Material3.Button.IconButton.Filled" android:layout_width="64dp" android:layout_height="64dp" android:contentDescription="挂断" app:backgroundTint="?attr/colorError" app:icon="@drawable/ic_call_end" app:iconTint="?attr/colorOnError" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="挂断" android:textColor="@color/error" />
             </LinearLayout>
         </LinearLayout>

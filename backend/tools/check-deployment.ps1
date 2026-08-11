@@ -1,17 +1,64 @@
+﻿[CmdletBinding()]
 param(
-    [string]$BaseUrl = 'http://appht.jjmxg.xyz',
-    [string]$PlatformAccount = 'root',
-    [string]$PlatformPassword = '123456',
-    [string]$AdminAccount = 'admin',
-    [string]$AdminPassword = '123456',
-    [string]$AppKey = 'yiyunying-demo',
-    [string]$UserAccount = 'user',
-    [string]$UserPassword = '123456'
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$BaseUrl,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$PlatformAccount,
+    [Parameter(Mandatory = $true)][ValidateNotNull()][System.Security.SecureString]$PlatformPassword,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$PlatformKey,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$AdminAccount,
+    [Parameter(Mandatory = $true)][ValidateNotNull()][System.Security.SecureString]$AdminPassword,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$AppKey,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$UserAccount,
+    [Parameter(Mandatory = $true)][ValidateNotNull()][System.Security.SecureString]$UserPassword
 )
 
 $ErrorActionPreference = 'Stop'
-$BaseUrl = $BaseUrl.TrimEnd('/')
 $script:Checks = 0
+
+function Assert-ExplicitText {
+    param([string]$Name, [string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "$Name 必须通过命令行显式传入，不能使用空值。"
+    }
+}
+
+function ConvertTo-PlainText {
+    param([System.Security.SecureString]$Value, [string]$Name)
+    $pointer = [IntPtr]::Zero
+    try {
+        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        if ([string]::IsNullOrWhiteSpace($plain)) { throw "$Name 不能为空。" }
+        return $plain
+    } finally {
+        if ($pointer -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+        }
+    }
+}
+
+foreach ($entry in ([ordered]@{
+    BaseUrl = $BaseUrl
+    PlatformAccount = $PlatformAccount
+    PlatformKey = $PlatformKey
+    AdminAccount = $AdminAccount
+    AppKey = $AppKey
+    UserAccount = $UserAccount
+}).GetEnumerator()) {
+    Assert-ExplicitText -Name $entry.Key -Value ([string]$entry.Value)
+}
+
+$baseUri = $null
+if ((-not [Uri]::TryCreate($BaseUrl.Trim(), [UriKind]::Absolute, [ref]$baseUri)) -or
+    ($baseUri.Scheme -notin @('http', 'https')) -or
+    (-not [string]::IsNullOrEmpty($baseUri.UserInfo)) -or
+    (-not [string]::IsNullOrEmpty($baseUri.Query)) -or
+    (-not [string]::IsNullOrEmpty($baseUri.Fragment))) {
+    throw 'BaseUrl 必须是显式的 http/https 绝对地址，且不能包含账号、密码、查询参数或片段。'
+}
+$BaseUrl = $baseUri.AbsoluteUri.TrimEnd('/')
+$platformPasswordPlain = ConvertTo-PlainText -Value $PlatformPassword -Name 'PlatformPassword'
+$adminPasswordPlain = ConvertTo-PlainText -Value $AdminPassword -Name 'AdminPassword'
+$userPasswordPlain = ConvertTo-PlainText -Value $UserPassword -Name 'UserPassword'
 
 function Invoke-JsonCheck {
     param([string]$Method, [string]$Path, [object]$Body = $null, [hashtable]$Headers = @{})
@@ -53,9 +100,23 @@ function Invoke-JsonCheck {
     }
 }
 
-Invoke-JsonCheck GET '/api/health' | Out-Null
-Invoke-JsonCheck POST '/api/platform/login' @{ account = $PlatformAccount; password = $PlatformPassword; platform_key = 'root'; device = 'deployment-check' } | Out-Null
-Invoke-JsonCheck POST '/api/admin/login' @{ account = $AdminAccount; password = $AdminPassword; device = 'deployment-check' } | Out-Null
-Invoke-JsonCheck POST '/api/user/login' @{ app_key = $AppKey; account = $UserAccount; password = $UserPassword; device = 'deployment-check' } @{ 'X-App-Key' = $AppKey } | Out-Null
+try {
+    Invoke-JsonCheck GET '/api/health' | Out-Null
+    Invoke-JsonCheck POST '/api/platform/login' @{
+        account = $PlatformAccount; password = $platformPasswordPlain
+        platform_key = $PlatformKey; device = 'deployment-check'
+    } | Out-Null
+    Invoke-JsonCheck POST '/api/admin/login' @{
+        platform_key = $PlatformKey; app_key = $AppKey; account = $AdminAccount
+        password = $adminPasswordPlain; device = 'deployment-check'
+    } | Out-Null
+    Invoke-JsonCheck POST '/api/user/login' @{
+        app_key = $AppKey; account = $UserAccount; password = $userPasswordPlain; device = 'deployment-check'
+    } @{ 'X-App-Key' = $AppKey } | Out-Null
 
-Write-Output "Deployment JSON checks passed: $script:Checks/4"
+    Write-Output "部署 JSON 检查通过：$script:Checks/4"
+} finally {
+    $platformPasswordPlain = $null
+    $adminPasswordPlain = $null
+    $userPasswordPlain = $null
+}

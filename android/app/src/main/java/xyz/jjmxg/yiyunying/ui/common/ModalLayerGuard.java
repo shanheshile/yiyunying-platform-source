@@ -4,11 +4,11 @@ import android.content.Context;
 import android.graphics.drawable.ColorDrawable;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.MotionEvent;
 import android.widget.HorizontalScrollView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import androidx.core.content.ContextCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.widget.NestedScrollView;
 import androidx.recyclerview.widget.RecyclerView;
@@ -42,11 +42,14 @@ public final class ModalLayerGuard {
         protectContentRegion(customPanel);
 
         TextView title = asText(findAlertPanel(decor, "alertTitle"));
-        if (title != null) title.setTextColor(ContextCompat.getColor(context, R.color.on_surface));
+        if (title != null) title.setTextColor(ThemeColors.resolve(context,
+            com.google.android.material.R.attr.colorOnSurface, R.color.on_surface));
 
         TextView message = decor.findViewById(android.R.id.message);
         if (message != null) {
-            message.setTextColor(ContextCompat.getColor(context, R.color.on_surface_variant));
+            message.setTextColor(ThemeColors.resolve(context,
+                com.google.android.material.R.attr.colorOnSurfaceVariant,
+                R.color.on_surface_variant));
         }
 
         // setItems() uses android.R.id.text1. Cover every row because a dialog can contain a
@@ -65,6 +68,7 @@ public final class ModalLayerGuard {
             root.setClipToPadding(true);
         }
         clipScrollableDescendants(content);
+        installBottomSheetDragHandoff(content);
     }
 
     private static void protectFixedRegion(View region, Context context, int elevationDp) {
@@ -74,7 +78,9 @@ public final class ModalLayerGuard {
         if (region.getBackground() == null
             || region.getBackground() instanceof ColorDrawable
             && ((ColorDrawable) region.getBackground()).getAlpha() < 255) {
-            region.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_container_high));
+            region.setBackgroundColor(ThemeColors.resolve(context,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh,
+                R.color.surface_container_high));
         }
         ViewCompat.setElevation(region, dp(context, elevationDp));
         region.setTranslationZ(dp(context, 1));
@@ -114,12 +120,55 @@ public final class ModalLayerGuard {
             || view instanceof RecyclerView;
     }
 
+    private static void installBottomSheetDragHandoff(View view) {
+        if (isScrollingViewport(view)
+            && !Boolean.TRUE.equals(view.getTag(R.id.tag_bottom_sheet_drag_handoff))) {
+            view.setTag(R.id.tag_bottom_sheet_drag_handoff, Boolean.TRUE);
+            view.setOnTouchListener(new View.OnTouchListener() {
+                private float previousRawY;
+
+                @Override public boolean onTouch(View target, MotionEvent event) {
+                    int action = event.getActionMasked();
+                    boolean gestureStart = action == MotionEvent.ACTION_DOWN;
+                    float currentRawY = event.getRawY();
+                    if (BottomSheetDragHandoffPolicy.shouldReleaseParent(
+                        gestureStart, previousRawY, currentRawY,
+                        target.canScrollVertically(-1))) {
+                        // End any stale nested-scroll ownership from the expansion gesture and
+                        // let CoordinatorLayout/BottomSheetBehavior inspect the very next move.
+                        ViewCompat.stopNestedScroll(target, ViewCompat.TYPE_TOUCH);
+                        if (target.getParent() != null) {
+                            target.getParent().requestDisallowInterceptTouchEvent(false);
+                        }
+                    }
+                    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                        if (target.getParent() != null) {
+                            target.getParent().requestDisallowInterceptTouchEvent(false);
+                        }
+                    }
+                    previousRawY = currentRawY;
+                    // Observation only: the scrolling child and BottomSheetBehavior retain their
+                    // normal event handling, including links, selection and list gestures.
+                    return false;
+                }
+            });
+        }
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            installBottomSheetDragHandoff(group.getChildAt(index));
+        }
+    }
+
     private static void styleKnownDialogRows(View view, Context context) {
         if (view instanceof TextView && view.getId() == android.R.id.text1) {
             TextView row = (TextView) view;
             String label = row.getText() == null ? "" : row.getText().toString();
-            int expected = ContextCompat.getColor(context,
-                ActionIconResolver.destructive(label) ? R.color.error : R.color.on_surface);
+            int expected = ActionIconResolver.destructive(label)
+                ? ThemeColors.resolve(context,
+                    android.R.attr.colorError, R.color.error)
+                : ThemeColors.resolve(context,
+                    com.google.android.material.R.attr.colorOnSurface, R.color.on_surface);
             if (row.getTextColors().getDefaultColor() != expected) row.setTextColor(expected);
             ActionIconResolver.apply(row, label, 0);
         }

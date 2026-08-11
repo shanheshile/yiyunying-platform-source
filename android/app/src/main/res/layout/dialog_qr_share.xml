@@ -40,7 +40,7 @@
         android:gravity="center_horizontal"
         android:lineSpacingExtra="2dp"
         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-        android:textColor="@color/on_surface_variant" />
+        android:textColor="?attr/colorOnSurfaceVariant" />
 
     <TextView
         android:layout_width="match_parent"
@@ -49,5 +49,5 @@
         android:gravity="center_horizontal"
         android:text="二维码始终使用高对比白底；分享、复制和关闭操作会跟随当前浅色或深色主题。"
         android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-        android:textColor="@color/on_surface_variant" />
+        android:textColor="?attr/colorOnSurfaceVariant" />
 </LinearLayout>

@@ -677,7 +677,8 @@ public final class SocialDirectoryActivity extends xyz.jjmxg.yiyunying.ui.common
                 RuntimeLanguage.setDynamicText(holder.binding.metadata,
                     (Jsons.string(item, "user_group_name").isEmpty() ? "未分组" : Jsons.string(item, "user_group_name"))
                         + " · " + entity + " · " + (bool(item, "joined") ? "已加入" : "可申请加入"));
-                ImageLoader.get().load(ImageLoader.get().absoluteUrl(SocialDirectoryActivity.this, Jsons.string(item, "icon")), holder.binding.avatar, R.drawable.ic_users);
+                ImageLoader.get().load(ImageLoader.get().absoluteUrl(SocialDirectoryActivity.this, Jsons.string(item, "icon")),
+                    holder.binding.avatar, R.drawable.bg_group_avatar_placeholder);
             }
             if (pickerMode) {
                 long itemId = selectionId(item);

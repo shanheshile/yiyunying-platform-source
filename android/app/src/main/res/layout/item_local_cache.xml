@@ -22,17 +22,17 @@
             android:id="@+id/selected"
             android:layout_width="44dp"
             android:layout_height="44dp"
-            android:buttonTint="@color/primary" />
+            android:buttonTint="?attr/colorPrimary" />
 
         <ImageView
             android:id="@+id/icon"
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:layout_marginStart="4dp"
-            android:background="@color/primary_container"
+            android:background="?attr/colorPrimaryContainer"
             android:contentDescription="缓存类型"
             android:padding="10dp"
-            app:tint="@color/on_primary_container" />
+            app:tint="?attr/colorOnPrimaryContainer" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -65,14 +65,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
-            android:background="@color/secondary_container"
+            android:background="?attr/colorSecondaryContainer"
             android:paddingStart="8dp"
             android:paddingTop="4dp"
             android:paddingEnd="8dp"
             android:paddingBottom="4dp"
             android:text="保留"
             android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-            android:textColor="@color/on_secondary_container"
+            android:textColor="?attr/colorOnSecondaryContainer"
             android:visibility="gone" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

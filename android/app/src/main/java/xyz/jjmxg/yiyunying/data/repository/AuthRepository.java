@@ -41,9 +41,10 @@ public final class AuthRepository {
         body.addProperty("account", account.trim());
         body.addProperty("password", password);
         body.addProperty("device", deviceName());
-        if (role == Role.ADMIN) {
+        if (role == Role.ADMIN || role == Role.PLATFORM) {
             body.addProperty("platform_key", platformKey.trim());
-        } else if (role == Role.USER) {
+        }
+        if (role == Role.ADMIN || role == Role.USER) {
             body.addProperty("app_key", appKey.trim());
         }
         return repository.request(
@@ -86,6 +87,7 @@ public final class AuthRepository {
         fields.addProperty("device", deviceName());
         if (role == Role.ADMIN) {
             fields.addProperty("platform_key", platformKey.trim());
+            fields.addProperty("app_key", appKey.trim());
         } else {
             fields.addProperty("app_key", appKey.trim());
         }

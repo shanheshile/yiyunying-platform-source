@@ -26,7 +26,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HashSet;
 import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -54,6 +56,7 @@ public final class LocalMediaOptimizer {
 
     private static final ExecutorService IMAGE_EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final long OWNED_CACHE_MAX_AGE_MILLIS = 24L * 60L * 60L * 1000L;
 
     private LocalMediaOptimizer() { }
 
@@ -96,13 +99,13 @@ public final class LocalMediaOptimizer {
                 oriented.recycle();
                 long outputSize = output.length();
                 if (outputSize <= 0 || (sourceSize > 0 && outputSize >= sourceSize)) {
-                    delete(output);
+                    deleteOwnedCacheFile(context, output);
                     finish(callback, new Result(source, sourceSize, sourceSize, false, "原照片已经足够精简，继续使用原文件"));
                     return;
                 }
                 finish(callback, new Result(Uri.fromFile(output), sourceSize, outputSize, true, "照片已在本地优化"));
             } catch (IOException | RuntimeException error) {
-                delete(output);
+                deleteOwnedCacheFile(context, output);
                 finish(callback, new Result(source, sourceSize, sourceSize, false,
                     "照片本地优化未完成，已保留原文件：" + safeMessage(error)));
             }
@@ -137,7 +140,7 @@ public final class LocalMediaOptimizer {
                 @Override public void onCompleted(@NonNull Composition composition, @NonNull ExportResult exportResult) {
                     long outputSize = output.length();
                     if (outputSize <= 0 || (sourceSize > 0 && outputSize >= sourceSize)) {
-                        delete(output);
+                        deleteOwnedCacheFile(context, output);
                         callback.onFinished(new Result(source, sourceSize, sourceSize, false,
                             "原录像体积更合适，继续使用原文件"));
                         return;
@@ -151,7 +154,7 @@ public final class LocalMediaOptimizer {
                     @NonNull ExportResult exportResult,
                     @NonNull ExportException exportException
                 ) {
-                    delete(output);
+                    deleteOwnedCacheFile(context, output);
                     callback.onFinished(new Result(source, sourceSize, sourceSize, false,
                         "录像本地转换未完成，已保留原文件：" + safeMessage(exportException)));
                 }
@@ -165,7 +168,7 @@ public final class LocalMediaOptimizer {
         try {
             transformer.start(edited, output.getAbsolutePath());
         } catch (RuntimeException error) {
-            delete(output);
+            deleteOwnedCacheFile(context, output);
             callback.onFinished(new Result(source, sourceSize, sourceSize, false,
                 "录像本地转换无法启动，已保留原文件：" + safeMessage(error)));
         }
@@ -195,7 +198,7 @@ public final class LocalMediaOptimizer {
     }
 
     private static File outputFile(Context context, String prefix, String suffix) {
-        File directory = new File(context.getCacheDir(), "media_optimized");
+        File directory = new File(context.getCacheDir(), OwnedMediaCachePolicy.OPTIMIZED_DIRECTORY);
         if (!directory.exists()) directory.mkdirs();
         return new File(directory, prefix + "_" + System.currentTimeMillis() + suffix);
     }
@@ -209,8 +212,78 @@ public final class LocalMediaOptimizer {
         MAIN.post(() -> callback.onFinished(result));
     }
 
-    private static void delete(File file) {
-        if (file != null && file.exists()) file.delete();
+    /** Deletes only a direct, prefix-approved file in this app's owned media cache. */
+    public static boolean deleteOwnedCacheFile(Context context, File file) {
+        if (context == null || file == null) return false;
+        File cacheDirectory = context.getApplicationContext().getCacheDir();
+        if (!OwnedMediaCachePolicy.isOwned(cacheDirectory, file) || !file.isFile()) return false;
+        return file.delete();
+    }
+
+    /** Content/MediaStore and non-file URIs are deliberately rejected. */
+    public static boolean deleteOwnedCacheUri(Context context, Uri uri) {
+        if (context == null || uri == null
+            || !OwnedMediaCachePolicy.acceptsUriScheme(uri.getScheme())
+            || uri.getPath() == null || uri.getPath().trim().isEmpty()) {
+            return false;
+        }
+        return deleteOwnedCacheFile(context, new File(uri.getPath()));
+    }
+
+    /** Resolves only this app's exact capture FileProvider URI; arbitrary content URIs fail closed. */
+    public static File resolveOwnedCaptureFile(Context context, Uri uri) {
+        if (context == null || uri == null || !"content".equalsIgnoreCase(uri.getScheme())
+            || !(context.getPackageName() + ".capture-files").equals(uri.getAuthority())) {
+            return null;
+        }
+        java.util.List<String> segments = uri.getPathSegments();
+        if (segments.size() != 2 || !"capture_cache".equals(segments.get(0))) return null;
+        File candidate = new File(
+            new File(context.getCacheDir(), OwnedMediaCachePolicy.CAPTURE_DIRECTORY),
+            segments.get(1));
+        return OwnedMediaCachePolicy.isOwned(context.getCacheDir(), candidate) && candidate.isFile()
+            ? candidate : null;
+    }
+
+    /** Removes stale, inactive files without traversing outside the two owned directories. */
+    public static void cleanupExpiredOwnedCache(Context context, Iterable<Uri> activeUris) {
+        if (context == null) return;
+        Context application = context.getApplicationContext();
+        File cacheDirectory = application.getCacheDir();
+        Set<String> activePaths = new HashSet<>();
+        if (activeUris != null) {
+            for (Uri uri : activeUris) {
+                if (uri == null || !OwnedMediaCachePolicy.acceptsUriScheme(uri.getScheme())
+                    || uri.getPath() == null) continue;
+                String path = OwnedMediaCachePolicy.canonicalOwnedPath(
+                    cacheDirectory, new File(uri.getPath()));
+                if (!path.isEmpty()) activePaths.add(path);
+            }
+        }
+        IMAGE_EXECUTOR.execute(() -> {
+            cleanupDirectory(application, cacheDirectory,
+                new File(cacheDirectory, OwnedMediaCachePolicy.CAPTURE_DIRECTORY), activePaths);
+            cleanupDirectory(application, cacheDirectory,
+                new File(cacheDirectory, OwnedMediaCachePolicy.OPTIMIZED_DIRECTORY), activePaths);
+        });
+    }
+
+    private static void cleanupDirectory(
+        Context context,
+        File cacheDirectory,
+        File directory,
+        Set<String> activePaths
+    ) {
+        if (!OwnedMediaCachePolicy.isAllowedDirectory(cacheDirectory, directory)) return;
+        File[] files = directory.listFiles();
+        if (files == null) return;
+        long now = System.currentTimeMillis();
+        for (File file : files) {
+            if (OwnedMediaCachePolicy.shouldDeleteExpired(
+                cacheDirectory, file, now, OWNED_CACHE_MAX_AGE_MILLIS, activePaths)) {
+                deleteOwnedCacheFile(context, file);
+            }
+        }
     }
 
     private static String safeMessage(Throwable error) {

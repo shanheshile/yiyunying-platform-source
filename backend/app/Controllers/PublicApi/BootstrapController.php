@@ -10,6 +10,7 @@ use Yiyunying\Services\AppService;
 use Yiyunying\Services\UploadLimitService;
 use Yiyunying\Services\IdentityService;
 use Yiyunying\Services\MessageMediaService;
+use Yiyunying\Services\AdminBrandingService;
 
 final class BootstrapController
 {
@@ -80,6 +81,7 @@ final class BootstrapController
             'banners' => self::activeBanners((int) $app['admin_id'], (int) $app['id'], null),
             'remote_configs' => self::remoteConfigs((int) $app['admin_id'], (int) $app['id']),
             'latest_version' => self::latestVersion((int) $app['admin_id'], (int) $app['id']),
+            'branding' => AdminBrandingService::get((int) $app['admin_id']),
             'server_time' => date('Y-m-d H:i:s'),
         ]);
     }

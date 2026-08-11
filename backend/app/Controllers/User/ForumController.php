@@ -184,37 +184,17 @@ final class ForumController
         }
         $post['sections'] = ForumExperienceService::sections($post, $user);
         $post['has_sections'] = $post['sections'] !== [];
-        $post['comments'] = Database::all(
-            "SELECT c.id, c.parent_id, c.root_comment_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
-                    c.is_pinned, c.pin_order, c.like_count, c.favorite_count, c.created_at, c.updated_at,
-                    u.uid, p.nickname, p.avatar,
-                    parent_comment.user_id AS reply_to_user_id,
-                    parent_user.uid AS reply_to_uid,
-                    COALESCE(NULLIF(parent_profile.nickname, ''), parent_user.account, '') AS reply_to_name,
-                    CASE WHEN liked.id IS NULL THEN 0 ELSE 1 END AS liked,
-                    CASE WHEN favorite.id IS NULL THEN 0 ELSE 1 END AS favorited
-             FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
-             LEFT JOIN user_profiles p ON p.user_id = c.user_id
-             LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
-               AND parent_comment.status = 1
-               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
-             LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
-             LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
-             LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
-               AND liked.target_type = 'comment' AND liked.target_id = c.id
-             LEFT JOIN forum_content_favorites favorite ON favorite.app_id = c.app_id AND favorite.user_id = ?
-               AND favorite.target_type = 'comment' AND favorite.target_id = c.id
-             WHERE c.post_id = ? AND c.status = 1 AND (c.audit_status = ? OR c.user_id = ?)
-             ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT 500",
-            [
-                (int) $user['id'], (int) $user['id'], (int) $user['id'],
-                (int) $post['id'], 'approved', (int) $user['id'],
-            ]
+        $commentSort = self::normalizeForumSort((string) $request->input('comment_sort', 'comprehensive'));
+        $post['comments'] = self::loadRootComments(
+            $user,
+            (int) $post['id'],
+            $request->limit(),
+            0,
+            $commentSort
         );
-        $post['comments'] = self::hydrateCommentRoots($post['comments']);
-        $post['comments'] = ContentTagService::hydrate($post['comments']);
-        $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', (int) $user['app_id']);
-        $post['comments'] = MessageForwardService::hydrate($post['comments'], 'forum_comment', (int) $user['app_id']);
+        $post['comment_scope'] = 'roots';
+        $post['comment_sort'] = $commentSort;
+        $post['comment_preview_limit'] = 2;
         $post['liked'] = Database::one(
             'SELECT id FROM forum_likes WHERE app_id = ? AND user_id = ? AND target_type = ? AND target_id = ?',
             [(int) $user['app_id'], (int) $user['id'], 'post', (int) $post['id']]
@@ -390,7 +370,13 @@ final class ForumController
                         (int) $post['id'], $parent, (int) $user['admin_id'], (int) $user['app_id']
                     );
                 }
-                $rootCommentId = self::resolveStoredCommentRoot((int) $post['id'], $parent);
+                $rootCommentId = self::resolveStoredCommentRoot(
+                    (int) $post['id'],
+                    $parent,
+                    (int) $user['admin_id'],
+                    (int) $user['app_id'],
+                    (int) $user['id']
+                );
             }
             $id = Database::insert(
                 'INSERT INTO forum_comments
@@ -515,45 +501,99 @@ final class ForumController
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
-        $where = ['c.post_id = ?', 'c.status = 1', '(c.audit_status = ? OR c.user_id = ?)'];
-        $query = [(int) $post['id'], 'approved', (int) $user['id']];
-        if ((int) $request->input('parent_id', 0) > 0) {
-            $where[] = 'c.parent_id = ?';
-            $query[] = (int) $request->input('parent_id');
+        $sort = self::normalizeForumSort((string) $request->input('sort', 'comprehensive'));
+        $scopeInput = strtolower(trim((string) $request->input('scope', '')));
+        $legacyParentId = (int) $request->input('parent_id', 0);
+        $scope = in_array($scopeInput, ['roots', 'thread'], true) ? $scopeInput : 'roots';
+        if ($scopeInput === '' && $legacyParentId > 0) $scope = 'thread';
+
+        $resolvedRootId = null;
+        $replyTotal = null;
+        $focusedReplyPage = null;
+        if ($scope === 'thread') {
+            $commentId = (int) $request->input('comment_id', 0);
+            if ($commentId <= 0 && $legacyParentId > 0) $commentId = $legacyParentId;
+            $root = self::resolveVisibleThreadRoot(
+                $user,
+                (int) $post['id'],
+                (int) $request->input('root_comment_id', 0),
+                $commentId
+            );
+            $resolvedRootId = (int) $root['id'];
+            $threadRows = self::fetchThreadIndexRows(
+                $user, (int) $post['id'], $resolvedRootId, self::forumCommentOrder($sort)
+            );
+            $threadRows = self::filterVisibleReplyChains($threadRows, [$root]);
+            if ($commentId > 0 && $commentId !== $resolvedRootId) {
+                $focusedReplyIndex = self::commentIndex($threadRows, $commentId);
+                if ($focusedReplyIndex < 0) {
+                    throw new HttpException('评论或回复不存在', 404, 404);
+                }
+                $focusedReplyPage = intdiv($focusedReplyIndex, $limit) + 1;
+                if ($request->input('page') === null || $request->input('page') === '') {
+                    $page = $focusedReplyPage;
+                    $offset = ($page - 1) * $limit;
+                }
+            }
+            $replyTotal = count($threadRows);
+            $total = $replyTotal;
+            $pageRows = array_slice($threadRows, $offset, $limit);
+            $pageIds = array_map(static fn(array $row): int => (int) $row['id'], $pageRows);
+            $detailIds = array_merge([$resolvedRootId], $pageIds);
+            $placeholders = implode(',', array_fill(0, count($detailIds), '?'));
+            $detailRows = self::fetchCommentRows(
+                $user,
+                (int) $post['id'],
+                "c.id IN ({$placeholders}) AND (
+                    (c.id = ? AND (c.parent_id IS NULL OR c.parent_id = 0))
+                    OR (c.root_comment_id = ? AND c.parent_id IS NOT NULL
+                        AND c.parent_id > 0 AND parent_comment.id IS NOT NULL)
+                 )",
+                array_merge($detailIds, [$resolvedRootId, $resolvedRootId]),
+                self::forumCommentOrder($sort)
+            );
+            $detailRows = self::hydrateForumCommentRows($detailRows, (int) $user['app_id']);
+            $detailById = [];
+            foreach ($detailRows as $detail) $detailById[(int) $detail['id']] = $detail;
+            if (!isset($detailById[$resolvedRootId])) {
+                throw new HttpException('主评论不存在', 404, 404);
+            }
+            $rootDetail = $detailById[$resolvedRootId];
+            $rootDetail['reply_count'] = $replyTotal;
+            $rootDetail['reply_preview'] = [];
+            $items = [$rootDetail];
+            foreach ($pageIds as $pageId) {
+                if (isset($detailById[$pageId])) $items[] = $detailById[$pageId];
+            }
+        } else {
+            $total = (int) (Database::one(
+                "SELECT COUNT(*) AS total FROM forum_comments c
+                 WHERE c.admin_id = ? AND c.app_id = ? AND c.post_id = ? AND c.status = 1
+                   AND (c.audit_status = 'approved' OR c.user_id = ?)
+                   AND (c.parent_id IS NULL OR c.parent_id = 0)",
+                [(int) $user['admin_id'], (int) $user['app_id'], (int) $post['id'], (int) $user['id']]
+            )['total'] ?? 0);
+            $items = self::loadRootComments(
+                $user,
+                (int) $post['id'],
+                $limit,
+                $offset,
+                $sort
+            );
         }
-        $whereSql = implode(' AND ', $where);
-        $total = (int) (Database::one(
-            "SELECT COUNT(*) AS total FROM forum_comments c WHERE {$whereSql}",
-            $query
-        )['total'] ?? 0);
-        $items = Database::all(
-            "SELECT c.id, c.parent_id, c.root_comment_id, c.user_id, c.content, c.tags_json, c.audit_status, c.audit_reason,
-                    c.is_pinned, c.pin_order, c.like_count, c.favorite_count,
-                    c.created_at, c.updated_at, u.uid, p.nickname, p.avatar,
-                    parent_comment.user_id AS reply_to_user_id,
-                    parent_user.uid AS reply_to_uid,
-                    COALESCE(NULLIF(parent_profile.nickname, ''), parent_user.account, '') AS reply_to_name,
-                    CASE WHEN liked.id IS NULL THEN 0 ELSE 1 END AS liked,
-                    CASE WHEN favorite.id IS NULL THEN 0 ELSE 1 END AS favorited
-             FROM forum_comments c INNER JOIN users u ON u.id = c.user_id
-             LEFT JOIN user_profiles p ON p.user_id = c.user_id
-             LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id AND parent_comment.post_id = c.post_id
-               AND parent_comment.status = 1
-               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
-             LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
-             LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
-             LEFT JOIN forum_likes liked ON liked.app_id = c.app_id AND liked.user_id = ?
-               AND liked.target_type = 'comment' AND liked.target_id = c.id
-             LEFT JOIN forum_content_favorites favorite ON favorite.app_id = c.app_id AND favorite.user_id = ?
-               AND favorite.target_type = 'comment' AND favorite.target_id = c.id
-             WHERE {$whereSql} ORDER BY c.is_pinned DESC, c.pin_order DESC, c.id ASC LIMIT {$limit} OFFSET {$offset}",
-            array_merge([(int) $user['id'], (int) $user['id'], (int) $user['id']], $query)
-        );
-        $items = self::hydrateCommentRoots($items);
-        $items = ContentTagService::hydrate($items);
-        $items = MessageMediaService::hydrate($items, 'forum_comment', (int) $user['app_id']);
-        $items = MessageForwardService::hydrate($items, 'forum_comment', (int) $user['app_id']);
-        return Response::success(Pagination::data($items, $total, $page, $limit));
+
+        $result = Pagination::data($items, $total, $page, $limit);
+        $result['scope'] = $scope;
+        $result['sort'] = $sort;
+        $result['resolved_root_comment_id'] = $resolvedRootId;
+        if ($scope === 'thread') {
+            $result['reply_total'] = $replyTotal;
+            $result['thread_total'] = 1 + (int) $replyTotal;
+            $result['root_included'] = true;
+            $result['pagination_scope'] = 'replies';
+            $result['focused_reply_page'] = $focusedReplyPage;
+        }
+        return Response::success($result);
     }
 
     public static function likes(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -947,17 +987,17 @@ final class ForumController
             $targetExists = $targetType === 'post'
                 ? Database::one(
                     "SELECT id FROM forum_posts WHERE id = ? AND app_id = ? AND status = 1
-                       AND deleted_at IS NULL AND (audit_status = 'approved' OR user_id = ?)",
-                    [$targetId, (int) $user['app_id'], (int) $user['id']]
+                       AND deleted_at IS NULL AND audit_status = 'approved'",
+                    [$targetId, (int) $user['app_id']]
                 )
                 : Database::one(
                     "SELECT comment.id FROM forum_comments comment
                      INNER JOIN forum_posts post ON post.id = comment.post_id
                      WHERE comment.id = ? AND comment.app_id = ? AND comment.status = 1
                        AND post.status = 1 AND post.deleted_at IS NULL
-                       AND (comment.audit_status = 'approved' OR comment.user_id = ?)
-                       AND (post.audit_status = 'approved' OR post.user_id = ?)",
-                    [$targetId, (int) $user['app_id'], (int) $user['id'], (int) $user['id']]
+                       AND comment.audit_status = 'approved'
+                       AND post.audit_status = 'approved'",
+                    [$targetId, (int) $user['app_id']]
                 );
             if ($targetExists === null) throw new HttpException('举报目标不存在', 404, 404);
             $tagId = max(0, (int) ($data['report_tag_id'] ?? 0));
@@ -1058,6 +1098,8 @@ final class ForumController
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
+        $sort = self::normalizeForumSort((string) $request->input('sort', 'comprehensive'));
+        $sortOrder = self::forumPostOrder($sort);
         $where = ['p.app_id = ?', 'p.audit_status = ?', 'p.status = 1', 'p.deleted_at IS NULL'];
         $query = [$appId, 'approved'];
         if ($request->input('plate_id') !== null && $request->input('plate_id') !== '') {
@@ -1119,17 +1161,19 @@ final class ForumController
              LEFT JOIN forum_categories fc ON fc.id = p.category_id
              LEFT JOIN user_profiles up ON up.user_id = p.user_id
              WHERE {$whereSql}
-             ORDER BY CASE COALESCE(personal_position, 'normal') WHEN 'bottom' THEN 1 ELSE 0 END,
-                      p.is_top DESC, p.is_essence DESC, p.is_locked DESC,
-                      CASE COALESCE(personal_position, 'normal') WHEN 'top' THEN 0 ELSE 1 END,
-                      personal_sort_order DESC,
-                      CASE WHEN p.hot_label <> '' THEN 0 ELSE 1 END, p.heat_score DESC, p.id DESC
-             LIMIT {$limit} OFFSET {$offset}",
+              ORDER BY CASE COALESCE(personal_position, 'normal') WHEN 'bottom' THEN 1 ELSE 0 END,
+                       p.is_top DESC, p.is_essence DESC, p.is_locked DESC,
+                       CASE COALESCE(personal_position, 'normal') WHEN 'top' THEN 0 ELSE 1 END,
+                       personal_sort_order DESC,
+                       {$sortOrder}
+              LIMIT {$limit} OFFSET {$offset}",
             $queryWithJoin
         );
         $items = ContentTagService::hydrate($items);
         $items = ForumVisibilityService::hydratePosts($items, $appId, $userId);
-        return Pagination::data($items, $total, $page, $limit);
+        $result = Pagination::data($items, $total, $page, $limit);
+        $result['sort'] = $sort;
+        return $result;
     }
 
     public static function post(int $appId, int $postId, ?int $viewerUserId = null): array
@@ -1295,15 +1339,16 @@ final class ForumController
      * that owns the thread. Legacy rows are followed defensively so a reply can
      * never move under a different comment when the flat list order changes.
      */
-    private static function resolveStoredCommentRoot(int $postId, array $parent): int
+    private static function resolveStoredCommentRoot(
+        int $postId, array $parent, int $adminId, int $appId, int $viewerUserId
+    ): int
     {
-        $fallbackId = (int) ($parent['id'] ?? 0);
         $current = $parent;
         $visited = [];
         for ($depth = 0; $depth < 64; $depth++) {
             $currentId = (int) ($current['id'] ?? 0);
             if ($currentId <= 0 || isset($visited[$currentId])) {
-                return $fallbackId;
+                throw new HttpException('评论回复关系异常，暂不能继续回复', 0, 409);
             }
             $visited[$currentId] = true;
             if ((int) ($current['parent_id'] ?? 0) <= 0) {
@@ -1313,8 +1358,10 @@ final class ForumController
             $storedRootId = (int) ($current['root_comment_id'] ?? 0);
             if ($storedRootId > 0) {
                 $storedRoot = Database::one(
-                    'SELECT id, parent_id FROM forum_comments WHERE id = ? AND post_id = ? AND status = 1',
-                    [$storedRootId, $postId]
+                    "SELECT id, parent_id FROM forum_comments
+                     WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                       AND (audit_status = 'approved' OR user_id = ?)",
+                    [$storedRootId, $postId, $adminId, $appId, $viewerUserId]
                 );
                 if ($storedRoot !== null && (int) ($storedRoot['parent_id'] ?? 0) <= 0) {
                     return (int) $storedRoot['id'];
@@ -1322,14 +1369,357 @@ final class ForumController
             }
 
             $current = Database::one(
-                'SELECT id, parent_id, root_comment_id FROM forum_comments WHERE id = ? AND post_id = ? AND status = 1',
-                [(int) $current['parent_id'], $postId]
+                "SELECT id, parent_id, root_comment_id FROM forum_comments
+                 WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                   AND (audit_status = 'approved' OR user_id = ?)",
+                [(int) $current['parent_id'], $postId, $adminId, $appId, $viewerUserId]
             );
             if ($current === null) {
-                return $fallbackId;
+                throw new HttpException('上级评论不可见或不属于当前应用，暂不能继续回复', 0, 409);
             }
         }
-        return $fallbackId;
+        throw new HttpException('评论回复层级过深，暂不能继续回复', 0, 409);
+    }
+
+    private static function loadRootComments(
+        array $user, int $postId, int $limit, int $offset, string $sort
+    ): array {
+        $roots = self::fetchCommentRows(
+            $user,
+            $postId,
+            '(c.parent_id IS NULL OR c.parent_id = 0)',
+            [],
+            self::forumCommentOrder($sort),
+            $limit,
+            $offset
+        );
+        $roots = self::attachReplyPreviews($roots, $user, $postId);
+        return self::hydrateForumCommentRows($roots, (int) $user['app_id']);
+    }
+
+    /**
+     * Read only the lightweight identity/parent graph for a whole thread. This
+     * keeps exact pagination and full-chain visibility checks without loading
+     * every reply body or issuing one query per ancestor.
+     */
+    private static function fetchThreadIndexRows(
+        array $user, int $postId, int $rootId, string $orderSql
+    ): array {
+        return Database::all(
+            "SELECT c.id, c.parent_id, c.root_comment_id
+             FROM forum_comments c
+             INNER JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id
+               AND parent_comment.post_id = c.post_id AND parent_comment.admin_id = c.admin_id
+               AND parent_comment.app_id = c.app_id AND parent_comment.status = 1
+               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
+             WHERE c.admin_id = ? AND c.app_id = ? AND c.post_id = ? AND c.status = 1
+               AND c.parent_id IS NOT NULL AND c.parent_id > 0 AND c.root_comment_id = ?
+               AND (c.audit_status = 'approved' OR c.user_id = ?)
+             ORDER BY {$orderSql}",
+            [
+                (int) $user['id'], (int) $user['admin_id'], (int) $user['app_id'],
+                $postId, $rootId, (int) $user['id'],
+            ]
+        );
+    }
+
+    /**
+     * Load comments in one tenant-scoped query. Callers only pass server-owned
+     * WHERE/ORDER fragments selected from fixed branches; request strings are
+     * never concatenated into SQL.
+     */
+    private static function fetchCommentRows(
+        array $user,
+        int $postId,
+        string $extraWhere,
+        array $extraParams,
+        string $orderSql,
+        ?int $limit = null,
+        int $offset = 0
+    ): array {
+        $limitSql = '';
+        if ($limit !== null) {
+            $safeLimit = min(500, max(1, $limit));
+            $safeOffset = max(0, $offset);
+            $limitSql = " LIMIT {$safeLimit} OFFSET {$safeOffset}";
+        }
+        return Database::all(
+            "SELECT c.id, c.parent_id, c.root_comment_id, c.user_id, c.content,
+                    c.tags_json, c.mentions_json, c.audit_status, c.audit_reason,
+                    c.is_pinned, c.pin_order, c.like_count, c.favorite_count,
+                    c.created_at, c.updated_at, u.uid, u.account, p.nickname, p.avatar,
+                    parent_comment.user_id AS reply_to_user_id,
+                    parent_user.uid AS reply_to_uid,
+                    COALESCE(NULLIF(parent_profile.nickname, ''), NULLIF(parent_user.account, ''), parent_user.uid, '') AS reply_to_name,
+                    CASE WHEN liked.id IS NULL THEN 0 ELSE 1 END AS liked,
+                    CASE WHEN favorite.id IS NULL THEN 0 ELSE 1 END AS favorited
+             FROM forum_comments c
+             INNER JOIN users u ON u.id = c.user_id AND u.admin_id = c.admin_id AND u.app_id = c.app_id
+             LEFT JOIN user_profiles p ON p.user_id = c.user_id AND p.admin_id = c.admin_id AND p.app_id = c.app_id
+             LEFT JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id
+               AND parent_comment.post_id = c.post_id AND parent_comment.admin_id = c.admin_id
+               AND parent_comment.app_id = c.app_id AND parent_comment.status = 1
+               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
+             LEFT JOIN users parent_user ON parent_user.id = parent_comment.user_id
+               AND parent_user.admin_id = parent_comment.admin_id AND parent_user.app_id = parent_comment.app_id
+             LEFT JOIN user_profiles parent_profile ON parent_profile.user_id = parent_comment.user_id
+               AND parent_profile.admin_id = parent_comment.admin_id AND parent_profile.app_id = parent_comment.app_id
+             LEFT JOIN forum_likes liked ON liked.admin_id = c.admin_id AND liked.app_id = c.app_id
+               AND liked.user_id = ? AND liked.target_type = 'comment' AND liked.target_id = c.id
+             LEFT JOIN forum_content_favorites favorite ON favorite.admin_id = c.admin_id AND favorite.app_id = c.app_id
+               AND favorite.user_id = ? AND favorite.target_type = 'comment' AND favorite.target_id = c.id
+             WHERE c.admin_id = ? AND c.app_id = ? AND c.post_id = ? AND c.status = 1
+               AND (c.audit_status = 'approved' OR c.user_id = ?) AND ({$extraWhere})
+             ORDER BY {$orderSql}{$limitSql}",
+            array_merge(
+                [
+                    (int) $user['id'], (int) $user['id'], (int) $user['id'],
+                    (int) $user['admin_id'], (int) $user['app_id'], $postId, (int) $user['id'],
+                ],
+                $extraParams
+            )
+        );
+    }
+
+    /**
+     * Load only the tenant-scoped visible reply graph needed for exact counts,
+     * chain validation and the existing preview order. Reply bodies, tags,
+     * profiles, reactions and media are deliberately excluded here.
+     */
+    private static function fetchReplyPreviewIndexRows(
+        array $user, int $postId, array $rootIds
+    ): array {
+        if ($rootIds === []) return [];
+        $placeholders = implode(',', array_fill(0, count($rootIds), '?'));
+        return Database::all(
+            "SELECT c.id, c.parent_id, c.root_comment_id, c.is_pinned, c.pin_order
+             FROM forum_comments c
+             INNER JOIN forum_comments parent_comment ON parent_comment.id = c.parent_id
+               AND parent_comment.post_id = c.post_id AND parent_comment.admin_id = c.admin_id
+               AND parent_comment.app_id = c.app_id AND parent_comment.status = 1
+               AND (parent_comment.audit_status = 'approved' OR parent_comment.user_id = ?)
+             WHERE c.admin_id = ? AND c.app_id = ? AND c.post_id = ? AND c.status = 1
+               AND c.parent_id IS NOT NULL AND c.parent_id > 0
+               AND c.root_comment_id IN ({$placeholders})
+               AND (c.audit_status = 'approved' OR c.user_id = ?)
+             ORDER BY c.root_comment_id ASC, c.is_pinned DESC, c.pin_order DESC, c.id ASC",
+            array_merge(
+                [
+                    (int) $user['id'], (int) $user['admin_id'],
+                    (int) $user['app_id'], $postId,
+                ],
+                $rootIds,
+                [(int) $user['id']]
+            )
+        );
+    }
+
+    /**
+     * The initial post payload contains roots only. Replies are loaded once for
+     * all roots as a lightweight graph, validated as complete visible chains and
+     * counted. Only the two selected IDs per root are then loaded and hydrated.
+     */
+    private static function attachReplyPreviews(array $roots, array $user, int $postId): array
+    {
+        $rootIds = [];
+        foreach ($roots as &$root) {
+            $rootId = (int) ($root['id'] ?? 0);
+            if ($rootId > 0) {
+                $rootIds[] = $rootId;
+                $root['root_comment_id'] = $rootId;
+            }
+            $root['reply_count'] = 0;
+            $root['reply_preview'] = [];
+        }
+        unset($root);
+        if ($rootIds === []) return $roots;
+
+        $replyIndexRows = self::fetchReplyPreviewIndexRows($user, $postId, $rootIds);
+        $replyIndexRows = self::filterVisibleReplyChains($replyIndexRows, $roots);
+
+        $previewIds = [];
+        $selectedIndexById = [];
+        foreach ($roots as $index => $_root) $previewIds[$index] = [];
+        $rootIndexes = [];
+        foreach ($roots as $index => $root) $rootIndexes[(int) $root['id']] = $index;
+        foreach ($replyIndexRows as $reply) {
+            $rootId = (int) ($reply['root_comment_id'] ?? 0);
+            if (!isset($rootIndexes[$rootId])) continue;
+            $index = $rootIndexes[$rootId];
+            $roots[$index]['reply_count']++;
+            if (count($previewIds[$index]) < 2) {
+                $replyId = (int) ($reply['id'] ?? 0);
+                if ($replyId <= 0) continue;
+                $previewIds[$index][] = $replyId;
+                $selectedIndexById[$replyId] = [
+                    'parent_id' => (int) ($reply['parent_id'] ?? 0),
+                    'root_comment_id' => $rootId,
+                ];
+            }
+        }
+
+        $selectedPreviewIds = array_keys($selectedIndexById);
+        if ($selectedPreviewIds === []) return $roots;
+        $selectedPlaceholders = implode(',', array_fill(0, count($selectedPreviewIds), '?'));
+        $rootPlaceholders = implode(',', array_fill(0, count($rootIds), '?'));
+        $previewRows = self::fetchCommentRows(
+            $user,
+            $postId,
+            "c.id IN ({$selectedPlaceholders})
+             AND c.parent_id IS NOT NULL AND c.parent_id > 0
+             AND c.root_comment_id IN ({$rootPlaceholders})
+             AND parent_comment.id IS NOT NULL",
+            array_merge($selectedPreviewIds, $rootIds),
+            'c.root_comment_id ASC, c.is_pinned DESC, c.pin_order DESC, c.id ASC'
+        );
+        // If a relation changed between the lightweight and detail reads, omit
+        // that preview instead of attaching it under the wrong root.
+        $previewRows = array_values(array_filter(
+            $previewRows,
+            static function (array $row) use ($selectedIndexById): bool {
+                $id = (int) ($row['id'] ?? 0);
+                $expected = $selectedIndexById[$id] ?? null;
+                return is_array($expected)
+                    && (int) ($row['parent_id'] ?? 0) === (int) $expected['parent_id']
+                    && (int) ($row['root_comment_id'] ?? 0) === (int) $expected['root_comment_id'];
+            }
+        ));
+        $previewRows = self::hydrateForumCommentRows($previewRows, (int) $user['app_id']);
+        $previewById = [];
+        foreach ($previewRows as $reply) $previewById[(int) $reply['id']] = $reply;
+        foreach ($roots as $index => &$root) {
+            foreach ($previewIds[$index] as $replyId) {
+                if (isset($previewById[$replyId])) $root['reply_preview'][] = $previewById[$replyId];
+            }
+        }
+        unset($root);
+        return $roots;
+    }
+
+    /**
+     * Rows that point at a hidden/deleted/missing ancestor, another root, or a
+     * cycle are excluded. The complete candidate set is already in memory, so
+     * this check adds no N+1 database reads.
+     */
+    private static function filterVisibleReplyChains(array $rows, array $roots): array
+    {
+        $rootSet = [];
+        $byId = [];
+        $valid = [];
+        foreach ($roots as $root) {
+            $id = (int) ($root['id'] ?? 0);
+            if ($id <= 0 || (int) ($root['parent_id'] ?? 0) > 0) continue;
+            $rootSet[$id] = true;
+            $valid[$id] = true;
+            $root['root_comment_id'] = $id;
+            $byId[$id] = $root;
+        }
+        foreach ($rows as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            if ($id > 0) $byId[$id] = $row;
+        }
+
+        $resolve = static function (int $id, array $trail = []) use (&$resolve, &$valid, $byId, $rootSet): bool {
+            if (isset($valid[$id])) return $valid[$id];
+            if ($id <= 0 || isset($trail[$id]) || !isset($byId[$id])) return $valid[$id] = false;
+            $row = $byId[$id];
+            $rootId = (int) ($row['root_comment_id'] ?? 0);
+            if ($rootId <= 0 || !isset($rootSet[$rootId])) return $valid[$id] = false;
+            $parentId = (int) ($row['parent_id'] ?? 0);
+            if ($parentId <= 0) return $valid[$id] = ($id === $rootId);
+            if (!isset($byId[$parentId])) return $valid[$id] = false;
+            $parentRootId = (int) ($byId[$parentId]['root_comment_id'] ?? $parentId);
+            if ($parentRootId !== $rootId) return $valid[$id] = false;
+            $trail[$id] = true;
+            return $valid[$id] = $resolve($parentId, $trail);
+        };
+
+        return array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => $resolve((int) ($row['id'] ?? 0))
+        ));
+    }
+
+    private static function resolveVisibleThreadRoot(
+        array $user, int $postId, int $requestedRootId, int $commentId
+    ): array {
+        $rootId = $requestedRootId;
+        if ($commentId > 0) {
+            $comment = Database::one(
+                "SELECT id, parent_id, root_comment_id, user_id, audit_status, status
+                 FROM forum_comments
+                 WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                   AND (audit_status = 'approved' OR user_id = ?)",
+                [
+                    $commentId, $postId, (int) $user['admin_id'],
+                    (int) $user['app_id'], (int) $user['id'],
+                ]
+            );
+            if ($comment === null) throw new HttpException('评论或回复不存在', 404, 404);
+            $rootId = (int) ($comment['parent_id'] ?? 0) <= 0
+                ? (int) $comment['id']
+                : (int) ($comment['root_comment_id'] ?? 0);
+        }
+        if ($rootId <= 0) {
+            throw new HttpException('thread 范围必须提供 root_comment_id 或 comment_id', 0, 422);
+        }
+
+        $root = Database::one(
+            "SELECT id, parent_id, root_comment_id, user_id, audit_status, status
+             FROM forum_comments
+             WHERE id = ? AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+               AND (parent_id IS NULL OR parent_id = 0)
+               AND (audit_status = 'approved' OR user_id = ?)",
+            [$rootId, $postId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
+        );
+        if ($root === null) throw new HttpException('主评论不存在', 404, 404);
+        $root['root_comment_id'] = (int) $root['id'];
+        return $root;
+    }
+
+    private static function commentIndex(array $comments, int $commentId): int
+    {
+        foreach ($comments as $index => $comment) {
+            if ((int) ($comment['id'] ?? 0) === $commentId) return (int) $index;
+        }
+        return -1;
+    }
+
+    private static function hydrateForumCommentRows(array $comments, int $appId): array
+    {
+        if ($comments === []) return [];
+        $comments = self::hydrateCommentRoots($comments);
+        $comments = ContentTagService::hydrate($comments);
+        $comments = MessageMediaService::hydrate($comments, 'forum_comment', $appId);
+        return MessageForwardService::hydrate($comments, 'forum_comment', $appId);
+    }
+
+    private static function normalizeForumSort(string $value): string
+    {
+        $sort = strtolower(trim($value));
+        return in_array($sort, ['comprehensive', 'hot', 'latest', 'earliest'], true)
+            ? $sort
+            : 'comprehensive';
+    }
+
+    private static function forumCommentOrder(string $sort): string
+    {
+        return match ($sort) {
+            'hot' => 'c.is_pinned DESC, c.pin_order DESC, (c.like_count * 2 + c.favorite_count * 3) DESC, c.like_count DESC, c.id DESC',
+            'latest' => 'c.is_pinned DESC, c.pin_order DESC, c.created_at DESC, c.id DESC',
+            'earliest' => 'c.is_pinned DESC, c.pin_order DESC, c.created_at ASC, c.id ASC',
+            default => 'c.is_pinned DESC, c.pin_order DESC, c.like_count DESC, c.favorite_count DESC, c.created_at DESC, c.id DESC',
+        };
+    }
+
+    private static function forumPostOrder(string $sort): string
+    {
+        return match ($sort) {
+            'hot' => 'p.heat_score DESC, p.like_count DESC, p.comment_count DESC, p.id DESC',
+            'latest' => 'p.created_at DESC, p.id DESC',
+            'earliest' => 'p.created_at ASC, p.id ASC',
+            default => "CASE WHEN p.hot_label <> '' THEN 0 ELSE 1 END, p.heat_score DESC, p.id DESC",
+        };
     }
 
     /**
@@ -1378,9 +1768,7 @@ final class ForumController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'forum');
-        return $user;
+        return AuthService::user($request, 'forum');
     }
 
     private static function withLegacyImages(array $data): array

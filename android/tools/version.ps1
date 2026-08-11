@@ -14,6 +14,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $workspaceRoot = (Resolve-Path (Join-Path $projectRoot '..')).Path
 $versionFile = Join-Path $projectRoot 'version.properties'
 $downloadPackageFile = Join-Path $workspaceRoot 'download-site\package.json'
+$backendReleaseFile = Join-Path $workspaceRoot 'backend\config\release-identity.json'
 $lockFile = Join-Path $projectRoot '.version.lock'
 $historyFile = Join-Path $projectRoot 'version-history.jsonl'
 
@@ -115,6 +116,30 @@ function Write-DownloadPackageVersion([string] $Name) {
     )
 }
 
+function Read-BackendReleaseIdentity {
+    if (-not (Test-Path -LiteralPath $backendReleaseFile)) {
+        throw "缺少后端发布身份文件：$backendReleaseFile"
+    }
+    $identity = Get-Content -LiteralPath $backendReleaseFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string] $identity.version_name -notmatch '^\d+\.\d+\.\d+$' -or [int] $identity.version_code -le 0) {
+        throw '后端发布身份文件格式无效。'
+    }
+    return [ordered]@{
+        versionName = [string] $identity.version_name
+        versionCode = [int] $identity.version_code
+    }
+}
+
+function Write-BackendReleaseIdentity([string] $Name, [int] $Code) {
+    $identity = [ordered]@{ version_name = $Name; version_code = $Code }
+    $json = $identity | ConvertTo-Json
+    [System.IO.File]::WriteAllText(
+        $backendReleaseFile,
+        $json + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+}
+
 function Write-Result($Result) {
     if ($Json) {
         $Result | ConvertTo-Json -Compress
@@ -137,8 +162,12 @@ $lock = Open-VersionLock
 try {
     $current = Read-VersionState
     $downloadVersion = Read-DownloadPackageVersion
+    $backendRelease = Read-BackendReleaseIdentity
     if ($downloadVersion -ne $current.versionName) {
         throw "版本链不一致：Android=$($current.versionName)，下载站=$downloadVersion。请先修复再发布。"
+    }
+    if ($backendRelease.versionName -ne $current.versionName -or $backendRelease.versionCode -ne $current.versionCode) {
+        throw "版本链不一致：Android=$($current.versionName) ($($current.versionCode))，后端=$($backendRelease.versionName) ($($backendRelease.versionCode))。请先修复再发布。"
     }
     $nextName = $current.versionName
     $nextCode = $current.versionCode
@@ -196,19 +225,27 @@ try {
         versionCode = $nextCode
         versionFile = $versionFile
         downloadPackageFile = $downloadPackageFile
+        backendReleaseFile = $backendReleaseFile
     }
 
     if ($changed -and -not $DryRun) {
         $originalPackage = Get-Content -LiteralPath $downloadPackageFile -Raw -Encoding UTF8
+        $originalBackendRelease = Get-Content -LiteralPath $backendReleaseFile -Raw -Encoding UTF8
         try {
             Write-VersionState -Name $nextName -Code $nextCode
             Write-DownloadPackageVersion -Name $nextName
+            Write-BackendReleaseIdentity -Name $nextName -Code $nextCode
         }
         catch {
             Write-VersionState -Name $current.versionName -Code $current.versionCode
             [System.IO.File]::WriteAllText(
                 $downloadPackageFile,
                 $originalPackage,
+                (New-Object System.Text.UTF8Encoding($false))
+            )
+            [System.IO.File]::WriteAllText(
+                $backendReleaseFile,
+                $originalBackendRelease,
                 (New-Object System.Text.UTF8Encoding($false))
             )
             throw

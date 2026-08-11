@@ -175,7 +175,7 @@ final class ShopController
         $comment = self::findComment($user, (int) $params['comment_id'], false);
         if ((int) $comment['user_id'] !== (int) $user['id']) throw new HttpException('只能删除自己的评论', 403, 403);
         Database::execute(
-            'UPDATE shop_goods_comments SET status = 0, updated_at = NOW()
+            'UPDATE shop_goods_comments SET status = -1, updated_at = NOW()
              WHERE admin_id = ? AND app_id = ? AND (id = ? OR parent_id = ?)',
             [(int) $user['admin_id'], (int) $user['app_id'], (int) $comment['id'], (int) $comment['id']]
         );
@@ -445,8 +445,7 @@ final class ShopController
 
     private static function user(Request $request, bool $requireShop = true): array
     {
-        $user = AuthService::user($request);
-        if ($requireShop) AppService::requireFeature((int) $user['app_id'], 'shop');
+        $user = AuthService::user($request, $requireShop ? 'shop' : null);
         AuthService::ensureNotBanned($user, ['all', 'shop']);
         return $user;
     }

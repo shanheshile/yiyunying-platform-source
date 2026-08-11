@@ -405,6 +405,13 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
             request.setTitle(Jsons.string(file, "original_name"));
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             String mime = Jsons.string(file, "mime_type").toLowerCase();
+            if (!mime.isEmpty()) request.setMimeType(mime);
+            if (isConfiguredApiUrl(url)) {
+                String token = AppAccess.from(this).session().accessToken();
+                String appKey = AppAccess.from(this).session().appKey();
+                if (!token.isEmpty()) request.addRequestHeader("Authorization", "Bearer " + token);
+                if (!appKey.isEmpty()) request.addRequestHeader("X-App-Key", appKey);
+            }
             String directory = mime.startsWith("image/") ? Environment.DIRECTORY_PICTURES
                 : (mime.startsWith("video/") ? Environment.DIRECTORY_MOVIES
                 : (mime.startsWith("audio/") ? Environment.DIRECTORY_MUSIC : Environment.DIRECTORY_DOCUMENTS));
@@ -421,6 +428,24 @@ public final class FilePreviewActivity extends xyz.jjmxg.yiyunying.ui.common.Sys
             Snackbar.make(binding.getRoot(), "已加入下载任务", Snackbar.LENGTH_SHORT).show();
         } catch (RuntimeException exception) {
             Snackbar.make(binding.getRoot(), "下载任务创建失败", Snackbar.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean isConfiguredApiUrl(String value) {
+        try {
+            Uri target = Uri.parse(value);
+            Uri base = Uri.parse(AppAccess.from(this).session().baseUrl());
+            int targetPort = target.getPort() >= 0 ? target.getPort()
+                : ("https".equalsIgnoreCase(target.getScheme()) ? 443 : 80);
+            int basePort = base.getPort() >= 0 ? base.getPort()
+                : ("https".equalsIgnoreCase(base.getScheme()) ? 443 : 80);
+            return target.getScheme() != null && base.getScheme() != null
+                && target.getScheme().equalsIgnoreCase(base.getScheme())
+                && target.getHost() != null && base.getHost() != null
+                && target.getHost().equalsIgnoreCase(base.getHost())
+                && targetPort == basePort;
+        } catch (RuntimeException ignored) {
+            return false;
         }
     }
 

@@ -1,113 +1,293 @@
 ﻿[CmdletBinding()]
 param(
     [string] $ReleaseRoot,
-    [switch] $AllowDirty
+    [string] $ExpectedTag
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$versionFile = Join-Path $projectRoot 'android\version.properties'
-
-function Read-VersionName {
-    foreach ($line in Get-Content -LiteralPath $versionFile -Encoding UTF8) {
-        if ($line -match '^\s*VERSION_NAME\s*=\s*(\d+\.\d+\.\d+)\s*$') {
-            return $Matches[1]
-        }
-    }
-    throw "无法从 $versionFile 读取 VERSION_NAME"
-}
+$releaseIdentityFile = Join-Path $projectRoot 'backend\config\release-identity.json'
+$downloadMetadataFile = Join-Path $projectRoot 'download-site\release-metadata.json'
 
 function Get-Sha256([string] $Path) {
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function Write-Utf8Json([string] $Path, $Value) {
+function Write-Utf8JsonAtomic([string] $Path, $Value) {
     $json = $Value | ConvertTo-Json -Depth 20
+    $temporary = "$Path.$([Guid]::NewGuid().ToString('N')).tmp"
     [System.IO.File]::WriteAllText(
-        $Path,
+        $temporary,
         $json + [Environment]::NewLine,
         (New-Object System.Text.UTF8Encoding($false))
     )
-}
-
-function Assert-GitSucceeded([string] $Operation) {
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Operation 失败，Git 退出码：$LASTEXITCODE"
-    }
-}
-
-$version = Read-VersionName
-$releaseDirectory = if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
-    Join-Path $projectRoot "releases\$version"
-}
-else {
-    Join-Path (Resolve-Path $ReleaseRoot).Path $version
-}
-
-if (-not (Test-Path -LiteralPath (Join-Path $releaseDirectory 'release-manifest.json'))) {
-    throw "请先生成 Android 发布产物：$releaseDirectory"
-}
-
-if (-not $AllowDirty) {
-    $dirty = @(& git '-C' $projectRoot 'status' '--porcelain' '--untracked-files=no')
-    Assert-GitSucceeded '读取工作区状态'
-    if ($dirty.Count -gt 0) {
-        throw '完整项目包必须从干净提交生成；请先提交本次改动。'
-    }
-}
-
-$commit = (& git '-C' $projectRoot 'rev-parse' 'HEAD').Trim()
-    Assert-GitSucceeded '读取 Git 提交'
-    $sourceName = "yiyunying-source-v$version.zip"
-    $historyName = "yiyunying-git-history-v$version.bundle"
-    $deliveryName = "yiyunying-project-delivery-v$version.zip"
-    $sourcePath = Join-Path $releaseDirectory $sourceName
-    $historyPath = Join-Path $releaseDirectory $historyName
-    $deliveryPath = Join-Path $releaseDirectory $deliveryName
-
-    Remove-Item -LiteralPath $sourcePath, $historyPath, $deliveryPath -Force -ErrorAction SilentlyContinue
-    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$sourcePath" 'HEAD'
-    Assert-GitSucceeded '生成源码快照'
-    & git '-C' $projectRoot 'bundle' 'create' $historyPath '--all'
-    Assert-GitSucceeded '生成 Git 历史包'
-
-    $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ("yiyunying-delivery-" + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $temporary -Force | Out-Null
     try {
-        $sourceDirectory = Join-Path $temporary 'source'
-        Expand-Archive -LiteralPath $sourcePath -DestinationPath $sourceDirectory -Force
-        Copy-Item -LiteralPath $historyPath -Destination (Join-Path $temporary $historyName)
-        Copy-Item -LiteralPath (Join-Path $releaseDirectory 'release-manifest.json') -Destination $temporary
-        Copy-Item -LiteralPath (Join-Path $releaseDirectory 'SHA256SUMS.txt') -Destination $temporary
-
-        $handoffDirectory = Join-Path $temporary 'handoff'
-        New-Item -ItemType Directory -Path $handoffDirectory -Force | Out-Null
-        foreach ($relative in @(
-            'README.md',
-            'CHANGELOG.md',
-            'docs\CURRENT_STATUS.md',
-            'docs\PROJECT_INDEX.md',
-            'docs\MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md',
-            'docs\NEW_TASK_HANDOFF.md',
-            'docs\project-handoff.json',
-            "docs\releases\$version.md"
-        )) {
-            $candidate = Join-Path $projectRoot $relative
-            if (Test-Path -LiteralPath $candidate) {
-                $safeName = $relative -replace '[\\/]', '__'
-                Copy-Item -LiteralPath $candidate -Destination (Join-Path $handoffDirectory $safeName)
-            }
-        }
-
-        Compress-Archive -Path (Join-Path $temporary '*') -DestinationPath $deliveryPath -CompressionLevel Optimal -Force
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
     }
     finally {
-        Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Invoke-GitText {
+    param([Parameter(Mandatory = $true)][string[]] $Arguments, [string] $Operation)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git '-C' $projectRoot @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Operation 失败：$($output -join [Environment]::NewLine)"
+    }
+    return ($output -join [Environment]::NewLine).Trim()
+}
+
+function Assert-SafeTransactionPath {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $ResolvedReleaseRoot,
+        [Parameter(Mandatory = $true)][string] $Version,
+        [Parameter(Mandatory = $true)][string] $Token,
+        [Parameter(Mandatory = $true)][ValidateSet('finalizing', 'build-backup')][string] $Kind
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $normalizedReleaseRoot = [System.IO.Path]::GetFullPath($ResolvedReleaseRoot).TrimEnd('\')
+    $expected = [System.IO.Path]::GetFullPath((Join-Path $normalizedReleaseRoot ".$Version.$Token.$Kind")).TrimEnd('\')
+    if (-not $resolvedPath.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not ([System.IO.Path]::GetDirectoryName($resolvedPath)).Equals($normalizedReleaseRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝操作不属于本次 Finalize 事务的路径：$resolvedPath"
+    }
+}
+
+if (-not (Test-Path -LiteralPath $releaseIdentityFile)) {
+    throw "缺少发布身份文件：$releaseIdentityFile"
+}
+$identityBytes = [System.IO.File]::ReadAllBytes($releaseIdentityFile)
+$identity = [System.Text.Encoding]::UTF8.GetString($identityBytes) | ConvertFrom-Json
+$version = [string] $identity.version_name
+$versionCode = [int] $identity.version_code
+if ($version -notmatch '^\d+\.\d+\.\d+$' -or $versionCode -le 0) {
+    throw '发布身份中的版本格式无效。'
+}
+$identitySha256 = Get-Sha256 $releaseIdentityFile
+$resolvedReleaseRoot = if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
+    $defaultRoot = Join-Path $projectRoot 'releases'
+    if (-not (Test-Path -LiteralPath $defaultRoot)) {
+        throw "发布根目录不存在：$defaultRoot"
+    }
+    (Resolve-Path -LiteralPath $defaultRoot).Path.TrimEnd('\')
+}
+else {
+    (Resolve-Path -LiteralPath $ReleaseRoot).Path.TrimEnd('\')
+}
+$releaseDirectory = Join-Path $resolvedReleaseRoot $version
+$releaseManifestPath = Join-Path $releaseDirectory 'release-manifest.json'
+if (-not (Test-Path -LiteralPath $releaseManifestPath)) {
+    throw "请先运行 release.ps1 -Phase Build：$releaseDirectory"
+}
+
+$releaseManifest = Get-Content -LiteralPath $releaseManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([int] $releaseManifest.schemaVersion -ne 4) {
+    throw 'Finalize 只接受 schemaVersion=4 的 Build 发布清单。'
+}
+$buildCommit = ([string] $releaseManifest.buildSourceCommit).ToLowerInvariant()
+if ($buildCommit -notmatch '^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$') {
+    throw '发布清单缺少有效的 buildSourceCommit。'
+}
+if ($releaseManifest.versionName -ne $version -or [int] $releaseManifest.versionCode -ne $versionCode) {
+    throw '发布清单与后端发布身份版本不一致。'
+}
+if (([string] $releaseManifest.releaseIdentitySha256).ToLowerInvariant() -ne $identitySha256) {
+    throw '发布清单未绑定到当前后端发布身份文件。'
+}
+if ([string] $releaseManifest.finalizationStatus -ne 'pending' -or
+    -not [string]::IsNullOrWhiteSpace([string] $releaseManifest.releaseEvidenceCommit)) {
+    throw '发布目录不是未收口的 Build 产物；拒绝覆盖或二次生成同版本项目资产。'
+}
+
+if (-not (Test-Path -LiteralPath $downloadMetadataFile)) {
+    throw "缺少由 Build 阶段生成并提交的下载元数据：$downloadMetadataFile"
+}
+[void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'download-site/release-metadata.json') -Operation '确认下载元数据已提交')
+$downloadMetadata = Get-Content -LiteralPath $downloadMetadataFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$pendingManifestSha256 = Get-Sha256 $releaseManifestPath
+if ([int] $downloadMetadata.schemaVersion -ne 4 -or
+    [string] $downloadMetadata.versionName -ne $version -or
+    [int] $downloadMetadata.versionCode -ne $versionCode -or
+    [string] $downloadMetadata.buildSourceCommit -ne $buildCommit -or
+    ([string] $downloadMetadata.releaseIdentitySha256).ToLowerInvariant() -ne $identitySha256 -or
+    [string] $downloadMetadata.releaseTag -ne "v$version-debug" -or
+    [string] $downloadMetadata.finalizationStatus -ne 'pending' -or
+    -not [string]::IsNullOrWhiteSpace([string] $downloadMetadata.releaseEvidenceCommit) -or
+    ([string] $downloadMetadata.pendingManifestSha256).ToLowerInvariant() -ne $pendingManifestSha256) {
+    throw 'B 提交中的下载元数据未精确绑定当前 pending 发布清单、Build 提交或发布身份；拒绝 Finalize。'
+}
+
+$tag = if ([string]::IsNullOrWhiteSpace($ExpectedTag)) { "v$version-debug" } else { $ExpectedTag }
+if ($tag -ne "v$version-debug" -or [string] $releaseManifest.releaseTag -ne $tag) {
+    throw "最终标签必须严格使用 v<version>-debug：v$version-debug"
+}
+
+$sourceName = "yiyunying-source-v$version.zip"
+$historyName = "yiyunying-git-history-v$version.bundle"
+$deliveryName = "yiyunying-project-delivery-v$version.zip"
+$assetsManifestName = 'project-assets-manifest.json'
+$expectedProjectAssets = [ordered]@{
+    source = $sourceName
+    history = $historyName
+    delivery = $deliveryName
+    manifest = $assetsManifestName
+}
+$descriptors = @($releaseManifest.projectAssets)
+if ($descriptors.Count -ne $expectedProjectAssets.Count -or
+    @($descriptors | ForEach-Object { [string] $_.id } | Sort-Object -Unique).Count -ne $expectedProjectAssets.Count) {
+    throw '发布清单必须且只能声明四个唯一项目资产。'
+}
+foreach ($descriptor in $descriptors) {
+    $id = [string] $descriptor.id
+    if (-not $expectedProjectAssets.Contains($id) -or [string] $descriptor.fileName -ne [string] $expectedProjectAssets[$id]) {
+        throw "发布清单包含未知或错名项目资产：$id / $($descriptor.fileName)"
+    }
+}
+
+$releases = @($releaseManifest.releases)
+$requiredReleaseIds = @('user', 'admin', 'authorized', 'owner')
+$actualReleaseIds = @($releases | ForEach-Object { [string] $_.id } | Sort-Object)
+if ($releases.Count -ne 4 -or (Compare-Object ($requiredReleaseIds | Sort-Object) $actualReleaseIds)) {
+    throw 'Build 发布清单必须且只能包含四个 Android 版本。'
+}
+$expectedBuildFiles = @('release-manifest.json', 'SHA256SUMS.txt')
+foreach ($entry in $releases) {
+    $fileName = [string] $entry.fileName
+    if ([System.IO.Path]::GetFileName($fileName) -ne $fileName -or $fileName -notmatch '\.apk$') {
+        throw "APK 文件名不安全：$fileName"
+    }
+    $expectedBuildFiles += $fileName
+    $apkPath = Join-Path $releaseDirectory $fileName
+    if (-not (Test-Path -LiteralPath $apkPath) -or
+        (Get-Item -LiteralPath $apkPath).Length -ne [long] $entry.sizeBytes -or
+        (Get-Sha256 $apkPath) -ne ([string] $entry.sha256).ToLowerInvariant()) {
+        throw "Build APK 体积或 SHA-256 不一致：$fileName"
+    }
+}
+$actualBuildFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -File | ForEach-Object { $_.Name } | Sort-Object)
+$actualBuildDirectories = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -Directory)
+if ($actualBuildDirectories.Count -ne 0 -or (Compare-Object ($expectedBuildFiles | Sort-Object) $actualBuildFiles)) {
+    throw 'Build 发布目录包含缺失、额外或已提前生成的项目资产；拒绝 Finalize。'
+}
+
+$dirty = Invoke-GitText -Arguments @('status', '--porcelain', '--untracked-files=all') -Operation '读取 Git 工作区状态'
+if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+    throw 'Finalize 必须从完全干净且已提交的 main 证据提交执行（包括未跟踪文件）。'
+}
+$branch = Invoke-GitText -Arguments @('symbolic-ref', '--short', 'HEAD') -Operation '读取 Git 分支'
+if ($branch -ne 'main') {
+    throw "Finalize 只允许从 main 分支执行，当前分支：$branch"
+}
+$evidenceCommit = (Invoke-GitText -Arguments @('rev-parse', '--verify', 'HEAD^{commit}') -Operation '读取发布证据提交').ToLowerInvariant()
+$mainCommit = (Invoke-GitText -Arguments @('rev-parse', '--verify', 'refs/heads/main^{commit}') -Operation '读取 main 提交').ToLowerInvariant()
+if ($mainCommit -ne $evidenceCommit) {
+    throw 'main 分支未精确指向当前发布证据提交。'
+}
+if ($evidenceCommit -eq $buildCommit) {
+    throw 'Finalize 必须在 Build 源码提交之后形成独立的元数据/证据提交。'
+}
+[void] (Invoke-GitText -Arguments @('cat-file', '-e', "$buildCommit^{commit}") -Operation '确认 Build 源码提交存在')
+[void] (Invoke-GitText -Arguments @('merge-base', '--is-ancestor', $buildCommit, $evidenceCommit) -Operation '确认 Build 提交是证据提交祖先')
+$tagType = Invoke-GitText -Arguments @('cat-file', '-t', "refs/tags/$tag") -Operation "读取最终标签类型 $tag"
+if ($tagType -ne 'tag') {
+    throw "最终标签必须是注释标签，不能是轻量标签：$tag"
+}
+$tagCommit = (Invoke-GitText -Arguments @('rev-list', '-n', '1', "refs/tags/$tag") -Operation "读取最终标签提交 $tag").ToLowerInvariant()
+if ($tagCommit -ne $evidenceCommit) {
+    throw "最终标签 $tag 必须精确指向发布证据提交 $evidenceCommit"
+}
+[void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'backend/config/release-identity.json') -Operation '确认发布身份已提交')
+
+$token = [Guid]::NewGuid().ToString('N')
+$stagingDirectory = Join-Path $resolvedReleaseRoot ".$version.$token.finalizing"
+$backupDirectory = Join-Path $resolvedReleaseRoot ".$version.$token.build-backup"
+Assert-SafeTransactionPath -Path $stagingDirectory -ResolvedReleaseRoot $resolvedReleaseRoot -Version $version -Token $token -Kind 'finalizing'
+Assert-SafeTransactionPath -Path $backupDirectory -ResolvedReleaseRoot $resolvedReleaseRoot -Version $version -Token $token -Kind 'build-backup'
+if (Test-Path -LiteralPath $stagingDirectory) { throw "Finalize staging 已存在：$stagingDirectory" }
+if (Test-Path -LiteralPath $backupDirectory) { throw "Finalize backup 已存在：$backupDirectory" }
+
+$temporary = Join-Path ([System.IO.Path]::GetTempPath()) ("yiyunying-finalize-$token")
+$swapped = $false
+try {
+    New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
+    foreach ($item in Get-ChildItem -LiteralPath $releaseDirectory -Force) {
+        Copy-Item -LiteralPath $item.FullName -Destination $stagingDirectory -Recurse
+    }
+
+    $finalManifest = Get-Content -LiteralPath (Join-Path $stagingDirectory 'release-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $finalManifest.releaseEvidenceCommit = $evidenceCommit
+    $finalManifest.releaseTag = $tag
+    $finalManifest.finalizationStatus = 'finalized'
+    $finalManifest | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
+    $stagedManifestPath = Join-Path $stagingDirectory 'release-manifest.json'
+    Write-Utf8JsonAtomic -Path $stagedManifestPath -Value $finalManifest
+
+    $sourcePath = Join-Path $stagingDirectory $sourceName
+    $historyPath = Join-Path $stagingDirectory $historyName
+    $deliveryPath = Join-Path $stagingDirectory $deliveryName
+    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$sourcePath" $buildCommit
+    if ($LASTEXITCODE -ne 0) { throw '从精确 Build 提交生成源码快照失败。' }
+    & git '-C' $projectRoot 'bundle' 'create' $historyPath 'refs/heads/main' "refs/tags/$tag"
+    if ($LASTEXITCODE -ne 0) { throw '生成仅含最终 main 与注释发布标签的 Git Bundle 失败。' }
+    [void] (Invoke-GitText -Arguments @('bundle', 'verify', $historyPath) -Operation '验证 Git Bundle')
+    $bundleHeads = @((Invoke-GitText -Arguments @('bundle', 'list-heads', $historyPath) -Operation '检查 Git Bundle 引用') -split "`r?`n")
+    $bundleRefs = @($bundleHeads | Where-Object { $_ } | ForEach-Object { ($_ -split '\s+', 2)[1] })
+    if ($bundleRefs.Count -ne 2 -or 'refs/heads/main' -notin $bundleRefs -or "refs/tags/$tag" -notin $bundleRefs) {
+        throw "Git Bundle 必须且只能公开 refs/heads/main 与 refs/tags/$tag。"
+    }
+
+    New-Item -ItemType Directory -Path $temporary | Out-Null
+    Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $temporary $sourceName)
+    Copy-Item -LiteralPath $historyPath -Destination (Join-Path $temporary $historyName)
+    Copy-Item -LiteralPath $stagedManifestPath -Destination $temporary
+    Copy-Item -LiteralPath (Join-Path $stagingDirectory 'SHA256SUMS.txt') -Destination $temporary
+
+    $evidenceZip = Join-Path $temporary 'evidence-commit.zip'
+    $evidenceSource = Join-Path $temporary 'evidence-source'
+    & git '-C' $projectRoot 'archive' '--format=zip' "--output=$evidenceZip" $evidenceCommit
+    if ($LASTEXITCODE -ne 0) { throw '从精确证据提交生成交接文档快照失败。' }
+    Expand-Archive -LiteralPath $evidenceZip -DestinationPath $evidenceSource
+    $handoffDirectory = Join-Path $temporary 'handoff'
+    New-Item -ItemType Directory -Path $handoffDirectory | Out-Null
+    foreach ($relative in @(
+        'HANDOFF.md',
+        'README.md',
+        'CHANGELOG.md',
+        'docs\CURRENT_STATUS.md',
+        'docs\PROJECT_INDEX.md',
+        'docs\MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md',
+        'docs\NEW_TASK_HANDOFF.md',
+        'docs\project-handoff.json',
+        "docs\releases\$version.md"
+    )) {
+        $candidate = Join-Path $evidenceSource $relative
+        if (Test-Path -LiteralPath $candidate) {
+            $safeName = $relative -replace '[\\/]', '__'
+            Copy-Item -LiteralPath $candidate -Destination (Join-Path $handoffDirectory $safeName)
+        }
+    }
+    Remove-Item -LiteralPath $evidenceZip -Force
+    Remove-Item -LiteralPath $evidenceSource -Recurse -Force
+    Compress-Archive -Path (Join-Path $temporary '*') -DestinationPath $deliveryPath -CompressionLevel Optimal
 
     $assets = @()
     foreach ($name in @($sourceName, $historyName, $deliveryName)) {
-        $path = Join-Path $releaseDirectory $name
+        $path = Join-Path $stagingDirectory $name
+        if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -le 0) {
+            throw "项目资产生成后缺失或为空：$name"
+        }
         $file = Get-Item -LiteralPath $path
         $assets += [ordered]@{
             fileName = $name
@@ -116,11 +296,17 @@ $commit = (& git '-C' $projectRoot 'rev-parse' 'HEAD').Trim()
         }
     }
 
-    $manifest = [ordered]@{
-        schemaVersion = 1
+    $assetsManifest = [ordered]@{
+        schemaVersion = 3
         versionName = $version
-        gitCommit = $commit
+        versionCode = $versionCode
+        buildSourceCommit = $buildCommit
+        releaseEvidenceCommit = $evidenceCommit
+        releaseTag = $tag
+        releaseIdentitySha256 = $identitySha256
+        releaseManifestSha256 = Get-Sha256 $stagedManifestPath
         generatedAt = [DateTimeOffset]::Now.ToString('o')
+        bundleRefs = @('refs/heads/main', "refs/tags/$tag")
         security = [ordered]@{
             containsCredentials = $false
             containsSigningKeys = $false
@@ -128,9 +314,60 @@ $commit = (& git '-C' $projectRoot 'rev-parse' 'HEAD').Trim()
         }
         assets = $assets
     }
-    Write-Utf8Json -Path (Join-Path $releaseDirectory 'project-assets-manifest.json') -Value $manifest
+    Write-Utf8JsonAtomic -Path (Join-Path $stagingDirectory $assetsManifestName) -Value $assetsManifest
 
-Write-Host "完整项目产物已生成：$releaseDirectory"
-Write-Host "版本：$version"
-Write-Host "Git 提交：$commit"
-Write-Host '已生成源码快照、完整 Git 历史、项目交接总包和 SHA-256 校验清单。'
+    foreach ($name in @($sourceName, $historyName, $deliveryName, $assetsManifestName)) {
+        $path = Join-Path $stagingDirectory $name
+        if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -le 0) {
+            throw "Finalize 项目资产闭环不完整：$name"
+        }
+    }
+    foreach ($entry in $releases) {
+        $fileName = [string] $entry.fileName
+        $original = Join-Path $releaseDirectory $fileName
+        $staged = Join-Path $stagingDirectory $fileName
+        if ((Get-Item -LiteralPath $original).Length -ne (Get-Item -LiteralPath $staged).Length -or
+            (Get-Sha256 $original) -ne (Get-Sha256 $staged)) {
+            throw "Finalize staging 改变了 Build APK：$fileName"
+        }
+    }
+
+    Move-Item -LiteralPath $releaseDirectory -Destination $backupDirectory
+    try {
+        Move-Item -LiteralPath $stagingDirectory -Destination $releaseDirectory
+        $swapped = $true
+    }
+    catch {
+        Move-Item -LiteralPath $backupDirectory -Destination $releaseDirectory
+        throw
+    }
+    Assert-SafeTransactionPath -Path $backupDirectory -ResolvedReleaseRoot $resolvedReleaseRoot -Version $version -Token $token -Kind 'build-backup'
+    Remove-Item -LiteralPath $backupDirectory -Recurse -Force
+}
+catch {
+    if (-not $swapped -and (Test-Path -LiteralPath $backupDirectory) -and -not (Test-Path -LiteralPath $releaseDirectory)) {
+        Move-Item -LiteralPath $backupDirectory -Destination $releaseDirectory
+    }
+    if (Test-Path -LiteralPath $stagingDirectory) {
+        Assert-SafeTransactionPath -Path $stagingDirectory -ResolvedReleaseRoot $resolvedReleaseRoot -Version $version -Token $token -Kind 'finalizing'
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force
+    }
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $temporary) {
+        $resolvedTemporary = [System.IO.Path]::GetFullPath($temporary).TrimEnd('\')
+        $expectedTemporary = Join-Path ([System.IO.Path]::GetTempPath().TrimEnd('\')) "yiyunying-finalize-$token"
+        if (-not $resolvedTemporary.Equals($expectedTemporary, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝清理不属于本次 Finalize 事务的临时目录：$resolvedTemporary"
+        }
+        Remove-Item -LiteralPath $temporary -Recurse -Force
+    }
+}
+
+Write-Host "完整项目产物已一次性收口：$releaseDirectory"
+Write-Host "版本：$version ($versionCode)"
+Write-Host "Build 源码提交：$buildCommit"
+Write-Host "发布证据提交：$evidenceCommit"
+Write-Host "最终注释标签：$tag"
+Write-Host "Git Bundle 引用：refs/heads/main, refs/tags/$tag"

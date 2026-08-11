@@ -65,7 +65,8 @@ public final class GlassActionDialog {
         if (!compact) {
             TextView heading = new TextView(context);
             heading.setText(title);
-            heading.setTextColor(context.getColor(R.color.on_surface));
+            heading.setTextColor(ThemeColors.resolve(context,
+                com.google.android.material.R.attr.colorOnSurface, R.color.on_surface));
             heading.setTextSize(13);
             heading.setGravity(Gravity.CENTER);
             heading.setPadding(0, 0, 0, dp(context, 6));
@@ -95,7 +96,8 @@ public final class GlassActionDialog {
             button.setGravity(Gravity.CENTER);
             button.setLineSpacing(0f, 1.02f);
             button.setEllipsize(TextUtils.TruncateAt.END);
-            button.setTextColor(context.getColor(R.color.on_surface));
+            button.setTextColor(ThemeColors.resolve(context,
+                com.google.android.material.R.attr.colorOnSurface, R.color.on_surface));
             ActionIconResolver.apply(button, action.label, action.icon);
             button.setIconSize(dp(context, dense ? 15 : 18));
             button.setIconGravity(MaterialButton.ICON_GRAVITY_TOP);
@@ -108,6 +110,7 @@ public final class GlassActionDialog {
         }
         body.addView(grid, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         glass.addView(body);
+        ModalLayerGuard.protectBottomSheet(glass, context);
         dialog.setContentView(glass);
 
         Window window = dialog.getWindow();

@@ -78,7 +78,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
     @Override public boolean isPrimaryActionAvailable() {
         if (page == 1) {
             return HomeFeaturePolicy.anyActionEnabled(featureFlags,
-                "moments_compose", "forum_posts", "bounties", "resources", "polls");
+                "moments_compose", "short_video_publish", "forum_posts", "bounties", "resources", "polls");
         }
         if (page == 2) {
             return HomeFeaturePolicy.anyActionEnabled(featureFlags,
@@ -94,8 +94,8 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
 
     @Override public void onPrimaryAction() {
         if (page == 1) {
-            showQuickActions(new String[]{"发布动态", "发布帖子", "发布悬赏", "投稿资源", "发起投票"},
-                new String[]{"moments_compose", "forum_posts", "bounties", "resources", "polls"});
+            showQuickActions(new String[]{"发布动态", "发布短视频", "发布帖子", "发布悬赏", "投稿资源", "发起投票"},
+                new String[]{"moments_compose", "short_video_publish", "forum_posts", "bounties", "resources", "polls"});
         } else if (page == 2) {
             showQuickActions(new String[]{"进入余额商店", "发红包", "参与抽奖", "兑换权益"},
                 new String[]{"shop_goods", "red_packets", "lottery", "card_redeem"});
@@ -123,6 +123,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
         else if ("user_settings".equals(item.moduleId)) UserSettingsActivity.open(requireContext());
         else if ("moments".equals(item.moduleId)) MomentTimelineActivity.open(requireContext(), false);
         else if ("moments_compose".equals(item.moduleId)) MomentTimelineActivity.open(requireContext(), true);
+        else if ("short_videos".equals(item.moduleId)) MomentTimelineActivity.openShortVideos(requireContext(), false);
         else if ("forum_posts".equals(item.moduleId)) ForumListActivity.open(requireContext());
         else if ("polls".equals(item.moduleId)) PollActivity.open(requireContext());
         else if ("resource_hall".equals(item.moduleId)) ResourceHallActivity.open(requireContext());
@@ -146,6 +147,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
 
     private void openQuickAction(String module) {
         if ("moments_compose".equals(module)) MomentTimelineActivity.open(requireContext(), true);
+        else if ("short_video_publish".equals(module)) MomentTimelineActivity.openShortVideos(requireContext(), true);
         else if ("forum_posts".equals(module)) ForumListActivity.open(requireContext());
         else if ("polls".equals(module)) PollActivity.open(requireContext());
         else if ("resources".equals(module)) ResourceHallActivity.open(requireContext());
@@ -154,6 +156,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
 
     @DrawableRes private int actionIcon(String module) {
         if ("moments_compose".equals(module)) return R.drawable.ic_album;
+        if ("short_video_publish".equals(module)) return R.drawable.ic_video;
         if ("forum_posts".equals(module)) return R.drawable.ic_forum;
         if ("bounties".equals(module) || "red_packets".equals(module)) return R.drawable.ic_wallet;
         if ("resources".equals(module) || "shop_goods".equals(module)) return R.drawable.ic_apps;
@@ -165,6 +168,7 @@ public final class FeatureHubFragment extends BaseFragment implements UserTabPag
         List<FeatureItem> result = new ArrayList<>();
         if (page == 1) {
             result.add(item("生活动态", "按时间轴查看图文动态、附近位置与编辑记录", "moments", R.drawable.ic_album));
+            result.add(item("短视频", "浏览和发布单条视频内容，支持点赞、评论、收藏与转发", "short_videos", R.drawable.ic_video));
             result.add(item("论坛", "进入板块，浏览帖子、评论、回复与付费分节", "forum_posts", R.drawable.ic_forum));
             result.add(item("悬赏", "按分类查看任务、投稿和选中结果", "bounties", R.drawable.ic_wallet));
             result.add(item("资源大厅", "应用商店与源码商城，按分类搜索、查看和获取", "resource_hall", R.drawable.ic_apps));

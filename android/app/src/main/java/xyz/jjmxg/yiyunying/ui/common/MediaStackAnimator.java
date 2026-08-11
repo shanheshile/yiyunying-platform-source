@@ -8,9 +8,11 @@ import android.view.View;
 import android.widget.FrameLayout;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Applies {@link MediaStackTransitionPolicy} poses to real Android card views. */
 public final class MediaStackAnimator {
@@ -30,6 +32,42 @@ public final class MediaStackAnimator {
         view.setTranslationZ(pose.depth * Math.max(1f, density));
     }
 
+    /** Applies one interactive drag frame without translating or fading the whole stage. */
+    public static void applyDrag(
+        FrameLayout stage,
+        MediaStackTransitionPolicy.Transition transition,
+        float progress,
+        float dragTranslationX,
+        ViewFactory factory
+    ) {
+        Map<Integer, View> cards = indexedCards(stage);
+        Set<Integer> activeItems = new HashSet<>();
+        float density = stage.getResources().getDisplayMetrics().density;
+        for (MediaStackDragPolicy.ItemFrame frame
+            : MediaStackDragPolicy.frames(transition, progress, dragTranslationX)) {
+            activeItems.add(frame.itemIndex);
+            View card = cards.get(frame.itemIndex);
+            if (card == null) {
+                card = factory.create(frame.itemIndex);
+                card.setTag(frame.itemIndex);
+                stage.addView(card);
+                cards.put(frame.itemIndex, card);
+            }
+            card.animate().cancel();
+            applyPose(card, frame.pose, density);
+        }
+        // A direction reversal may leave the previous direction's transparent entering card in
+        // the stage. Keep it inert and invisible until the completion render removes it.
+        for (Map.Entry<Integer, View> entry : cards.entrySet()) {
+            if (!activeItems.contains(entry.getKey())) {
+                entry.getValue().animate().cancel();
+                entry.getValue().setAlpha(0f);
+                entry.getValue().setTranslationZ(0f);
+            }
+        }
+        stage.invalidate();
+    }
+
     /**
      * Animates every card to the neighbouring layer boundary. The container is
      * never faded, and the completion callback is invoked after all cards end.
@@ -42,11 +80,7 @@ public final class MediaStackAnimator {
         ViewFactory factory,
         Runnable completion
     ) {
-        Map<Integer, View> cards = new LinkedHashMap<>();
-        for (int index = 0; index < stage.getChildCount(); index++) {
-            View child = stage.getChildAt(index);
-            if (child.getTag() instanceof Integer) cards.put((Integer) child.getTag(), child);
-        }
+        Map<Integer, View> cards = indexedCards(stage);
         float density = stage.getResources().getDisplayMetrics().density;
         List<Animator> animators = new ArrayList<>();
         for (MediaStackTransitionPolicy.ItemTransition item : transition.items) {
@@ -96,5 +130,14 @@ public final class MediaStackAnimator {
             @Override public void onAnimationCancel(Animator animation) { completeOnce(); }
         });
         set.start();
+    }
+
+    private static Map<Integer, View> indexedCards(FrameLayout stage) {
+        Map<Integer, View> cards = new LinkedHashMap<>();
+        for (int index = 0; index < stage.getChildCount(); index++) {
+            View child = stage.getChildAt(index);
+            if (child.getTag() instanceof Integer) cards.put((Integer) child.getTag(), child);
+        }
+        return cards;
     }
 }

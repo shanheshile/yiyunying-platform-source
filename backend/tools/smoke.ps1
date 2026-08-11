@@ -38,6 +38,8 @@ function Invoke-Api {
 
 $health = Invoke-Api -Method GET -Path '/api/health'
 $adminLogin = Invoke-Api -Method POST -Path '/api/admin/login' -Body @{
+    platform_key = 'yiyunying-root'
+    app_key = 'yiyunying-demo'
     account = 'admin'
     password = '123456'
     device = 'smoke-test'

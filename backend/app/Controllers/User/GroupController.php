@@ -1584,7 +1584,7 @@ final class GroupController
 
     private static function extensionRoom(Request $request, int $roomId): array
     {
-        $user = self::user($request); AppService::requireFeature((int) $user['app_id'], 'chat_extensions');
+        $user = self::user($request); AuthService::requireUserFeature($user, 'chat_extensions');
         $room = ChatRoomService::userRoom($user, $roomId, true); $member = ChatRoomService::requireMember($user, $room); return [$user, $room, $member];
     }
 
@@ -1761,8 +1761,6 @@ final class GroupController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'chat_rooms');
-        return $user;
+        return AuthService::user($request, 'chat_rooms');
     }
 }

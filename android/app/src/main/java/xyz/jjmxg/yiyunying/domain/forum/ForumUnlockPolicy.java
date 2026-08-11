@@ -49,6 +49,14 @@ public final class ForumUnlockPolicy {
         return "公开";
     }
 
+    public static String explanation(String value) {
+        String normalized = normalize(value);
+        if (PAID.equals(normalized)) return "读者支付设定余额后可以查看";
+        if (SCHEDULED.equals(normalized)) return "到达设定时间后自动向所有读者公开";
+        if (PAID_OR_SCHEDULED.equals(normalized)) return "读者可以付费提前查看，未购买时会在到期后自动公开";
+        return "所有读者均可直接查看，无需支付或等待";
+    }
+
     public static boolean valid(String value, double price, String unlockAtIso) {
         return (!needsPayment(value) || price > 0)
             && (!needsSchedule(value) || (unlockAtIso != null && !unlockAtIso.trim().isEmpty()));

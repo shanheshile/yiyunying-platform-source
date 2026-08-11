@@ -25,7 +25,8 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
         R.id.managementTabContent,
         R.id.managementTabMine,
     };
-    private static final String[] TITLES = {"应用", "源码", "交流", "我的"};
+    private String[] titles = {"应用", "源码", "交流", "我的"};
+    private boolean adminWorkbench;
     private FragmentManagementShellBinding binding;
     private final ViewPager2.OnPageChangeCallback pageChangeCallback =
         new ViewPager2.OnPageChangeCallback() {
@@ -34,7 +35,7 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
                 if (binding.bottomNavigation.getSelectedItemId() != MENU_IDS[position]) {
                     binding.bottomNavigation.setSelectedItemId(MENU_IDS[position]);
                 }
-                host().setPageTitle(TITLES[position]);
+                host().setPageTitle(titles[position]);
             }
         };
 
@@ -43,9 +44,14 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
     @Nullable @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle state) {
         binding = FragmentManagementShellBinding.inflate(inflater, container, false);
+        adminWorkbench = ManagementNavigationPolicy.useAdminWorkbench(app().session().role());
+        titles = ManagementNavigationPolicy.tabTitles(app().session().role());
         BottomDockStyler.apply(binding.bottomNavigation);
+        for (int index = 0; index < MENU_IDS.length; index++) {
+            binding.bottomNavigation.getMenu().findItem(MENU_IDS[index]).setTitle(titles[index]);
+        }
         host().setMainChromeVisible(true);
-        binding.pager.setAdapter(new PagerAdapter(this));
+        binding.pager.setAdapter(new PagerAdapter(this, adminWorkbench));
         binding.pager.setOffscreenPageLimit(1);
         tunePager();
         binding.pager.registerOnPageChangeCallback(pageChangeCallback);
@@ -55,13 +61,13 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
             switchPage(page);
             return true;
         });
-        host().setPageTitle(TITLES[0]);
+        host().setPageTitle(titles[0]);
         return binding.getRoot();
     }
 
     @Override public void onResume() {
         super.onResume();
-        if (binding != null) host().setPageTitle(TITLES[binding.pager.getCurrentItem()]);
+        if (binding != null) host().setPageTitle(titles[binding.pager.getCurrentItem()]);
     }
 
     private static int pageFor(int menuId) {
@@ -102,10 +108,21 @@ public final class ManagementShellFragment extends BaseFragment implements BackN
     }
 
     private static final class PagerAdapter extends FragmentStateAdapter {
-        PagerAdapter(@NonNull Fragment fragment) { super(fragment); }
+        private final boolean adminWorkbench;
+
+        PagerAdapter(@NonNull Fragment fragment, boolean adminWorkbench) {
+            super(fragment);
+            this.adminWorkbench = adminWorkbench;
+        }
 
         @NonNull @Override public Fragment createFragment(int position) {
-            if (position == 0) return FeatureDirectoryFragment.newEmbeddedInstance("apps");
+            if (adminWorkbench) {
+                if (position == 0) return ManagementHomeFragment.newInstance();
+                if (position == 1) return SourceExamplesFragment.newInstance();
+                if (position == 2) return AdminCommunityFragment.newInstance();
+                return AdminMineFragment.newInstance();
+            }
+            if (position == 0) return FeatureDirectoryFragment.newEmbeddedInstance("apps", true);
             if (position == 1) return FeatureDirectoryFragment.newEmbeddedInstance("source");
             if (position == 2) return FeatureDirectoryFragment.newEmbeddedInstance("community");
             return FeatureDirectoryFragment.newEmbeddedInstance("account");

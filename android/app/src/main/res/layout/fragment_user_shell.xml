@@ -74,6 +74,142 @@
             app:tintMode="src_in" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/quickAccessSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface"
+        android:orientation="vertical"
+        android:paddingTop="2dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:text="快捷功能"
+            android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+            android:textColor="@color/on_surface_variant" />
+
+        <HorizontalScrollView
+            android:id="@+id/quickAccessScroller"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipToPadding="false"
+            android:fillViewport="false"
+            android:overScrollMode="never"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/quickAccessGroup"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:chipSpacingHorizontal="8dp"
+                app:singleLine="true">
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickPrivateChat"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开私聊，选择好友后进入一对一聊天"
+                    android:text="私聊"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="选择好友并进入私聊"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_chat"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickGroupChat"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开群聊，选择群聊或聊天室后进入交流"
+                    android:text="群聊"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="选择群聊或聊天室"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_users"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickRedPackets"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开红包，查看、发送或领取红包"
+                    android:text="红包"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="查看、发送或领取红包"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_wallet"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickForum"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开论坛，浏览板块、帖子和评论"
+                    android:text="论坛"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="浏览论坛板块和帖子"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_forum"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickShortVideos"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开短视频，浏览可循环观看的视频内容"
+                    android:text="短视频"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="浏览短视频"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_video"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/quickShop"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="打开商城，浏览可购买的商品和权益"
+                    android:text="商城"
+                    android:textColor="@color/on_surface"
+                    android:tooltipText="浏览商城商品和权益"
+                    app:chipBackgroundColor="@color/surface_container"
+                    app:chipIcon="@drawable/ic_apps"
+                    app:chipIconTint="@color/primary"
+                    app:chipIconVisible="true"
+                    app:chipStrokeColor="@color/outline_variant"
+                    app:chipStrokeWidth="1dp" />
+            </com.google.android.material.chip.ChipGroup>
+        </HorizontalScrollView>
+    </LinearLayout>
+
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/pager"
         android:layout_width="match_parent"

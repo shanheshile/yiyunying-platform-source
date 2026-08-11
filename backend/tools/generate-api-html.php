@@ -74,7 +74,7 @@ button,input,textarea,select{font:inherit;letter-spacing:0}button{cursor:pointer
         <div class="metric"><b>4</b><span>独立角色软件</span></div>
         <div class="metric"><b>中文</b><span>提示与业务文案</span></div>
       </section>
-      <section class="credentials"><b>默认测试账号</b><code>L1 root / 123456 / yiyunying-root</code><code>L2 authorized / 123456 / yiyunying-authorized</code><code>L3 admin / 123456 / yiyunying-root</code><code>L4 user / 123456 / yiyunying-demo</code></section>
+      <section class="credentials"><b>不提供默认登录身份</b><code>首次安装必须显式注入平台 KEY、APP KEY 和安全密码哈希</code><code>接口调试必须手动填写当前环境地址与身份，不会预填生产数据</code></section>
       <div class="filters" id="quickFilters"></div>
       <div class="routes" id="routes"></div><div class="empty" id="empty">没有符合条件的接口</div>
     </div>
@@ -86,10 +86,10 @@ button,input,textarea,select{font:inherit;letter-spacing:0}button{cursor:pointer
   <div class="drawer-body">
     <section class="section"><h3>调用说明</h3><div class="code" id="curlCode"><button class="copy" data-copy="curlCode">复制</button></div></section>
     <section class="section"><h3>调试参数</h3><div class="form-grid">
-      <label class="label wide">服务器地址<input class="input" id="baseUrl" value="http://appht.jjmxg.xyz"></label>
+      <label class="label wide">服务器地址<input class="input" id="baseUrl" placeholder="请显式填写当前环境 http/https 地址"></label>
       <label class="label">Bearer Token<input class="input" id="token" placeholder="登录后获得的 access_token"></label>
       <label class="label">X-App-Key<input class="input" id="appKey" placeholder="user 接口必填"></label>
-      <label class="label">X-Platform-Key<input class="input" id="platformKey" value="yiyunying-root"></label>
+      <label class="label">X-Platform-Key<input class="input" id="platformKey" placeholder="请显式填写当前平台 KEY"></label>
       <label class="label">路径参数 JSON<input class="input" id="pathParams" value="{}"></label>
       <label class="label wide">请求体 JSON<textarea class="input textarea" id="requestBody">{}</textarea></label>
       <button class="btn primary wide" id="sendRequest">发送请求</button>
@@ -118,9 +118,13 @@ function closeMobile(){$('side').classList.remove('open');$('backdrop').classLis
 function sampleParams(r){const out={};[...r.path.matchAll(/\{([^}]+)\}/g)].forEach(m=>out[m[1]]=1);return out}
 function sampleBody(r){
   if(['GET','DELETE'].includes(r.method))return{};
-  if(r.path.endsWith('/login'))return r.scope==='user'?{app_key:'yiyunying-demo',account:'user',password:'123456'}:{platform_key:'yiyunying-root',account:r.scope==='platform'?'root':'admin',password:'123456'};
-  if(r.path.endsWith('/register'))return{app_key:'yiyunying-demo',account:'new_user',nickname:'新用户',password:'123456',password_confirmation:'123456'};
-  if(r.path.endsWith('/verification-code/email'))return{app_key:'yiyunying-demo',email:'user@example.com',scene:'register'};
+  if(r.path.endsWith('/login')){
+    if(r.scope==='user')return{app_key:'<当前应用 APP KEY>',account:'<当前用户账号>',password:'change-me-before-use'};
+    if(r.scope==='admin')return{platform_key:'<当前平台 KEY>',app_key:'<当前应用 APP KEY>',account:'<当前管理员账号>',password:'change-me-before-use'};
+    return{platform_key:'<当前平台 KEY>',account:'<当前平台账号>',password:'change-me-before-use'};
+  }
+  if(r.path.endsWith('/register'))return{app_key:'<当前应用 APP KEY>',account:'new_user',nickname:'新用户',password:'change-me-before-use',password_confirmation:'change-me-before-use'};
+  if(r.path.endsWith('/verification-code/email'))return{app_key:'<当前应用 APP KEY>',email:'user@example.com',scene:'register'};
   if(r.path.endsWith('/scan-qr'))return{qr_payload:'扫码得到的签名内容',message:'你好，我想添加你为好友'};
   if(r.path.includes('/identity-unbind-requests')&&r.path.endsWith('/review'))return{action:'approve',remark:'审核通过'};
   if(r.path.endsWith('/identity-unbind-requests'))return{identity_type:'phone',reason:'更换手机号'};

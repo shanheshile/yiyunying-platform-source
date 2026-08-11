@@ -668,6 +668,6 @@ final class SocialController
     {
         if (!isset(self::notificationCenterDefinitions()[$centerKey])) throw new HttpException('通知中心不存在', 404, 404);
     }
-    private static function user(Request $request, string $feature): array { $user = AuthService::user($request); AppService::requireFeature((int) $user['app_id'], $feature); return $user; }
+    private static function user(Request $request, string $feature): array { return AuthService::user($request, $feature); }
     private static function boolValue($value): bool { if (is_bool($value)) return $value; return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true); }
 }

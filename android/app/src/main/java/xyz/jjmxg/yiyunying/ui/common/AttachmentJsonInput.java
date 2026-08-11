@@ -97,7 +97,7 @@ public final class AttachmentJsonInput extends LinearLayout {
 
         emptyView = new TextView(context);
         emptyView.setText("暂未添加附件");
-        emptyView.setTextColor(context.getColor(R.color.outline));
+        emptyView.setTextColor(context.getColor(R.color.on_surface_variant));
         emptyView.setGravity(Gravity.CENTER);
         emptyView.setPadding(0, dp(18), 0, dp(18));
         itemContainer.addView(emptyView, new LayoutParams(-1, -2));

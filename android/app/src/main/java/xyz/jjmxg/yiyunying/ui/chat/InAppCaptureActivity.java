@@ -26,14 +26,17 @@ import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
+import android.widget.SeekBar;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
@@ -82,6 +85,11 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private static final int FOCUS_STATE_LOCKING = 4;
     private static final int FOCUS_STATE_LOCKED = 5;
     private static final int FOCUS_STATE_FAILED = 6;
+    private static final String STATE_CAPTURE_PATH = "capture_review_path";
+    private static final String STATE_CAPTURE_VIDEO = "capture_review_video";
+    private static final String STATE_REVIEWING_CAPTURE = "reviewing_capture";
+    private static final String STATE_ZOOM_RATIO = "capture_zoom_ratio";
+    private static final long STALE_CAPTURE_AGE_MS = 24L * 60L * 60L * 1000L;
 
     private ActivityInAppCaptureBinding binding;
     private final Handler mainHandler = new Handler(android.os.Looper.getMainLooper());
@@ -93,6 +101,9 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private ImageReader imageReader;
     private MediaRecorder mediaRecorder;
     private File captureFile;
+    private volatile File pendingCaptureFile;
+    private volatile boolean pendingCaptureVideo;
+    private volatile boolean reviewingCapture;
     private String cameraId = "";
     private android.util.Size previewSize;
     private android.util.Size videoSize;
@@ -104,7 +115,13 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private int pictureAfMode = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
     private int videoAfMode = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO;
     private boolean aeLockAvailable;
+    private Rect activeArrayRegion = new Rect(0, 0, 1, 1);
     private volatile Rect currentCropRegion = new Rect(0, 0, 1, 1);
+    private float maxDigitalZoom = 1f;
+    private float currentZoomRatio = 1f;
+    private boolean suppressZoomSeekCallback;
+    private ScaleGestureDetector scaleGestureDetector;
+    private boolean zoomGestureInSequence;
     private volatile MeteringRectangle currentMeteringRegion;
     private volatile boolean focusLocked;
     private volatile int focusRequestGeneration;
@@ -116,6 +133,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private int focusTouchSlop;
     private float focusLockAnchorX;
     private float focusLockAnchorY;
+    private boolean focusWasLockedAtGestureStart;
     private boolean surfaceReady;
     private boolean openingCamera;
     private boolean recordingRequested;
@@ -135,8 +153,16 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private final Runnable lockFocusAfterHold = () -> {
-        if (binding == null || captureBusy || recording || recordingStarting
-            || cameraDevice == null || !focusGesture.lock()) return;
+        if (binding == null || !canTouchFocus()) return;
+        if (focusWasLockedAtGestureStart) {
+            if (!focusGesture.lock()) return;
+            focusWasLockedAtGestureStart = false;
+            focusLocked = false;
+            binding.capturePreview.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            releaseFocusLockFromGesture();
+            return;
+        }
+        if (!focusGesture.lock()) return;
         focusLocked = true;
         binding.capturePreview.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         updateFocusIndicator(FOCUS_STATE_LOCKING, true);
@@ -146,7 +172,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private final Runnable submitFollowFocus = () -> {
         followFocusPosted = false;
         if (binding == null || !focusGesture.isActive() || focusGesture.isLocked()
-            || captureBusy || recording || recordingStarting) return;
+            || !canTouchFocus()) return;
         submitTouchFocus(focusGesture.x(), focusGesture.y(), false, false);
     };
 
@@ -213,8 +239,11 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         getWindow().setNavigationBarColor(android.graphics.Color.BLACK);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         binding = ActivityInAppCaptureBinding.inflate(getLayoutInflater());
+        currentZoomRatio = state == null ? 1f : state.getFloat(STATE_ZOOM_RATIO, 1f);
+        scaleGestureDetector = createScaleGestureDetector();
         focusTouchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         setContentView(binding.getRoot());
+        pruneStaleCaptureFiles();
         ViewCompat.setOnApplyWindowInsetsListener(binding.getRoot(), (view, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             binding.captureTopBar.setPadding(
@@ -223,6 +252,9 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             binding.captureBottomBar.setPadding(
                 binding.captureBottomBar.getPaddingLeft(), binding.captureBottomBar.getPaddingTop(),
                 binding.captureBottomBar.getPaddingRight(), bars.bottom + dp(28));
+            binding.captureReviewActions.setPadding(
+                binding.captureReviewActions.getPaddingLeft(), binding.captureReviewActions.getPaddingTop(),
+                binding.captureReviewActions.getPaddingRight(), bars.bottom + dp(28));
             return insets;
         });
         binding.captureClose.setOnClickListener(view -> cancelCapture());
@@ -230,6 +262,40 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         binding.captureShutter.setOnClickListener(view -> takePhoto());
         binding.captureShutter.setOnTouchListener(this::handleShutterTouch);
         binding.capturePreview.setOnTouchListener(this::handlePreviewFocusTouch);
+        binding.captureRetake.setOnClickListener(view -> discardCapturedPreviewAndResume());
+        binding.captureConfirm.setOnClickListener(view -> confirmCapturedPreview());
+        binding.captureReviewVideo.setOnClickListener(view -> {
+            if (!reviewingCapture) return;
+            if (binding.captureReviewVideo.isPlaying()) binding.captureReviewVideo.pause();
+            else binding.captureReviewVideo.start();
+        });
+        binding.captureZoomSeek.setMax(CameraFocusController.ZOOM_PROGRESS_MAX);
+        binding.captureZoomSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser || suppressZoomSeekCallback) return;
+                if (!canAdjustZoom()) {
+                    updateZoomControls();
+                    return;
+                }
+                setZoomRatio(CameraFocusController.zoomFromProgress(progress,
+                    CameraFocusController.ZOOM_PROGRESS_MAX, maxDigitalZoom), true);
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {
+                beginZoomInteraction();
+            }
+
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                if (binding != null) binding.captureZoomSeek.announceForAccessibility(
+                    zoomAccessibilityDescription());
+            }
+        });
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (reviewingCapture) discardCapturedPreviewAndResume();
+                else cancelCapture();
+            }
+        });
         binding.capturePreview.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(@NonNull SurfaceHolder holder) {
                 surfaceReady = true;
@@ -242,13 +308,18 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 surfaceReady = false;
             }
         });
-        requestCapturePermissionsIfNeeded();
+        boolean restoredReview = restoreCapturedPreview(state);
+        if (!restoredReview) requestCapturePermissionsIfNeeded();
     }
 
     @Override protected void onResume() {
         super.onResume();
         startCameraThread();
-        openCameraWhenReady();
+        if (reviewingCapture) resumeReviewPlayback();
+        else {
+            resetRecordingUi();
+            openCameraWhenReady();
+        }
     }
 
     @Override protected void onPause() {
@@ -259,14 +330,29 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         followFocusPosted = false;
         focusGesture.cancel();
         if (!deliveringResult) recordingRequested = false;
+        if (binding != null && reviewingCapture) binding.captureReviewVideo.pause();
         closeCamera();
         stopCameraThread();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
+        if (isFinishing() && !isChangingConfigurations() && !deliveringResult) {
+            deletePendingCapture();
+        }
         binding = null;
         super.onDestroy();
+    }
+
+    @Override protected void onSaveInstanceState(@NonNull Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putFloat(STATE_ZOOM_RATIO, currentZoomRatio);
+        File pending = pendingCaptureFile;
+        if (reviewingCapture && pending != null && isManagedCaptureFile(pending) && pending.exists()) {
+            state.putBoolean(STATE_REVIEWING_CAPTURE, true);
+            state.putString(STATE_CAPTURE_PATH, pending.getAbsolutePath());
+            state.putBoolean(STATE_CAPTURE_VIDEO, pendingCaptureVideo);
+        }
     }
 
     private void requestCapturePermissionsIfNeeded() {
@@ -324,10 +410,24 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private boolean handlePreviewFocusTouch(View view, MotionEvent event) {
         int action = event.getActionMasked();
+        if (reviewingCapture) return false;
+        if (scaleGestureDetector != null) scaleGestureDetector.onTouchEvent(event);
+        if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            zoomGestureInSequence = true;
+            beginZoomInteraction();
+            return true;
+        }
+        if (zoomGestureInSequence || event.getPointerCount() > 1
+            || (scaleGestureDetector != null && scaleGestureDetector.isInProgress())) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                zoomGestureInSequence = false;
+            }
+            return true;
+        }
         if (action == MotionEvent.ACTION_DOWN) {
             if (!canTouchFocus()) return false;
             int pointerId = event.getPointerId(0);
-            focusLocked = false;
+            focusWasLockedAtGestureStart = focusLocked;
             focusGesture.begin(pointerId, clamp(event.getX(), 0f, view.getWidth()),
                 clamp(event.getY(), 0f, view.getHeight()));
             focusLockAnchorX = focusGesture.x();
@@ -335,9 +435,11 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             mainHandler.removeCallbacks(lockFocusAfterHold);
             mainHandler.removeCallbacks(submitFollowFocus);
             followFocusPosted = false;
-            positionFocusIndicator(focusGesture.x(), focusGesture.y(), true);
-            updateFocusIndicator(FOCUS_STATE_FOLLOWING, false);
-            submitTouchFocus(focusGesture.x(), focusGesture.y(), false, false);
+            if (!focusWasLockedAtGestureStart) {
+                positionFocusIndicator(focusGesture.x(), focusGesture.y(), true);
+                updateFocusIndicator(FOCUS_STATE_FOLLOWING, false);
+                submitTouchFocus(focusGesture.x(), focusGesture.y(), false, false);
+            }
             mainHandler.postDelayed(lockFocusAfterHold, FOCUS_LOCK_PRESS_MS);
             return true;
         }
@@ -358,10 +460,16 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             if (trackedIndex < 0 || !focusGesture.move(event.getPointerId(trackedIndex),
                 clamp(event.getX(trackedIndex), 0f, view.getWidth()),
                 clamp(event.getY(trackedIndex), 0f, view.getHeight()))) return true;
+            boolean movedBeyondSlop = distance(focusLockAnchorX, focusLockAnchorY,
+                focusGesture.x(), focusGesture.y()) > focusTouchSlop;
+            if (focusWasLockedAtGestureStart && !movedBeyondSlop) return true;
+            if (focusWasLockedAtGestureStart) {
+                focusWasLockedAtGestureStart = false;
+                focusLocked = false;
+            }
             positionFocusIndicator(focusGesture.x(), focusGesture.y(), false);
             updateFocusIndicator(FOCUS_STATE_FOLLOWING, false);
-            if (distance(focusLockAnchorX, focusLockAnchorY,
-                focusGesture.x(), focusGesture.y()) > focusTouchSlop) {
+            if (movedBeyondSlop) {
                 focusLockAnchorX = focusGesture.x();
                 focusLockAnchorY = focusGesture.y();
                 mainHandler.removeCallbacks(lockFocusAfterHold);
@@ -383,6 +491,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             float y = clamp(event.getY(actionIndex), 0f, view.getHeight());
             boolean runTransientFocus = focusGesture.end(pointerId, x, y);
             if (runTransientFocus) {
+                focusWasLockedAtGestureStart = false;
+                focusLocked = false;
                 positionFocusIndicator(focusGesture.x(), focusGesture.y(), false);
                 updateFocusIndicator(FOCUS_STATE_FOCUSING, false);
                 submitTouchFocus(focusGesture.x(), focusGesture.y(), true, false);
@@ -397,6 +507,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             followFocusPosted = false;
             boolean locked = focusGesture.isLocked();
             focusGesture.cancel();
+            focusWasLockedAtGestureStart = false;
             if (!locked) hideFocusIndicator();
             return true;
         }
@@ -404,8 +515,118 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private boolean canTouchFocus() {
-        return binding != null && cameraDevice != null && captureSession != null
-            && previewRequestBuilder != null && !captureBusy && !recording && !recordingStarting;
+        return binding != null && CameraFocusController.canAcceptFocus(
+            cameraDevice != null, captureSession != null, previewRequestBuilder != null,
+            captureBusy, recording, recordingStarting, reviewingCapture);
+    }
+
+    private ScaleGestureDetector createScaleGestureDetector() {
+        return new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override public boolean onScaleBegin(ScaleGestureDetector detector) {
+                if (!canAdjustZoom()) return false;
+                beginZoomInteraction();
+                return true;
+            }
+
+            @Override public boolean onScale(ScaleGestureDetector detector) {
+                if (!canAdjustZoom()) return false;
+                setZoomRatio(CameraFocusController.zoomAfterScale(currentZoomRatio,
+                    detector.getScaleFactor(), maxDigitalZoom), true);
+                return true;
+            }
+
+            @Override public void onScaleEnd(ScaleGestureDetector detector) {
+                if (binding != null) binding.capturePreview.announceForAccessibility(
+                    zoomAccessibilityDescription());
+            }
+        });
+    }
+
+    private boolean canAdjustZoom() {
+        return binding != null && CameraFocusController.canAcceptFocus(
+            cameraDevice != null, captureSession != null, previewRequestBuilder != null,
+            captureBusy, recording, recordingStarting, reviewingCapture);
+    }
+
+    private void beginZoomInteraction() {
+        if (!canAdjustZoom()) return;
+        resetFocusInteraction();
+        Handler handler = cameraHandler;
+        if (handler != null) handler.post(() -> updateRepeatingCropAndFocus(true));
+    }
+
+    private void setZoomRatio(float requestedRatio, boolean fromUser) {
+        float next = CameraFocusController.clampZoom(requestedRatio, maxDigitalZoom);
+        if (Math.abs(next - currentZoomRatio) < 0.001f && fromUser) {
+            updateZoomControls();
+            return;
+        }
+        currentZoomRatio = next;
+        currentCropRegion = CameraFocusController.zoomCropRegion(
+            activeArrayRegion, currentZoomRatio, maxDigitalZoom);
+        updateZoomControls();
+        Handler handler = cameraHandler;
+        if (handler != null) handler.post(() -> updateRepeatingCropAndFocus(false));
+    }
+
+    private void updateZoomControls() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(this::updateZoomControls);
+            return;
+        }
+        if (binding == null) return;
+        String label = String.format(Locale.CHINA, "%.1f×", currentZoomRatio);
+        binding.captureZoomValue.setText(label);
+        binding.captureZoomSeek.setContentDescription(zoomAccessibilityDescription());
+        suppressZoomSeekCallback = true;
+        binding.captureZoomSeek.setProgress(CameraFocusController.progressFromZoom(
+            currentZoomRatio, CameraFocusController.ZOOM_PROGRESS_MAX, maxDigitalZoom));
+        suppressZoomSeekCallback = false;
+        boolean zoomAvailable = maxDigitalZoom > 1.001f && canAdjustZoom();
+        binding.captureZoomSeek.setEnabled(zoomAvailable);
+        binding.captureZoomPanel.setAlpha(zoomAvailable ? 1f : 0.62f);
+    }
+
+    private String zoomAccessibilityDescription() {
+        if (maxDigitalZoom <= 1.001f) return "此相机不支持焦距调节，当前 1.0 倍";
+        return String.format(Locale.CHINA, "相机焦距，当前 %.1f 倍，最大 %.1f 倍",
+            currentZoomRatio, maxDigitalZoom);
+    }
+
+    private void updateRepeatingCropAndFocus(boolean cancelAutofocus) {
+        CameraCaptureSession session = captureSession;
+        CaptureRequest.Builder request = previewRequestBuilder;
+        if (session == null || request == null) return;
+        try {
+            request.set(CaptureRequest.SCALER_CROP_REGION, new Rect(currentCropRegion));
+            if (cancelAutofocus) {
+                request.setTag(null);
+                request.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                    CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+                session.capture(request.build(), cameraStateCallback, cameraHandler);
+                request.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                    CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+                request.set(CaptureRequest.CONTROL_AF_REGIONS, null);
+                request.set(CaptureRequest.CONTROL_AE_REGIONS, null);
+                if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
+                request.set(CaptureRequest.CONTROL_AF_MODE,
+                    recording ? videoAfMode : pictureAfMode);
+            }
+            session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
+        } catch (CameraAccessException | IllegalArgumentException ignored) { }
+    }
+
+    private void releaseFocusLockFromGesture() {
+        currentMeteringRegion = null;
+        focusRequestGeneration++;
+        awaitingFocusGeneration = -1;
+        Handler handler = cameraHandler;
+        if (handler != null) handler.post(() -> updateRepeatingCropAndFocus(true));
+        if (binding != null) {
+            binding.captureFocusIndicator.animate().cancel();
+            binding.captureFocusIndicator.setVisibility(View.GONE);
+            binding.capturePreview.announceForAccessibility("焦点已解锁");
+        }
     }
 
     private void submitTouchFocus(float previewX, float previewY, boolean triggerAf,
@@ -459,7 +680,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
             } else {
                 request.setTag(null);
-                request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+                request.set(CaptureRequest.CONTROL_AF_MODE,
+                    recording ? videoAfMode : pictureAfMode);
                 awaitingFocusGeneration = -1;
             }
             session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
@@ -510,7 +732,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
             session.capture(request.build(), cameraStateCallback, cameraHandler);
             request.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
-            request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+            request.set(CaptureRequest.CONTROL_AF_MODE,
+                recording ? videoAfMode : pictureAfMode);
             request.set(CaptureRequest.CONTROL_AF_REGIONS, null);
             request.set(CaptureRequest.CONTROL_AE_REGIONS, null);
             if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
@@ -587,6 +810,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         mainHandler.removeCallbacks(submitFollowFocus);
         followFocusPosted = false;
         focusGesture.cancel();
+        focusWasLockedAtGestureStart = false;
         focusLocked = false;
         currentMeteringRegion = null;
         focusRequestGeneration++;
@@ -599,7 +823,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private void openCameraWhenReady() {
-        if (!surfaceReady || cameraDevice != null || openingCamera || !hasPermission(Manifest.permission.CAMERA)) return;
+        if (reviewingCapture || !surfaceReady || cameraDevice != null || openingCamera
+            || !hasPermission(Manifest.permission.CAMERA)) return;
         if (cameraHandler == null) return;
         CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         try {
@@ -613,8 +838,14 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             Integer actualFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
             if (actualFacing != null) lensFacing = actualFacing;
             Rect activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            currentCropRegion = activeArray == null || activeArray.isEmpty()
+            activeArrayRegion = activeArray == null || activeArray.isEmpty()
                 ? new Rect(0, 0, 1, 1) : new Rect(activeArray);
+            maxDigitalZoom = CameraFocusController.maxZoom(
+                characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM));
+            currentZoomRatio = CameraFocusController.clampZoom(currentZoomRatio, maxDigitalZoom);
+            currentCropRegion = CameraFocusController.zoomCropRegion(
+                activeArrayRegion, currentZoomRatio, maxDigitalZoom);
+            runOnUiThread(this::updateZoomControls);
             Integer orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             sensorOrientation = orientation == null ? 90 : orientation;
             Integer afRegions = characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF);
@@ -685,13 +916,15 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         CameraDevice camera = cameraDevice;
         ImageReader reader = imageReader;
         Surface surface = binding == null ? null : binding.capturePreview.getHolder().getSurface();
-        if (camera == null || reader == null || surface == null || !surface.isValid() || recordingStarting) return;
+        if (reviewingCapture || camera == null || reader == null || surface == null
+            || !surface.isValid() || recordingStarting) return;
         closeCaptureSession();
         try {
             CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             request.addTarget(surface);
             request.setTag(null);
             request.set(CaptureRequest.CONTROL_AF_MODE, pictureAfMode);
+            request.set(CaptureRequest.SCALER_CROP_REGION, new Rect(currentCropRegion));
             if (aeLockAvailable) request.set(CaptureRequest.CONTROL_AE_LOCK, false);
             previewRequestBuilder = request;
             camera.createCaptureSession(Arrays.asList(surface, reader.getSurface()),
@@ -704,6 +937,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                         runOnUiThread(() -> {
                             setCaptureControlsEnabled(true);
                             resetFocusInteraction();
+                            updateZoomControls();
                         });
                     }
 
@@ -727,6 +961,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         try {
             CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             request.addTarget(reader.getSurface());
+            request.set(CaptureRequest.SCALER_CROP_REGION, new Rect(currentCropRegion));
             applyCurrentFocusToCapture(request, false);
             request.set(CaptureRequest.JPEG_ORIENTATION, captureOrientation());
             session.stopRepeating();
@@ -744,6 +979,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private void applyCurrentFocusToCapture(CaptureRequest.Builder request, boolean video) {
+        request.set(CaptureRequest.SCALER_CROP_REGION, new Rect(currentCropRegion));
         MeteringRectangle region = currentMeteringRegion;
         if (region != null) {
             request.set(CaptureRequest.CONTROL_AF_MODE,
@@ -764,15 +1000,24 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     }
 
     private void savePhotoImage(ImageReader reader) {
+        File output = null;
         try (Image image = reader.acquireLatestImage()) {
-            if (image == null) return;
+            if (image == null) {
+                runOnUiThread(() -> {
+                    captureBusy = false;
+                    setCaptureControlsEnabled(true);
+                });
+                if (cameraHandler != null) cameraHandler.post(this::startPreview);
+                return;
+            }
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
-            File output = createCaptureFile(false);
+            output = createCaptureFile(false);
             try (FileOutputStream stream = new FileOutputStream(output)) { stream.write(bytes); }
             completeCapture(output, false);
         } catch (IOException | RuntimeException exception) {
+            deleteManagedCapture(output);
             runOnUiThread(() -> {
                 captureBusy = false;
                 setCaptureControlsEnabled(true);
@@ -797,6 +1042,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
             binding.captureShutter.setEnabled(true);
             binding.captureSwitchCamera.setEnabled(false);
             binding.captureClose.setEnabled(false);
+            binding.captureZoomSeek.setEnabled(false);
         }
         cameraHandler.post(() -> {
             CameraDevice camera = cameraDevice;
@@ -813,6 +1059,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                 CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
                 request.addTarget(preview);
                 request.addTarget(recorderSurface);
+                request.set(CaptureRequest.SCALER_CROP_REGION, new Rect(currentCropRegion));
                 applyCurrentFocusToCapture(request, true);
                 camera.createCaptureSession(Arrays.asList(preview, recorderSurface),
                     new CameraCaptureSession.StateCallback() {
@@ -827,6 +1074,7 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
                                 return;
                             }
                             captureSession = session;
+                            previewRequestBuilder = request;
                             try {
                                 session.setRepeatingRequest(request.build(), cameraStateCallback, cameraHandler);
                                 mediaRecorder.start();
@@ -883,11 +1131,12 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
     private void showRecordingState() {
         if (binding == null) return;
         binding.recordingTimer.setVisibility(View.VISIBLE);
-        binding.captureHint.setText("松手结束录像 · 最长 60 秒");
+        binding.captureHint.setText("松手结束录像 · 最长 60 秒\n录制中仍可点按、拖动、长按焦点或调焦距");
         binding.captureShutterCore.setBackgroundResource(R.drawable.bg_capture_shutter_recording);
         binding.captureShutter.setEnabled(true);
         binding.captureSwitchCamera.setEnabled(false);
         binding.captureClose.setEnabled(false);
+        updateZoomControls();
         mainHandler.removeCallbacks(recordingTicker);
         mainHandler.post(recordingTicker);
         if (!recordingRequested) stopVideoRecording(false);
@@ -898,10 +1147,18 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         recordingRequested = false;
         recording = false;
         captureBusy = true;
+        if (binding != null) binding.captureZoomSeek.setEnabled(false);
         mainHandler.removeCallbacks(recordingTicker);
         long duration = Math.max(0L, SystemClock.elapsedRealtime() - recordingStartedAt);
-        if (cameraHandler == null) return;
-        cameraHandler.post(() -> {
+        Handler handler = cameraHandler;
+        if (handler == null) {
+            releaseRecorder(true);
+            recordingStarting = false;
+            captureBusy = false;
+            runOnUiThread(this::resetRecordingUi);
+            return;
+        }
+        handler.post(() -> {
             boolean success = true;
             try {
                 if (captureSession != null) {
@@ -954,28 +1211,213 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         return (hasPermission(Manifest.permission.RECORD_AUDIO)
             ? "轻触拍照 · 长按录像（最多 60 秒）"
             : "轻触拍照 · 长按无声录像（最多 60 秒）")
-            + "\n画面点按聚焦 · 拖动跟焦 · 长按锁焦";
+            + "\n点按聚焦 · 拖动跟焦 · 长按锁焦/解锁 · 双指或滑杆调焦距";
     }
 
     private void completeCapture(File file, boolean video) {
-        runOnUiThread(() -> {
-            if (deliveringResult || isFinishing() || isDestroyed()) return;
-            deliveringResult = true;
-            Uri uri = FileProvider.getUriForFile(this,
-                getPackageName() + ".capture-files", file);
-            Intent result = new Intent()
-                .putExtra(EXTRA_CAPTURE_URI, uri)
-                .putExtra(EXTRA_CAPTURE_VIDEO, video)
-                .setData(uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            setResult(RESULT_OK, result);
-            finish();
-        });
+        if (!getLifecycle().getCurrentState().isAtLeast(
+            androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            captureBusy = false;
+            deleteManagedCapture(file);
+            return;
+        }
+        if (!isManagedCaptureFile(file) || !file.exists() || file.length() <= 0L) {
+            deleteManagedCapture(file);
+            runOnUiThread(() -> {
+                captureBusy = false;
+                resetRecordingUi();
+                Toast.makeText(this, "拍摄成品无效，请重新拍摄", Toast.LENGTH_LONG).show();
+            });
+            if (cameraHandler != null) cameraHandler.post(this::startPreview);
+            return;
+        }
+        pendingCaptureFile = file;
+        pendingCaptureVideo = video;
+        reviewingCapture = true;
+        Handler handler = cameraHandler;
+        Runnable prepareReview = () -> {
+            closeCamera();
+            runOnUiThread(() -> showCapturedPreview(file, video));
+        };
+        if (handler == null) prepareReview.run();
+        else handler.post(prepareReview);
+    }
+
+    private void showCapturedPreview(File file, boolean video) {
+        if (deliveringResult || isFinishing() || isDestroyed()) {
+            pendingCaptureFile = null;
+            reviewingCapture = false;
+            // A replacement Activity may already hold this path in saved state during rotation.
+            // Leave it in place for that instance; stale-cache pruning remains the crash fallback.
+            if (!isChangingConfigurations()) deleteManagedCapture(file);
+            return;
+        }
+        File previous = pendingCaptureFile;
+        if (previous != null && !previous.equals(file)) deleteManagedCapture(previous);
+        pendingCaptureFile = file;
+        pendingCaptureVideo = video;
+        reviewingCapture = true;
+        captureBusy = false;
+        recording = false;
+        recordingStarting = false;
+        recordingRequested = false;
+        resetFocusInteraction();
+        stopReviewPlayback();
+        if (binding == null) {
+            pendingCaptureFile = null;
+            reviewingCapture = false;
+            if (!isChangingConfigurations()) deleteManagedCapture(file);
+            return;
+        }
+        binding.captureReviewContainer.setVisibility(View.VISIBLE);
+        binding.captureReviewActions.setVisibility(View.VISIBLE);
+        binding.captureBottomBar.setVisibility(View.GONE);
+        binding.captureSwitchCamera.setVisibility(View.INVISIBLE);
+        binding.recordingTimer.setVisibility(View.GONE);
+        binding.captureFocusIndicator.setVisibility(View.GONE);
+        binding.captureClose.setEnabled(true);
+        binding.captureClose.setContentDescription("取消当前成品并退出拍摄");
+        binding.captureReviewLabel.setText(video ? "请确认视频成品" : "请确认照片成品");
+        binding.captureReviewImage.setVisibility(video ? View.GONE : View.VISIBLE);
+        binding.captureReviewVideo.setVisibility(video ? View.VISIBLE : View.GONE);
+        if (video) {
+            binding.captureReviewImage.setImageDrawable(null);
+            binding.captureReviewVideo.setVideoPath(file.getAbsolutePath());
+            binding.captureReviewVideo.setOnPreparedListener(player -> {
+                player.setLooping(true);
+                if (binding != null && reviewingCapture) binding.captureReviewVideo.start();
+            });
+        } else {
+            binding.captureReviewImage.setImageURI(Uri.fromFile(file));
+        }
+        binding.captureReviewContainer.announceForAccessibility(
+            video ? "视频拍摄完成，请确认或重拍" : "照片拍摄完成，请确认或重拍");
+        updateZoomControls();
+    }
+
+    private boolean restoreCapturedPreview(Bundle state) {
+        if (state == null || !state.getBoolean(STATE_REVIEWING_CAPTURE, false)) return false;
+        String path = state.getString(STATE_CAPTURE_PATH, "");
+        File restored = path.isEmpty() ? null : new File(path);
+        if (!isManagedCaptureFile(restored) || restored == null || !restored.exists()
+            || restored.length() <= 0L) {
+            deleteManagedCapture(restored);
+            return false;
+        }
+        showCapturedPreview(restored, state.getBoolean(STATE_CAPTURE_VIDEO, false));
+        return reviewingCapture;
+    }
+
+    private void confirmCapturedPreview() {
+        File file = pendingCaptureFile;
+        if (!reviewingCapture || deliveringResult || !isManagedCaptureFile(file)
+            || file == null || !file.exists() || file.length() <= 0L) {
+            Toast.makeText(this, "拍摄成品已失效，请重新拍摄", Toast.LENGTH_LONG).show();
+            discardCapturedPreviewAndResume();
+            return;
+        }
+        deliveringResult = true;
+        stopReviewPlayback();
+        Uri uri = FileProvider.getUriForFile(this,
+            getPackageName() + ".capture-files", file);
+        Intent result = new Intent()
+            .putExtra(EXTRA_CAPTURE_URI, uri)
+            .putExtra(EXTRA_CAPTURE_VIDEO, pendingCaptureVideo)
+            .setData(uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        result.setClipData(android.content.ClipData.newRawUri("拍摄成品", uri));
+        pendingCaptureFile = null;
+        reviewingCapture = false;
+        setResult(RESULT_OK, result);
+        finish();
+    }
+
+    private void discardCapturedPreviewAndResume() {
+        if (deliveringResult) return;
+        stopReviewPlayback();
+        deletePendingCapture();
+        captureBusy = false;
+        recording = false;
+        recordingStarting = false;
+        recordingRequested = false;
+        showLiveCaptureUi();
+        startCameraThread();
+        openCameraWhenReady();
+    }
+
+    private void showLiveCaptureUi() {
+        if (binding == null) return;
+        binding.captureReviewContainer.setVisibility(View.GONE);
+        binding.captureReviewActions.setVisibility(View.GONE);
+        binding.captureReviewImage.setImageDrawable(null);
+        binding.captureReviewImage.setVisibility(View.GONE);
+        binding.captureReviewVideo.setVisibility(View.GONE);
+        binding.captureBottomBar.setVisibility(View.VISIBLE);
+        binding.captureSwitchCamera.setVisibility(View.VISIBLE);
+        binding.captureClose.setContentDescription("取消拍摄");
+        resetRecordingUi();
+        updateZoomControls();
+    }
+
+    private void resumeReviewPlayback() {
+        if (binding != null && reviewingCapture && pendingCaptureVideo
+            && binding.captureReviewVideo.getVisibility() == View.VISIBLE) {
+            binding.captureReviewVideo.start();
+        }
+    }
+
+    private void stopReviewPlayback() {
+        if (binding == null) return;
+        try { binding.captureReviewVideo.stopPlayback(); }
+        catch (RuntimeException ignored) { }
+    }
+
+    private void deletePendingCapture() {
+        File pending = pendingCaptureFile;
+        pendingCaptureFile = null;
+        pendingCaptureVideo = false;
+        reviewingCapture = false;
+        deleteManagedCapture(pending);
+    }
+
+    private void deleteManagedCapture(File file) {
+        if (!isManagedCaptureFile(file) || file == null || !file.exists()) return;
+        //noinspection ResultOfMethodCallIgnored
+        file.delete();
+    }
+
+    private boolean isManagedCaptureFile(File file) {
+        if (file == null) return false;
+        try {
+            File directory = new File(getCacheDir(), "captures").getCanonicalFile();
+            File candidate = file.getCanonicalFile();
+            return directory.equals(candidate.getParentFile())
+                && (candidate.getName().startsWith("app_photo_")
+                    || candidate.getName().startsWith("app_video_"));
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    private void pruneStaleCaptureFiles() {
+        File directory = new File(getCacheDir(), "captures");
+        File[] files = directory.listFiles();
+        if (files == null) return;
+        long cutoff = System.currentTimeMillis() - STALE_CAPTURE_AGE_MS;
+        for (File file : files) {
+            if (file != null && file.lastModified() < cutoff && isManagedCaptureFile(file)) {
+                deleteManagedCapture(file);
+            }
+        }
     }
 
     private void switchCamera() {
         if (recording || recordingStarting || captureBusy) return;
         resetFocusInteraction();
+        currentZoomRatio = 1f;
+        maxDigitalZoom = 1f;
+        currentCropRegion = new Rect(activeArrayRegion);
+        updateZoomControls();
         lensFacing = lensFacing == CameraCharacteristics.LENS_FACING_BACK
             ? CameraCharacteristics.LENS_FACING_FRONT
             : CameraCharacteristics.LENS_FACING_BACK;
@@ -990,6 +1432,8 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         mainHandler.removeCallbacks(beginVideoAfterHold);
         mainHandler.removeCallbacks(recordingTicker);
         resetFocusInteraction();
+        stopReviewPlayback();
+        deletePendingCapture();
         if (cameraHandler == null) {
             setResult(RESULT_CANCELED);
             finish();
@@ -1029,9 +1473,12 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
 
     private void setCaptureControlsEnabled(boolean enabled) {
         if (binding == null) return;
-        binding.captureShutter.setEnabled(enabled);
-        binding.captureSwitchCamera.setEnabled(enabled);
-        binding.captureClose.setEnabled(enabled);
+        boolean liveEnabled = enabled && !reviewingCapture;
+        binding.captureShutter.setEnabled(liveEnabled);
+        binding.captureSwitchCamera.setEnabled(liveEnabled && !recording && !recordingStarting);
+        binding.captureClose.setEnabled(reviewingCapture || (enabled && !recording && !recordingStarting));
+        binding.captureZoomSeek.setEnabled(liveEnabled && maxDigitalZoom > 1.001f
+            && !recordingStarting);
     }
 
     private int captureOrientation() {
@@ -1110,6 +1557,9 @@ public final class InAppCaptureActivity extends xyz.jjmxg.yiyunying.ui.common.Sy
         }
         recording = false;
         recordingStarting = false;
+        recordingRequested = false;
+        captureBusy = false;
+        longPressTriggered = false;
         releaseRecorder(true);
         CameraDevice camera = cameraDevice;
         cameraDevice = null;

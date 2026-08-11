@@ -301,7 +301,7 @@ public final class InlineAudioPlayerView extends LinearLayout {
         String label = playbackSpeed == (int) playbackSpeed
             ? ((int) playbackSpeed) + "×" : String.format(Locale.CHINA, "%.1f×", playbackSpeed);
         speedButton.setText(label);
-        speedButton.setTextColor(getContext().getColor(R.color.on_primary));
+        speedButton.setTextColor(xyz.jjmxg.yiyunying.ui.common.ThemeColors.onPrimary(getContext()));
         speedButton.setStrokeColor(ColorStateList.valueOf(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(getContext())));
         speedButton.setBackgroundTintList(ColorStateList.valueOf(xyz.jjmxg.yiyunying.ui.common.ThemeColors.primary(getContext())));
         speedButton.setContentDescription("当前" + label + "，点击调整播放倍速");

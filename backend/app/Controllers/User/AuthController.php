@@ -233,6 +233,7 @@ final class AuthController
             self::writeLoginLog($app, $user, $request, false, '用户已停用');
             throw new HttpException('用户账号已停用', 403, 403);
         }
+        RolePermissionService::requireUserFeature($user, 'user_account');
         if (AppService::setting((int) $app['id'], 'user_login_vip_only', false)) {
             $wallet = Database::one('SELECT vip_expired_at FROM user_wallets WHERE user_id = ? AND app_id = ?', [
                 (int) $user['id'], (int) $app['id'],
@@ -350,6 +351,14 @@ final class AuthController
         );
     }
 
+    public static function features(Request $request): \Yiyunying\Core\ApiResponse
+    {
+        $user = AuthService::user($request);
+        return Response::success([
+            'features' => AppService::effectiveFeaturesForUser($user),
+        ], '用户有效功能读取成功');
+    }
+
     public static function heartbeat(Request $request): \Yiyunying\Core\ApiResponse
     {
         $user = AuthService::user($request);
@@ -396,13 +405,16 @@ final class AuthController
              FROM user_wallets WHERE admin_id = ? AND app_id = ? AND user_id = ?',
             [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
         );
+        $purchaseFeatures = RolePermissionService::effectiveUserFeatures($user, [
+            'balance_document_purchase', 'balance_membership_purchase',
+        ]);
         return Response::success([
             'wallet' => WalletService::publicWallet($wallet ?? [], (int) $user['app_id']),
             'purchase_rules' => [
-                'document_credit_enabled' => AppService::featureEnabled((int) $user['app_id'], 'balance_document_purchase')
+                'document_credit_enabled' => (bool) ($purchaseFeatures['balance_document_purchase']['effective_enabled'] ?? false)
                     && AppService::setting((int) $user['app_id'], 'balance_document_purchase_enabled', false),
                 'document_credit_unit_price' => (float) AppService::setting((int) $user['app_id'], 'document_credit_balance_price', 1),
-                'membership_enabled' => AppService::featureEnabled((int) $user['app_id'], 'balance_membership_purchase')
+                'membership_enabled' => (bool) ($purchaseFeatures['balance_membership_purchase']['effective_enabled'] ?? false)
                     && AppService::setting((int) $user['app_id'], 'balance_membership_purchase_enabled', false),
                 'membership_day_unit_price' => (float) AppService::setting((int) $user['app_id'], 'vip_day_balance_price', 1),
             ],

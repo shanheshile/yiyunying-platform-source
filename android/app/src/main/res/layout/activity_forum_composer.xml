@@ -127,14 +127,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
+                android:background="@drawable/bg_forum_category_section"
                 android:orientation="vertical"
+                android:padding="14dp"
                 android:visibility="gone">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="分类与标签"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="@color/on_forum_category_container" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -142,7 +145,7 @@
                     android:layout_marginTop="3dp"
                     android:text="选择二级分类便于检索；标签最多 10 个。"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                    android:textColor="@color/on_surface_variant" />
+                    android:textColor="@color/on_forum_category_container" />
 
                 <HorizontalScrollView
                     android:layout_width="match_parent"
@@ -180,7 +183,7 @@
                     android:layout_marginTop="3dp"
                     android:text="可选择推荐标签，也可在下方输入自定义标签。"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                    android:textColor="@color/on_surface_variant" />
+                    android:textColor="@color/on_forum_category_container" />
 
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tagsLayout"
@@ -250,7 +253,9 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
+                android:background="@drawable/bg_forum_unlock_section"
                 android:orientation="vertical"
+                android:padding="12dp"
                 android:visibility="gone">
 
                 <LinearLayout
@@ -289,7 +294,9 @@
                         android:text="添加章节"
                         android:textColor="@color/on_forum_chapter_container"
                         app:backgroundTint="@color/forum_chapter_container"
-                        app:icon="@drawable/ic_add" />
+                        app:cornerRadius="12dp"
+                        app:icon="@drawable/ic_add"
+                        app:iconTint="@color/on_forum_chapter_container" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -333,11 +340,26 @@
                 android:textColor="@color/on_surface_variant"
                 android:visibility="gone" />
 
+            <TextView
+                android:id="@+id/unlockRuleSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_forum_unlock_section"
+                android:padding="12dp"
+                android:text="当前正文公开，读者无需解锁"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="@color/on_forum_unlock_container"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/paidSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_forum_unlock_section"
                 android:orientation="vertical"
+                android:padding="12dp"
                 android:visibility="gone">
 
                 <com.google.android.material.textfield.TextInputLayout
@@ -431,6 +453,9 @@
             android:layout_height="50dp"
             android:layout_marginTop="6dp"
             android:text="发布帖子"
-            app:icon="@drawable/ic_send" />
+            android:textColor="@color/on_forum_publish_container"
+            app:backgroundTint="@color/forum_publish_container"
+            app:icon="@drawable/ic_send"
+            app:iconTint="@color/on_forum_publish_container" />
     </LinearLayout>
 </LinearLayout>

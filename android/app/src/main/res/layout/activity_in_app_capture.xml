@@ -1,15 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF000000">
+    android:background="#FF000000"
+    android:splitMotionEvents="true">
 
     <SurfaceView
         android:id="@+id/capturePreview"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clickable="true"
-        android:contentDescription="应用内相机预览" />
+        android:contentDescription="应用内相机预览，支持点按聚焦、拖动跟焦、长按锁焦或解锁以及双指缩放" />
+
+    <FrameLayout
+        android:id="@+id/captureReviewContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/captureReviewImage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="拍摄照片成品预览"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
+
+        <VideoView
+            android:id="@+id/captureReviewVideo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:contentDescription="拍摄视频成品预览，轻触暂停或继续播放"
+            android:focusable="true"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/captureFocusIndicator"
@@ -111,17 +140,50 @@
         android:paddingEnd="20dp"
         android:paddingBottom="28dp">
 
+        <LinearLayout
+            android:id="@+id/captureZoomPanel"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_capture_top_button"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <TextView
+                android:id="@+id/captureZoomValue"
+                android:layout_width="52dp"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="1.0×"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/captureZoomSeek"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:contentDescription="相机焦距，当前 1.0 倍"
+                android:enabled="false"
+                android:max="1000"
+                android:progress="0" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/captureHint"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
             android:background="@drawable/bg_capture_top_button"
             android:gravity="center"
             android:paddingStart="18dp"
             android:paddingTop="8dp"
             android:paddingEnd="18dp"
             android:paddingBottom="8dp"
-            android:text="轻触拍照 · 长按录像（最多 60 秒）&#10;画面点按聚焦 · 拖动跟焦 · 长按锁焦"
+            android:text="轻触拍照 · 长按录像（最多 60 秒）&#10;点按聚焦 · 拖动跟焦 · 长按锁焦/解锁 · 双指或滑杆调焦距"
             android:textColor="@android:color/white"
             android:textSize="14sp" />
 
@@ -142,5 +204,58 @@
                 android:layout_height="match_parent"
                 android:background="@drawable/bg_capture_shutter_photo" />
         </FrameLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/captureReviewActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#B3000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/captureReviewLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="请确认拍摄成品"
+            android:textColor="@android:color/white"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/captureRetake"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:contentDescription="取消当前成品并重新拍摄"
+                android:text="取消/重拍"
+                android:textColor="@android:color/white"
+                app:strokeColor="@android:color/white" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/captureConfirm"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:contentDescription="确认使用当前拍摄成品"
+                android:text="✓ 确认" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

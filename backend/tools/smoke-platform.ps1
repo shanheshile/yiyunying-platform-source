@@ -85,8 +85,10 @@ $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $operatorAccount = "operator_$suffix"
 $operatorPlatformKey = "operator-$suffix"
 $adminAccount = "tenant_admin_$suffix"
+$bootstrapAppKey = "platform_smoke_$suffix"
 
 $rootLogin = Invoke-Api -Method POST -Path '/api/platform/login' -Body @{
+    platform_key = 'yiyunying-root'
     account = 'root'
     password = '123456'
     device = 'platform-smoke'
@@ -107,6 +109,7 @@ $platformKey = [string]$operatorResult.operator.platform_key
 Assert-True ($platformKey -eq $operatorPlatformKey) 'operator must keep the platform_key selected by level 1'
 
 $operatorLogin = Invoke-Api -Method POST -Path '/api/platform/login' -Body @{
+    platform_key = $platformKey
     account = $operatorAccount
     password = '123456'
     device = 'platform-smoke'
@@ -120,25 +123,27 @@ $registration = Invoke-Api -Method POST -Path '/api/admin/register' -Body @{
     password = '123456'
     password_confirmation = '123456'
     nickname = 'Platform Smoke Admin'
+    app_key = $bootstrapAppKey
+    app_name = "Platform Smoke App $suffix"
 }
 Assert-True ([int]$registration.admin.platform_id -eq $operatorId) 'admin must belong to level 2 operator'
 Assert-True ([int]$registration.registration_gift.app_quota -eq 1) 'new admin app gift'
 Assert-True ([int]$registration.registration_gift.remote_document_quota -eq 3) 'new admin document gift'
 Assert-True ([int]$registration.registration_gift.balance -eq 15) 'new admin balance gift'
+Assert-True ([string]$registration.initial_app.app_key -eq $bootstrapAppKey) 'registration creates the compiled bootstrap app'
+Assert-True (-not [string]::IsNullOrWhiteSpace([string]$registration.app_secret)) 'bootstrap app secret is returned exactly at registration'
 
 $adminLogin = Invoke-Api -Method POST -Path '/api/admin/login' -Body @{
     platform_key = $platformKey
+    app_key = $bootstrapAppKey
     account = $adminAccount
     password = '123456'
     device = 'platform-smoke'
 }
 $adminHeaders = @{ Authorization = "Bearer $($adminLogin.access_token)" }
 
-$appResult = Invoke-Api -Method POST -Path '/api/admin/apps' -Headers $adminHeaders -Body @{
-    name = "Platform Smoke App $suffix"
-}
-$appId = [int]$appResult.app.id
-$appKey = [string]$appResult.app.app_key
+$appId = [int]$registration.initial_app.id
+$appKey = [string]$registration.initial_app.app_key
 
 Assert-ApiFailure -Method POST -Path '/api/admin/apps' -Headers $adminHeaders -Body @{
     name = "Quota Overflow $suffix"

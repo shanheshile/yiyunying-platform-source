@@ -16,6 +16,8 @@ public final class ForumComposerUnlockUiTest {
         assertTrue(layout.contains("@+id/unlockAtInput"));
         assertTrue(layout.contains("正文、章节和附件都可分别设置"));
         assertTrue(layout.contains("@color/forum_chapter_container"));
+        assertTrue(layout.contains("@drawable/bg_forum_category_section"));
+        assertTrue(layout.contains("@+id/unlockRuleSummary"));
         assertTrue(layout.contains("锁定时显示的预览（可选）"));
     }
 
@@ -40,6 +42,10 @@ public final class ForumComposerUnlockUiTest {
         assertTrue(source.contains("草稿保护设置仍被保留，当前禁止发布"));
         assertTrue(source.contains("isFutureUnlockAt"));
         assertTrue(source.contains("自动解锁时间必须晚于当前时间"));
+        assertTrue(source.contains("styleTaxonomyChip"));
+        assertTrue(source.contains("ForumUnlockPolicy.explanation"));
+        assertTrue(source.contains("invalidPrice"));
+        assertTrue(source.contains("setIconTint(ColorStateList.valueOf(foreground))"));
     }
 
     @Test public void draftAndPublishedButtonsUseDistinctColorFamilies() throws Exception {
@@ -48,6 +54,9 @@ public final class ForumComposerUnlockUiTest {
         assertTrue(source.contains("R.color.forum_draft_container"));
         assertTrue(colors.contains("name=\"forum_draft_container\""));
         assertTrue(colors.contains("name=\"forum_chapter_container\""));
+        String forumColors = read("src/main/res/values/forum_composer_colors.xml");
+        assertTrue(forumColors.contains("name=\"forum_publish_container\""));
+        assertTrue(forumColors.contains("name=\"forum_category_container\""));
     }
 
     private static String read(String relative) throws Exception {

@@ -36,8 +36,6 @@ final class AiConversationController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'bot');
-        return $user;
+        return AuthService::user($request, 'bot');
     }
 }

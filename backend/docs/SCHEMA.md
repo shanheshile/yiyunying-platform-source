@@ -2,7 +2,7 @@
 
 > 本文件由 `php tools/generate-reference.php` 从 `database/install.sql` 生成。
 
-- 数据表：215
+- 数据表：221
 - 字符集：`utf8mb4`
 - 租户边界：平台层按 `platform_id`，后台层按 `admin_id`，应用业务层按 `admin_id + app_id` 隔离
 
@@ -298,6 +298,50 @@
 - `KEY \`idx_admin_permissions_platform\` (\`platform_id\`, \`admin_id\`)`
 - `CONSTRAINT \`fk_admin_permissions_admin\` FOREIGN KEY (\`admin_id\`, \`platform_id\`) REFERENCES \`admins\` (\`id\`, \`platform_id\`) ON DELETE CASCADE`
 
+## `admin_public_profiles`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `official_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `download_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `official_qq_group` | `VARCHAR(100) NOT NULL DEFAULT ''` |
+| `official_qq_group_link` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `alipay_qr_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `wechat_qr_url` | `VARCHAR(1000) NOT NULL DEFAULT ''` |
+| `software_intro` | `TEXT` |
+| `about_us` | `TEXT` |
+| `revision` | `BIGINT UNSIGNED NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`admin_id\`)`
+- `CONSTRAINT \`fk_admin_public_profiles_admin\` FOREIGN KEY (\`admin_id\`) REFERENCES \`admins\` (\`id\`) ON DELETE CASCADE`
+
+## `admin_sponsor_records`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `sponsor_name` | `VARCHAR(100) NOT NULL` |
+| `amount` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
+| `channel` | `VARCHAR(20) NOT NULL DEFAULT 'manual'` |
+| `note` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `paid_at` | `DATETIME NOT NULL` |
+| `status` | `TINYINT NOT NULL DEFAULT 1` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+| `deleted_at` | `DATETIME DEFAULT NULL` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_admin_sponsor_rank\` (\`admin_id\`, \`status\`, \`amount\`, \`paid_at\`, \`id\`)`
+- `CONSTRAINT \`fk_admin_sponsor_records_admin\` FOREIGN KEY (\`admin_id\`) REFERENCES \`admins\` (\`id\`) ON DELETE CASCADE`
+
 ## `admin_registration_logs`
 
 | 字段 | SQL 定义 |
@@ -498,6 +542,7 @@
 | `app_key` | `VARCHAR(80) NOT NULL` |
 | `app_secret_hash` | `CHAR(64) NOT NULL` |
 | `name` | `VARCHAR(100) NOT NULL` |
+| `app_type` | `VARCHAR(30) NOT NULL DEFAULT 'general'` |
 | `logo` | `VARCHAR(500) NOT NULL DEFAULT ''` |
 | `description` | `TEXT` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
@@ -1600,6 +1645,8 @@
 | `price_money` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
 | `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
 | `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `audited_by` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `audited_at` | `DATETIME DEFAULT NULL` |
 | `is_top` | `TINYINT NOT NULL DEFAULT 0` |
 | `is_recommended` | `TINYINT NOT NULL DEFAULT 0` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
@@ -1617,8 +1664,9 @@
 - `KEY \`idx_resources_type_status\` (\`app_id\`, \`resource_type\`, \`audit_status\`, \`status\`, \`created_at\`)`
 - `KEY \`idx_resources_risk\` (\`app_id\`, \`risk_level\`, \`audit_status\`)`
 - `KEY \`idx_resources_user\` (\`user_id\`, \`created_at\`)`
-- `CONSTRAINT \`fk_resources_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`resource_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_resources_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`resource_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
 - `CONSTRAINT \`fk_resources_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_resources_auditor\` FOREIGN KEY (\`audited_by\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
 
 ## `resource_files`
 
@@ -1693,15 +1741,16 @@
 | `buyer_user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `seller_user_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
 **索引与约束**
 
 - `PRIMARY KEY (\`id\`)`
 - `UNIQUE KEY \`uk_resource_purchase_buyer\` (\`resource_id\`, \`buyer_user_id\`)`
-- `CONSTRAINT \`fk_resource_purchase_resource\` FOREIGN KEY (\`resource_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`resources\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
-- `CONSTRAINT \`fk_resource_purchase_buyer\` FOREIGN KEY (\`buyer_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
-- `CONSTRAINT \`fk_resource_purchase_seller\` FOREIGN KEY (\`seller_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_resource_purchase_resource\` FOREIGN KEY (\`resource_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`resources\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
+- `CONSTRAINT \`fk_resource_purchase_buyer\` FOREIGN KEY (\`buyer_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
+- `CONSTRAINT \`fk_resource_purchase_seller\` FOREIGN KEY (\`seller_user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE SET NULL`
 
 ## `store_categories`
 
@@ -1748,6 +1797,8 @@
 | `icon_upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
 | `audit_status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
 | `audit_reason` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `audited_by` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `audited_at` | `DATETIME DEFAULT NULL` |
 | `price_integral` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `download_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
 | `status` | `TINYINT NOT NULL DEFAULT 1` |
@@ -1762,8 +1813,32 @@
 - `UNIQUE KEY \`uk_store_apps_id_app_admin\` (\`id\`, \`app_id\`, \`admin_id\`)`
 - `KEY \`idx_store_apps_category_status\` (\`app_id\`, \`category_id\`, \`status\`)`
 - `KEY \`idx_store_apps_audit\` (\`app_id\`, \`audit_status\`, \`risk_level\`, \`status\`)`
-- `CONSTRAINT \`fk_store_apps_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`store_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_store_apps_category\` FOREIGN KEY (\`category_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`store_categories\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
 - `CONSTRAINT \`fk_store_apps_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+- `CONSTRAINT \`fk_store_apps_auditor\` FOREIGN KEY (\`audited_by\`) REFERENCES \`admins\` (\`id\`) ON DELETE SET NULL`
+
+## `store_app_purchases`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `store_app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `buyer_user_id` | `BIGINT UNSIGNED NOT NULL` |
+| `seller_user_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `price_balance` | `DECIMAL(18,2) NOT NULL DEFAULT 0.00` |
+| `asset_type` | `VARCHAR(20) NOT NULL DEFAULT 'balance'` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_store_app_purchase_buyer\` (\`store_app_id\`, \`buyer_user_id\`)`
+- `KEY \`idx_store_app_purchases_buyer\` (\`app_id\`, \`buyer_user_id\`, \`created_at\`)`
+- `CONSTRAINT \`fk_store_app_purchase_app\` FOREIGN KEY (\`store_app_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`store_apps\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
+- `CONSTRAINT \`fk_store_app_purchase_buyer\` FOREIGN KEY (\`buyer_user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE RESTRICT`
+- `CONSTRAINT \`fk_store_app_purchase_seller\` FOREIGN KEY (\`seller_user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE SET NULL`
 
 ## `store_app_images`
 
@@ -1975,6 +2050,7 @@
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `content` | `TEXT NOT NULL` |
 | `tags_json` | `LONGTEXT` |
+| `mentions_json` | `LONGTEXT` |
 | `is_pinned` | `TINYINT NOT NULL DEFAULT 0` |
 | `pin_order` | `INT NOT NULL DEFAULT 0` |
 | `like_count` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
@@ -3276,7 +3352,57 @@
 - `PRIMARY KEY (\`id\`)`
 - `KEY \`idx_uploads_tenant_scene\` (\`admin_id\`, \`app_id\`, \`scene\`, \`created_at\`)`
 - `KEY \`idx_uploads_content_fingerprint\` (\`admin_id\`, \`app_id\`, \`sha256\`, \`size_bytes\`, \`status\`)`
+- `KEY \`idx_uploads_file_path\` (\`file_path\`(191))`
+- `KEY \`idx_uploads_scene_sha256\` (\`scene\`, \`sha256\`)`
 - `CONSTRAINT \`fk_uploads_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`) REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`
+
+## `catalog_file_migrations`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `admin_id` | `BIGINT UNSIGNED NOT NULL` |
+| `app_id` | `BIGINT UNSIGNED NOT NULL` |
+| `upload_id` | `BIGINT UNSIGNED NOT NULL` |
+| `old_file_path` | `VARCHAR(1000) NOT NULL` |
+| `new_file_path` | `VARCHAR(1000) NOT NULL` |
+| `file_sha256` | `CHAR(64) NOT NULL DEFAULT ''` |
+| `file_size_bytes` | `BIGINT UNSIGNED NOT NULL DEFAULT 0` |
+| `cleanup_status` | `VARCHAR(20) NOT NULL DEFAULT 'cleanup_pending'` |
+| `cleanup_error` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `cleaned_at` | `DATETIME DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_catalog_file_migration_upload\` (\`upload_id\`)`
+- `KEY \`idx_catalog_file_migration_cleanup\` (\`admin_id\`, \`app_id\`, \`cleanup_status\`)`
+- `KEY \`idx_catalog_file_migration_old_path\` (\`old_file_path\`(191))`
+- `KEY \`idx_catalog_file_migration_sha256\` (\`file_sha256\`)`
+- `CONSTRAINT \`fk_catalog_file_migration_upload\` FOREIGN KEY (\`upload_id\`) REFERENCES \`uploads\` (\`id\`) ON DELETE CASCADE`
+
+## `upload_file_deletions`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `upload_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `file_path` | `VARCHAR(1000) NOT NULL` |
+| `path_sha256` | `CHAR(64) NOT NULL` |
+| `cleanup_status` | `VARCHAR(20) NOT NULL DEFAULT 'cleanup_pending'` |
+| `cleanup_error` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `cleaned_at` | `DATETIME DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `UNIQUE KEY \`uk_upload_file_deletion_path\` (\`path_sha256\`)`
+- `KEY \`idx_upload_file_deletion_status\` (\`cleanup_status\`, \`updated_at\`)`
+- `CONSTRAINT \`fk_upload_file_deletion_upload\` FOREIGN KEY (\`upload_id\`) REFERENCES \`uploads\` (\`id\`) ON DELETE SET NULL`
 
 ## `sticker_packs`
 
@@ -3611,6 +3737,7 @@
 | `author_type` | `VARCHAR(20) NOT NULL` |
 | `author_id` | `BIGINT UNSIGNED NOT NULL` |
 | `author_name` | `VARCHAR(100) NOT NULL` |
+| `category_code` | `VARCHAR(30) NOT NULL DEFAULT 'general'` |
 | `title` | `VARCHAR(200) NOT NULL` |
 | `content` | `LONGTEXT NOT NULL` |
 | `attachments_json` | `LONGTEXT` |
@@ -3631,6 +3758,30 @@
 - `CONSTRAINT \`fk_level_forum_root\` FOREIGN KEY (\`root_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_level_forum_scope\` FOREIGN KEY (\`scope_platform_id\`) REFERENCES \`platform_accounts\` (\`id\`) ON DELETE CASCADE`
 - `CONSTRAINT \`fk_level_forum_app\` FOREIGN KEY (\`app_id\`) REFERENCES \`apps\` (\`id\`) ON DELETE CASCADE`
+
+## `level_forum_reports`
+
+| 字段 | SQL 定义 |
+| --- | --- |
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` |
+| `post_id` | `BIGINT UNSIGNED NOT NULL` |
+| `reporter_type` | `VARCHAR(20) NOT NULL` |
+| `reporter_id` | `BIGINT UNSIGNED NOT NULL` |
+| `reason` | `VARCHAR(500) NOT NULL` |
+| `status` | `VARCHAR(20) NOT NULL DEFAULT 'pending'` |
+| `handled_by_type` | `VARCHAR(20) DEFAULT NULL` |
+| `handled_by_id` | `BIGINT UNSIGNED DEFAULT NULL` |
+| `handle_remark` | `VARCHAR(500) NOT NULL DEFAULT ''` |
+| `handled_at` | `DATETIME DEFAULT NULL` |
+| `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` |
+
+**索引与约束**
+
+- `PRIMARY KEY (\`id\`)`
+- `KEY \`idx_level_forum_reports_post\` (\`post_id\`, \`status\`, \`id\`)`
+- `KEY \`idx_level_forum_reports_actor\` (\`reporter_type\`, \`reporter_id\`, \`status\`)`
+- `CONSTRAINT \`fk_level_forum_reports_post\` FOREIGN KEY (\`post_id\`) REFERENCES \`level_forum_posts\` (\`id\`) ON DELETE CASCADE`
 
 ## `level_forum_comments`
 
@@ -5102,6 +5253,7 @@
 | `app_id` | `BIGINT UNSIGNED NOT NULL` |
 | `user_id` | `BIGINT UNSIGNED NOT NULL` |
 | `content` | `TEXT NOT NULL` |
+| `content_kind` | `VARCHAR(20) NOT NULL DEFAULT 'moment'` |
 | `location_name` | `VARCHAR(200) NOT NULL DEFAULT ''` |
 | `latitude` | `DECIMAL(10,7) DEFAULT NULL` |
 | `longitude` | `DECIMAL(10,7) DEFAULT NULL` |
@@ -5128,6 +5280,7 @@
 - `KEY \`idx_user_moments_owner\` (\`user_id\`, \`created_at\`)`
 - `KEY \`idx_user_moments_pinned\` (\`user_id\`, \`is_pinned\`, \`pin_order\`, \`created_at\`)`
 - `KEY \`idx_user_moments_moderation\` (\`admin_id\`, \`app_id\`, \`audit_status\`, \`status\`, \`deleted_at\`, \`created_at\`)`
+- `KEY \`idx_user_moments_kind_feed\` (\`admin_id\`, \`app_id\`, \`content_kind\`, \`audit_status\`, \`status\`, \`deleted_at\`, \`created_at\`)`
 - `KEY \`idx_user_moments_purge\` (\`app_id\`, \`delete_expires_at\`)`
 - `CONSTRAINT \`fk_user_moments_user\` FOREIGN KEY (\`user_id\`, \`app_id\`, \`admin_id\`)`
 - `REFERENCES \`users\` (\`id\`, \`app_id\`, \`admin_id\`) ON DELETE CASCADE`

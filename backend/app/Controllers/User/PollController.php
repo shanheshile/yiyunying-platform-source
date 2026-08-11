@@ -11,7 +11,7 @@ use Yiyunying\Services\UniversalPollService;
 
 final class PollController
 {
-    private static function actor(Request $request): array { $user = AuthService::user($request); AppService::requireFeature((int) $user['app_id'], 'votes'); return UniversalPollService::userActor($user); }
+    private static function actor(Request $request): array { return UniversalPollService::userActor(AuthService::user($request, 'votes')); }
     public static function categories(Request $request): \Yiyunying\Core\ApiResponse { return Response::success(['items' => UniversalPollService::categories($request, self::actor($request))]); }
     public static function createCategory(Request $request): \Yiyunying\Core\ApiResponse { $id = UniversalPollService::createCategory(self::actor($request), $request->all()); return Response::success(['category_id' => $id], '投票分类已创建', 201); }
     public static function updateCategory(Request $request, array $params): \Yiyunying\Core\ApiResponse { return Response::success(['category' => UniversalPollService::updateCategory(self::actor($request), (int) $params['category_id'], $request->all())], '投票分类已更新'); }

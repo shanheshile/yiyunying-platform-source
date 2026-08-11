@@ -29,11 +29,13 @@ import java.util.List;
 import java.util.Map;
 
 import xyz.jjmxg.yiyunying.R;
+import xyz.jjmxg.yiyunying.BuildConfig;
 import xyz.jjmxg.yiyunying.core.AppAccess;
 import xyz.jjmxg.yiyunying.core.RuntimeLanguage;
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.data.session.SessionManager;
+import xyz.jjmxg.yiyunying.data.session.EndpointPolicy;
 import xyz.jjmxg.yiyunying.databinding.ActivityMainBinding;
 import xyz.jjmxg.yiyunying.databinding.NavHeaderBinding;
 import xyz.jjmxg.yiyunying.domain.AdminAccessPolicy;
@@ -85,6 +87,7 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     private ModuleSpec currentModule;
     private MenuItem appAction;
     private RequestHandle appRequest;
+    private RequestHandle mainSessionRequest;
     private RequestHandle headerRequest;
     private RequestHandle headerCacheRequest;
     private NavHeaderBinding headerBinding;
@@ -139,9 +142,18 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
             showLogin();
             return;
         }
-        ((xyz.jjmxg.yiyunying.YiyunyingApplication) getApplication()).refreshShortcuts();
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        // Restored fragments can otherwise render before the persisted token has been checked
+        // against the server. Keep all protected content hidden until /me confirms it.
+        binding.contentContainer.setVisibility(View.INVISIBLE);
+        validateMainSession(savedInstanceState);
+    }
+
+    private void initializeAuthenticatedUi(Bundle savedInstanceState) {
+        if (binding == null || leaving) return;
+        binding.contentContainer.setVisibility(View.VISIBLE);
+        ((xyz.jjmxg.yiyunying.YiyunyingApplication) getApplication()).refreshShortcuts();
         getSupportFragmentManager().registerFragmentLifecycleCallbacks(chromeLifecycleCallbacks, false);
         CrashNotice.showPending(this);
         binding.toolbar.setNavigationOnClickListener(view -> {
@@ -186,6 +198,68 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
                 syncMainChromeWithVisibleFragment();
                 updateNavigationIcon();
             });
+        }
+    }
+
+    private void validateMainSession(Bundle savedInstanceState) {
+        if (!buildIdentityMatches()) {
+            session.clearAuthentication();
+            showLogin();
+            return;
+        }
+        LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        if (session.role() == Role.ADMIN) query.put("app_key", BuildConfig.DEFAULT_APP_KEY.trim());
+        mainSessionRequest = AppAccess.from(this).repository().get(session.role().mePath(), query, result -> {
+            mainSessionRequest = null;
+            if (binding == null || leaving) return;
+            if (result.isSuccessful() && liveIdentityMatches(result.dataObject())) {
+                initializeAuthenticatedUi(savedInstanceState);
+                return;
+            }
+            boolean rejected = result.isAuthenticationFailure() || result.httpCode() == 403 || result.isSuccessful();
+            if (rejected) {
+                session.clearAuthentication();
+                showLogin();
+                return;
+            }
+            Snackbar.make(binding.getRoot(), "暂时无法实时验证登录状态，请检查网络后重试", Snackbar.LENGTH_INDEFINITE)
+                .setAction("重试", view -> validateMainSession(savedInstanceState))
+                .show();
+        });
+    }
+
+    private boolean buildIdentityMatches() {
+        try {
+            if (!EndpointPolicy.normalize(BuildConfig.DEFAULT_API_BASE_URL).equals(session.baseUrl())) return false;
+            if (session.role() != AppEdition.role() || !session.isCompatibleWithEdition()) return false;
+            if (session.role() == Role.USER) return BuildConfig.DEFAULT_APP_KEY.trim().equals(session.appKey());
+            if (!BuildConfig.DEFAULT_PLATFORM_KEY.trim().equals(session.platformKey())) return false;
+            return session.role() != Role.ADMIN || BuildConfig.DEFAULT_APP_KEY.trim().equals(session.configuredAppKey());
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private boolean liveIdentityMatches(JsonObject data) {
+        JsonObject actor = Jsons.object(data, session.role().wireName());
+        if (Jsons.longValue(actor, "id") != session.actorId()) return false;
+        if (session.role() == Role.USER) return BuildConfig.DEFAULT_APP_KEY.trim().equals(session.appKey());
+        if (session.role() == Role.ADMIN && !booleanValue(data, "app_identity_verified")) return false;
+        if (session.role() == Role.PLATFORM) {
+            int liveLevel = Jsons.intValue(actor, "level", 0);
+            return liveLevel == AppEdition.requiredPlatformLevel()
+                && liveLevel == session.actorLevel()
+                && BuildConfig.DEFAULT_PLATFORM_KEY.trim().equals(Jsons.string(actor, "platform_key"));
+        }
+        return BuildConfig.DEFAULT_PLATFORM_KEY.trim().equals(Jsons.string(actor, "platform_key"));
+    }
+
+    private static boolean booleanValue(JsonObject object, String key) {
+        try {
+            return object != null && object.has(key) && !object.get(key).isJsonNull()
+                && object.get(key).getAsBoolean();
+        } catch (RuntimeException ignored) {
+            return false;
         }
     }
 
@@ -500,9 +574,9 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         long focusRecordId = getIntent().getLongExtra(EXTRA_FOCUS_RECORD_ID, 0L);
         switch (module.screenType()) {
             case DASHBOARD:
-                fragment = session.role() == Role.USER
-                    ? DashboardFragment.newInstance(module.id())
-                    : ManagementShellFragment.newInstance();
+                fragment = session.role() != Role.USER && "dashboard".equals(module.id())
+                    ? ManagementShellFragment.newInstance()
+                    : DashboardFragment.newInstance(module.id());
                 break;
             case USER_HOME: fragment = UserShellFragment.newInstance(); break;
             case DOCUMENTS: fragment = DocumentsFragment.newInstance(); break;
@@ -615,7 +689,8 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
     @Override
     public void onAppSelectionChanged() {
         if (appAction != null) appAction.setTitle(appTitle());
-        if (currentModule != null && currentModule.requiresApp()) open(currentModule);
+        if (currentModule != null && currentModule.requiresApp()
+            && !"dashboard".equals(currentModule.id())) open(currentModule);
     }
 
     @Override
@@ -738,6 +813,7 @@ public final class MainActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
 
     @Override protected void onDestroy() {
         getSupportFragmentManager().unregisterFragmentLifecycleCallbacks(chromeLifecycleCallbacks);
+        if (mainSessionRequest != null) mainSessionRequest.cancel();
         if (appRequest != null) appRequest.cancel();
         if (headerRequest != null) headerRequest.cancel();
         if (headerCacheRequest != null) headerCacheRequest.cancel();

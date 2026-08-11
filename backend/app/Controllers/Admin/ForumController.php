@@ -22,6 +22,8 @@ use Yiyunying\Services\RewardRuleService;
 
 final class ForumController
 {
+    private const AUDIT_STATUSES = ['pending', 'approved', 'rejected', 'on_hold'];
+
     public static function plates(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         [$admin, $appId] = self::context($request, $params);
@@ -119,8 +121,8 @@ final class ForumController
             }
         }
         if (trim((string) $request->input('audit_status', '')) !== '') {
-            if (!in_array(trim((string) $request->input('audit_status')), ['pending', 'approved', 'rejected'], true)) {
-                throw new HttpException('audit_status 仅支持 pending、approved 或 rejected', 0, 422);
+            if (!in_array(trim((string) $request->input('audit_status')), self::AUDIT_STATUSES, true)) {
+                throw new HttpException('audit_status 仅支持 pending、approved、rejected 或 on_hold', 0, 422);
             }
             $where[] = 'p.audit_status = ?';
             $query[] = trim((string) $request->input('audit_status'));
@@ -140,7 +142,7 @@ final class ForumController
              INNER JOIN users u ON u.id = p.user_id LEFT JOIN user_profiles up ON up.user_id = p.user_id
              LEFT JOIN admins reviewer ON reviewer.id = p.audited_by
              WHERE {$whereSql}
-             ORDER BY CASE p.audit_status WHEN 'pending' THEN 0 WHEN 'rejected' THEN 1 ELSE 2 END,
+             ORDER BY CASE p.audit_status WHEN 'pending' THEN 0 WHEN 'on_hold' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
                       p.is_top DESC, p.is_essence DESC, p.is_locked DESC,
                       CASE WHEN p.hot_label <> '' THEN 0 ELSE 1 END, p.heat_score DESC, p.id DESC
              LIMIT {$limit} OFFSET {$offset}",
@@ -309,16 +311,9 @@ final class ForumController
                  audited_at = NOW(), updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
                 [$status, $reason, (int) $admin['id'], $postId, (int) $admin['id'], $appId]
             );
-            if ($status === 'rejected') {
-                Database::execute(
-                    "UPDATE forum_comments
-                     SET audit_status = 'rejected', audit_reason = ?, audited_by = ?, audited_at = NOW(), updated_at = NOW()
-                     WHERE post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
-                       AND audit_status <> 'rejected'",
-                    [
-                        mb_substr('上级帖子未通过审核：' . $reason, 0, 500),
-                        (int) $admin['id'], $postId, (int) $admin['id'], $appId,
-                    ]
+            if ($status !== 'approved') {
+                self::transitionAllForumComments(
+                    $postId, (int) $admin['id'], $appId, $status, $reason
                 );
                 Database::execute(
                     'UPDATE forum_posts SET comment_count = 0 WHERE id = ? AND admin_id = ? AND app_id = ?',
@@ -334,14 +329,14 @@ final class ForumController
                 NotificationService::send(
                     $author,
                     'forum_post_audit',
-                    $status === 'approved' ? '帖子审核通过' : '帖子审核未通过',
-                    '《' . (string) $post['title'] . '》' . ($reason === '' ? '' : '：' . $reason),
+                    self::notificationTitle('帖子', $status),
+                    self::notificationContent('《' . (string) $post['title'] . '》', $status, $reason),
                     ['post_id' => (int) $post['id'], 'audit_status' => $status, 'audit_reason' => $reason]
                 );
             }
             LogService::adminOperation(
                 $request, (int) $admin['id'], $appId, 'forum_post_moderation',
-                $status === 'approved' ? 'approve' : 'reject', $postId, $post, $after
+                self::operationAction($status), $postId, $post, $after
             );
             return [$post, $after];
         });
@@ -367,7 +362,7 @@ final class ForumController
         $after['audit_status_name'] = self::auditStatusName($status);
         return Response::success(
             ['post' => $after, 'audit_status' => $status, 'reward_result' => $rewardResult],
-            $status === 'approved' ? '帖子已审核通过' : '帖子已拒绝并记录原因'
+            self::successMessage('帖子', $status)
         );
     }
 
@@ -387,8 +382,8 @@ final class ForumController
         }
         $auditStatus = trim((string) $request->input('audit_status', ''));
         if ($auditStatus !== '') {
-            if (!in_array($auditStatus, ['pending', 'approved', 'rejected'], true)) {
-                throw new HttpException('audit_status 仅支持 pending、approved 或 rejected', 0, 422);
+            if (!in_array($auditStatus, self::AUDIT_STATUSES, true)) {
+                throw new HttpException('audit_status 仅支持 pending、approved、rejected 或 on_hold', 0, 422);
             }
             $where[] = 'c.audit_status = ?';
             $query[] = $auditStatus;
@@ -412,7 +407,7 @@ final class ForumController
              INNER JOIN users u ON u.id = c.user_id LEFT JOIN user_profiles p ON p.user_id = u.id
              LEFT JOIN admins reviewer ON reviewer.id = c.audited_by
              WHERE {$whereSql}
-             ORDER BY CASE c.audit_status WHEN 'pending' THEN 0 WHEN 'rejected' THEN 1 ELSE 2 END,
+             ORDER BY CASE c.audit_status WHEN 'pending' THEN 0 WHEN 'on_hold' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
                       c.id DESC LIMIT {$limit} OFFSET {$offset}",
             $query
         );
@@ -499,10 +494,10 @@ final class ForumController
             );
             $wasApproved = (string) $comment['audit_status'] === 'approved' && (int) $comment['status'] === 1;
             $isApproved = $status === 'approved' && (int) $comment['status'] === 1;
-            $rejectedApprovedDescendants = 0;
-            if ($status === 'rejected') {
-                $rejectedApprovedDescendants = self::rejectForumCommentDescendants(
-                    $commentId, $postId, (int) $admin['id'], $appId, $reason
+            $transitionedApprovedDescendants = 0;
+            if ($status !== 'approved') {
+                $transitionedApprovedDescendants = self::transitionForumCommentDescendants(
+                    $commentId, $postId, (int) $admin['id'], $appId, $status, $reason
                 );
             }
             if (!$wasApproved && $isApproved) {
@@ -511,8 +506,8 @@ final class ForumController
                      WHERE id = ? AND admin_id = ? AND app_id = ? AND status = 1 AND deleted_at IS NULL',
                     [$postId, (int) $admin['id'], $appId]
                 );
-            } elseif (($wasApproved && !$isApproved) || $rejectedApprovedDescendants > 0) {
-                $decrement = ($wasApproved && !$isApproved ? 1 : 0) + $rejectedApprovedDescendants;
+            } elseif (($wasApproved && !$isApproved) || $transitionedApprovedDescendants > 0) {
+                $decrement = ($wasApproved && !$isApproved ? 1 : 0) + $transitionedApprovedDescendants;
                 Database::execute(
                     'UPDATE forum_posts SET comment_count = GREATEST(0, comment_count - ?)
                      WHERE id = ? AND admin_id = ? AND app_id = ?',
@@ -528,8 +523,8 @@ final class ForumController
                 NotificationService::send(
                     $author,
                     'forum_comment_audit',
-                    $status === 'approved' ? '评论审核通过' : '评论审核未通过',
-                    '你在《' . (string) $comment['post_title'] . '》下的评论' . ($reason === '' ? '' : '：' . $reason),
+                    self::notificationTitle('评论', $status),
+                    self::notificationContent('你在《' . (string) $comment['post_title'] . '》下的评论', $status, $reason),
                     ['post_id' => (int) $comment['post_id'], 'comment_id' => (int) $comment['id'],
                      'audit_status' => $status, 'audit_reason' => $reason]
                 );
@@ -541,7 +536,7 @@ final class ForumController
             }
             LogService::adminOperation(
                 $request, (int) $admin['id'], $appId, 'forum_comment_moderation',
-                $status === 'approved' ? 'approve' : 'reject', $commentId, $comment, $after
+                self::operationAction($status), $commentId, $comment, $after
             );
             return [$comment, $after];
         });
@@ -567,7 +562,7 @@ final class ForumController
         $after['audit_status_name'] = self::auditStatusName($status);
         return Response::success(
             ['comment' => $after, 'audit_status' => $status, 'reward_result' => $rewardResult],
-            $status === 'approved' ? '评论已审核通过' : '评论已拒绝并记录原因'
+            self::successMessage('评论', $status)
         );
     }
 
@@ -783,14 +778,15 @@ final class ForumController
     private static function reviewDecision(Request $request): array
     {
         $status = trim((string) $request->input('audit_status', ''));
-        if (!in_array($status, ['approved', 'rejected'], true)) {
-            throw new HttpException('audit_status 仅支持 approved 或 rejected', 0, 422);
+        if (!in_array($status, ['approved', 'rejected', 'on_hold'], true)) {
+            throw new HttpException('audit_status 仅支持 approved、rejected 或 on_hold', 0, 422);
         }
         $reason = trim((string) $request->input('reason', ''));
         if ($status === 'rejected' && $reason === '') {
             throw new HttpException('拒绝审核时必须填写原因', 0, 422);
         }
         if (mb_strlen($reason) > 500) throw new HttpException('审核说明不能超过 500 个字符', 0, 422);
+        if ($status === 'approved') $reason = '';
         return [$status, $reason];
     }
 
@@ -800,6 +796,7 @@ final class ForumController
             'pending' => '待审核',
             'approved' => '审核通过',
             'rejected' => '审核未通过',
+            'on_hold' => '暂定',
         ][$status] ?? '待审核';
     }
 
@@ -826,8 +823,24 @@ final class ForumController
         if ($parentId > 0) throw new HttpException('评论回复层级过深，不能审核通过', 0, 409);
     }
 
-    private static function rejectForumCommentDescendants(
-        int $commentId, int $postId, int $adminId, int $appId, string $reason
+    private static function transitionAllForumComments(
+        int $postId, int $adminId, int $appId, string $status, string $reason
+    ): void {
+        $rows = Database::all(
+            'SELECT id FROM forum_comments
+             WHERE post_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+             ORDER BY id FOR UPDATE',
+            [$postId, $adminId, $appId]
+        );
+        self::updateForumCommentStatuses(
+            array_map(static fn (array $row): int => (int) $row['id'], $rows),
+            $postId, $adminId, $appId, $status,
+            self::dependentReason('帖子', $status, $reason)
+        );
+    }
+
+    private static function transitionForumCommentDescendants(
+        int $commentId, int $postId, int $adminId, int $appId, string $status, string $reason
     ): int {
         $frontier = [$commentId];
         $visited = [$commentId => true];
@@ -852,20 +865,11 @@ final class ForumController
                 $frontier[] = $id;
             }
         }
-        if ($frontier !== []) throw new HttpException('评论回复层级过深，拒绝操作已取消', 0, 409);
-        foreach (array_chunk(array_keys($descendants), 500) as $chunk) {
-            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
-            Database::execute(
-                "UPDATE forum_comments
-                 SET audit_status = 'rejected', audit_reason = ?, audited_by = ?, audited_at = NOW(), updated_at = NOW()
-                 WHERE id IN ({$placeholders}) AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1",
-                array_merge(
-                    [mb_substr('上级评论未通过审核：' . $reason, 0, 500), $adminId],
-                    $chunk,
-                    [$postId, $adminId, $appId]
-                )
-            );
-        }
+        if ($frontier !== []) throw new HttpException('评论回复层级过深，审核操作已取消', 0, 409);
+        self::updateForumCommentStatuses(
+            array_keys($descendants), $postId, $adminId, $appId, $status,
+            self::dependentReason('评论', $status, $reason)
+        );
         $approvedActive = 0;
         foreach ($descendants as $child) {
             if ((int) $child['status'] === 1 && (string) $child['audit_status'] === 'approved') {
@@ -873,5 +877,57 @@ final class ForumController
             }
         }
         return $approvedActive;
+    }
+
+    private static function updateForumCommentStatuses(
+        array $commentIds, int $postId, int $adminId, int $appId, string $status, string $reason
+    ): void {
+        foreach (array_chunk($commentIds, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            Database::execute(
+                "UPDATE forum_comments
+                 SET audit_status = ?, audit_reason = ?, audited_by = ?, audited_at = NOW(), updated_at = NOW()
+                 WHERE id IN ({$placeholders}) AND post_id = ? AND admin_id = ? AND app_id = ? AND status = 1",
+                array_merge(
+                    [$status, $reason, $adminId],
+                    $chunk,
+                    [$postId, $adminId, $appId]
+                )
+            );
+        }
+    }
+
+    private static function dependentReason(string $parentType, string $status, string $reason): string
+    {
+        $prefix = $status === 'on_hold' ? "上级{$parentType}暂定" : "上级{$parentType}未通过审核";
+        return mb_substr($prefix . ($reason === '' ? '' : '：' . $reason), 0, 500);
+    }
+
+    private static function operationAction(string $status): string
+    {
+        return ['approved' => 'approve', 'rejected' => 'reject', 'on_hold' => 'hold'][$status];
+    }
+
+    private static function notificationTitle(string $contentType, string $status): string
+    {
+        return $contentType . [
+            'approved' => '审核通过', 'rejected' => '审核未通过', 'on_hold' => '审核暂定',
+        ][$status];
+    }
+
+    private static function notificationContent(string $subject, string $status, string $reason): string
+    {
+        if ($status === 'approved') return $subject . '已公开展示';
+        $message = $status === 'on_hold'
+            ? $subject . '已暂定，暂不公开展示'
+            : $subject . '未通过审核';
+        return $message . ($reason === '' ? '' : '：' . $reason);
+    }
+
+    private static function successMessage(string $contentType, string $status): string
+    {
+        return $contentType . [
+            'approved' => '已审核通过', 'rejected' => '已标记为不通过并记录原因', 'on_hold' => '已暂定',
+        ][$status];
     }
 }

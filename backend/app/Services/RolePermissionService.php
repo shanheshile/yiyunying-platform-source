@@ -8,6 +8,15 @@ use Yiyunying\Core\HttpException;
 
 final class RolePermissionService
 {
+    private const SHORT_VIDEO_CODES = [
+        'short_videos',
+        'short_video_publish',
+        'short_video_comments',
+        'short_video_likes',
+        'short_video_favorites',
+        'short_video_forwards',
+    ];
+
     private const PLATFORM_DEFINITIONS = [
         ['code' => 'admins.manage', 'title' => '管理员管理', 'group' => '组织与账号', 'description' => '创建、编辑、封禁和删除本分支管理员。'],
         ['code' => 'admins.permissions', 'title' => '管理员授权', 'group' => '组织与账号', 'description' => '调整本分支管理员的功能权限。'],
@@ -53,6 +62,12 @@ final class RolePermissionService
         ['code' => 'messages', 'title' => '私聊消息', 'group' => '社区与社交', 'description' => '发送和接收好友私聊消息。'],
         ['code' => 'chat_rooms', 'title' => '群聊与聊天室', 'group' => '社区与社交', 'description' => '加入群聊、聊天室并参与交流。'],
         ['code' => 'social', 'title' => '好友与动态', 'group' => '社区与社交', 'description' => '好友、关注、粉丝和生活动态。'],
+        ['code' => 'short_videos', 'title' => '短视频功能', 'group' => '社区与社交', 'description' => '浏览短视频并进入短视频详情。'],
+        ['code' => 'short_video_publish', 'title' => '发布短视频', 'group' => '社区与社交', 'description' => '发布和编辑自己的短视频。'],
+        ['code' => 'short_video_comments', 'title' => '短视频评论', 'group' => '社区与社交', 'description' => '查看、发布和回复短视频评论。'],
+        ['code' => 'short_video_likes', 'title' => '短视频点赞', 'group' => '社区与社交', 'description' => '查看并切换短视频点赞。'],
+        ['code' => 'short_video_favorites', 'title' => '短视频收藏', 'group' => '社区与社交', 'description' => '收藏或取消收藏短视频。'],
+        ['code' => 'short_video_forwards', 'title' => '短视频转发', 'group' => '社区与社交', 'description' => '转发短视频到允许的目标。'],
         ['code' => 'service', 'title' => '在线客服', 'group' => '消息与服务', 'description' => '与本应用客服进行会话。'],
         ['code' => 'bot', 'title' => '智能机器人', 'group' => '消息与服务', 'description' => '使用智能问答、天气和知识服务。'],
         ['code' => 'notifications', 'title' => '通知中心', 'group' => '消息与服务', 'description' => '接收系统、动态和业务通知。'],
@@ -85,6 +100,216 @@ final class RolePermissionService
     public static function userDefinitions(): array
     {
         return self::USER_DEFINITIONS;
+    }
+
+    public static function shortVideoCodes(): array
+    {
+        return self::SHORT_VIDEO_CODES;
+    }
+
+    public static function userFeatureCodes(): array
+    {
+        return array_column(self::USER_DEFINITIONS, 'code');
+    }
+
+    public static function isUserFeature(string $code): bool
+    {
+        return in_array(trim($code), self::userFeatureCodes(), true);
+    }
+
+    /**
+     * Maps only routes with an unambiguous top-level user capability.
+     * A null result is intentionally compatible: authentication continues and
+     * controllers may apply a more specific feature check from request data.
+     */
+    public static function userFeatureForPath(string $path): ?string
+    {
+        $rules = [
+            '#^/api/user/(?:identity-unbind-requests|profile)(?:/|$)#' => 'user_profile',
+            '#^/api/user/password(?:/|$)#' => 'user_account',
+            '#^/api/user/(?:sign|invite-code|invites)(?:/|$)#' => 'sign_invite',
+            '#^/api/user/(?:notes|note-folders|note-shares)(?:/|$)#' => 'documents',
+            '#^/api/user/notices(?:/|$)#' => 'notices',
+            '#^/api/user/(?:resource-categories|resource-submission-policy|resources)(?:/|$)#' => 'resources',
+            '#^/api/user/favorites/resources(?:/|$)#' => 'resources',
+            '#^/api/user/(?:store-categories|store-submission-policy|store-apps)(?:/|$)#' => 'store',
+            '#^/api/user/favorites/store-apps(?:/|$)#' => 'store',
+            '#^/api/user/(?:shop-categories|shop-goods|shop-comments)(?:/|$)#' => 'shop',
+            '#^/api/user/favorites/shop-goods(?:/|$)#' => 'shop',
+            '#^/api/user/forum(?:-|/|$)#' => 'forum',
+            '#^/api/user/reports(?:/|$)#' => 'feedback',
+            '#^/api/user/bount(?:y|ies)(?:-|/|$)#' => 'bounties',
+            '#^/api/user/chat-room(?:s|-groups|-invitations)(?:/|$)#' => 'chat_rooms',
+            '#^/api/user/service(?:/|$)#' => 'service',
+            '#^/api/user/notifications(?:/|$)#' => 'notifications',
+            '#^/api/user/(?:users/search|profiles|following|followers|blacklist|friends|friend-groups|moments|relationship-notices)(?:/|$)#' => 'social',
+            '#^/api/user/(?:messages|message-center|message-settings|message-forwards|conversations|chat-search|drafts|voice-calls|sticker-packs|audio/transcriptions|cloud-sync|chat-records)(?:/|$)#' => 'messages',
+            '#^/api/user/(?:bot|ai/conversations)(?:/|$)#' => 'bot',
+            '#^/api/user/cards(?:/|$)#' => 'cards',
+            '#^/api/user/withdrawals(?:/|$)#' => 'withdrawals',
+            '#^/api/user/red-packets(?:/|$)#' => 'red_packets',
+            '#^/api/user/lottery(?:-|/|$)#' => 'lottery',
+            '#^/api/user/(?:votes|polls|poll-categories)(?:/|$)#' => 'votes',
+            '#^/api/user/activities(?:/|$)#' => 'hierarchical_activities',
+            '#^/api/user/feedbacks(?:/|$)#' => 'feedback',
+            '#^/api/user/remote-files(?:/|$)#' => 'remote_files',
+            '#^/api/user/favorites/uploads(?:/|$)#' => 'remote_files',
+            '#^/api/user/(?:wallet|transfers|gifts)(?:/|$)#' => 'payments',
+        ];
+        foreach ($rules as $pattern => $code) {
+            if (preg_match($pattern, $path) === 1) {
+                return $code;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolve authenticated-user feature state as a deny-dominant intersection.
+     * Legacy capabilities keep the historical missing-row default (allowed),
+     * while short-video controls fail closed until their migration is applied.
+     */
+    public static function effectiveUserFeatures(array $user, ?array $codes = null): array
+    {
+        $adminId = (int) ($user['admin_id'] ?? 0);
+        $appId = (int) ($user['app_id'] ?? 0);
+        $userId = (int) ($user['id'] ?? 0);
+        if ($adminId <= 0 || $appId <= 0 || $userId <= 0) {
+            throw new HttpException('用户功能权限上下文无效', 403, 403);
+        }
+        $tenantUser = Database::one(
+            'SELECT id FROM users
+             WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL
+             LIMIT 1',
+            [$userId, $adminId, $appId]
+        );
+        if ($tenantUser === null) {
+            throw new HttpException('用户不存在或不属于当前应用', 403, 403);
+        }
+
+        $knownCodes = self::userFeatureCodes();
+        $requested = $codes ?? $knownCodes;
+        $requested = array_values(array_unique(array_map(
+            static fn($code): string => trim((string) $code),
+            $requested
+        )));
+        foreach ($requested as $code) {
+            if (!in_array($code, $knownCodes, true)) {
+                throw new HttpException('不支持的用户功能权限：' . $code, 0, 422);
+            }
+        }
+
+        $flags = AppService::features($appId);
+        $rows = Database::all(
+            'SELECT feature_code, enabled, config_json
+             FROM user_feature_permissions
+             WHERE admin_id = ? AND app_id = ? AND user_id = ?',
+            [$adminId, $appId, $userId]
+        );
+        $stored = [];
+        foreach ($rows as $row) {
+            $stored[(string) $row['feature_code']] = [
+                'allowed' => (bool) $row['enabled'],
+                'config' => self::decodeObject($row['config_json'] ?? null),
+            ];
+        }
+
+        $result = [];
+        foreach ($requested as $code) {
+            $appConfigured = isset($flags[$code]);
+            $userConfigured = isset($stored[$code]);
+            $appEnabled = isset($flags[$code])
+                ? (bool) ($flags[$code]['enabled'] ?? false)
+                : !in_array($code, self::SHORT_VIDEO_CODES, true);
+            $userEnabled = !isset($stored[$code]) || (bool) $stored[$code]['allowed'];
+            $configured = $appEnabled && $userEnabled;
+            $policy = GovernanceService::effectiveFeatureForApp($appId, $code, $configured, $userId);
+            $config = $stored[$code]['config']
+                ?? ($flags[$code]['config'] ?? null)
+                ?? ($policy['config'] ?? null);
+            $result[$code] = self::combineUserFeatureState(
+                $code,
+                $appEnabled,
+                $userEnabled,
+                $appConfigured,
+                $userConfigured,
+                $policy,
+                is_array($config) ? $config : null
+            );
+            $result[$code]['app_config'] = is_array($flags[$code]['config'] ?? null)
+                ? $flags[$code]['config']
+                : null;
+            $result[$code]['user_config'] = is_array($stored[$code]['config'] ?? null)
+                ? $stored[$code]['config']
+                : null;
+        }
+        return $result;
+    }
+
+    /** Pure merge seam shared by runtime resolution and contract tests. */
+    public static function combineUserFeatureState(
+        string $code,
+        bool $appEnabled,
+        bool $userEnabled,
+        bool $appConfigured,
+        bool $userConfigured,
+        array $policy,
+        ?array $config = null
+    ): array {
+        $configured = $appEnabled && $userEnabled;
+        // A forced allow may not elevate an app or per-user denial.
+        $effective = $configured && (bool) ($policy['effective_enabled'] ?? false);
+        $governanceLocked = (bool) ($policy['locked'] ?? false);
+        $locked = $governanceLocked || !$appEnabled;
+        $source = !$appEnabled
+            ? 'admin_app'
+            : (!$userEnabled
+                ? 'user_permission'
+                : ($governanceLocked
+                    ? (string) ($policy['source'] ?? 'platform_force')
+                    : ($userConfigured ? 'user_permission' : ($appConfigured ? 'admin_app' : 'legacy_default'))));
+        return array_merge($policy, [
+            'feature_code' => $code,
+            'app_enabled' => $appEnabled,
+            'user_enabled' => $userEnabled,
+            'app_configured' => $appConfigured,
+            'user_configured' => $userConfigured,
+            'configured_enabled' => $configured,
+            'effective_enabled' => $effective,
+            'enabled' => $effective,
+            'locked' => $locked,
+            'governance_locked' => $governanceLocked,
+            'can_user_modify' => !$locked,
+            'source' => $source,
+            'config' => $config,
+        ]);
+    }
+
+    public static function requireUserFeature(array $user, string $code): void
+    {
+        $code = trim($code);
+        if (!self::isUserFeature($code)) {
+            // App-only extension flags remain compatible and are not mistaken
+            // for missing personal permissions.
+            AppService::requireFeature((int) ($user['app_id'] ?? 0), $code);
+            return;
+        }
+        $state = self::effectiveUserFeatures($user, [$code])[$code] ?? null;
+        if (is_array($state) && (bool) ($state['effective_enabled'] ?? false)) {
+            return;
+        }
+        throw new HttpException(
+            '管理员或上级平台已关闭“' . self::titleFor(self::USER_DEFINITIONS, $code) . '”',
+            403,
+            403,
+            [
+                'feature_code' => $code,
+                'enabled' => false,
+                'effective_enabled' => false,
+                'locked' => (bool) ($state['locked'] ?? false),
+                'source' => (string) ($state['source'] ?? 'admin_app'),
+            ]
+        );
     }
 
     public static function ownerPayload(array $owner): array
@@ -158,40 +383,32 @@ final class RolePermissionService
     {
         $appId = (int) $user['app_id'];
         $userId = (int) $user['id'];
-        $flags = AppService::features($appId);
-        $rows = Database::all(
-            'SELECT feature_code, enabled, config_json FROM user_feature_permissions WHERE app_id = ? AND user_id = ?',
-            [$appId, $userId]
-        );
-        $stored = [];
-        foreach ($rows as $row) {
-            $stored[(string) $row['feature_code']] = [
-                'allowed' => (bool) $row['enabled'],
-                'config' => self::decodeObject($row['config_json'] ?? null),
-            ];
-        }
+        $states = self::effectiveUserFeatures($user);
         $items = [];
         $map = [];
         foreach (self::USER_DEFINITIONS as $definition) {
             $code = $definition['code'];
-            $override = $stored[$code] ?? ['allowed' => true, 'config' => null];
-            $appAllowed = !isset($flags[$code]) || (bool) $flags[$code]['enabled'];
-            $configured = (bool) $override['allowed'];
-            $policy = GovernanceService::effectiveFeatureForApp($appId, $code, $appAllowed && $configured, $userId);
-            $locked = (bool) $policy['locked'] || !$appAllowed;
+            $policy = $states[$code];
+            $appAllowed = (bool) $policy['app_enabled'];
+            $configured = (bool) $policy['user_enabled'];
+            $locked = (bool) $policy['locked'];
             $effective = (bool) $policy['effective_enabled'];
-            $source = (bool) $policy['locked']
-                ? '上级平台强制规则'
-                : (!$appAllowed ? '应用功能已关闭' : (isset($stored[$code]) ? '用户单独设置' : '应用默认设置'));
-            $reason = (bool) $policy['locked']
+            $governanceLocked = (bool) ($policy['governance_locked'] ?? false);
+            $source = !$appAllowed
+                ? '应用功能已关闭'
+                : (!(bool) $policy['user_enabled'] && (bool) $policy['user_configured']
+                    ? '用户单独设置'
+                    : ($governanceLocked ? '上级平台强制规则' : '应用默认设置'));
+            $reason = $governanceLocked
                 ? '该权限已由上级平台强制锁定，当前层级不能修改。'
                 : (!$appAllowed ? '应用级功能已关闭，请先在应用功能设置中启用。' : null);
-            $map[$code] = ['allowed' => $configured, 'effective' => $effective, 'config' => $override['config']];
+            $userConfig = is_array($policy['user_config'] ?? null) ? $policy['user_config'] : null;
+            $map[$code] = ['allowed' => $configured, 'effective' => $effective, 'config' => $userConfig];
             $editable = $actorLevel === 1 || !$locked;
             if ($actorLevel === 1 && $locked) {
                 $reason = '总控可以修改本层配置；当前最终状态仍受“' . $source . '”约束，如需立即生效请同时调整对应上级规则。';
             }
-            $items[] = self::item($definition, $configured, $effective, $editable, $locked, $source, $reason, $override['config'], $policy);
+            $items[] = self::item($definition, $configured, $effective, $editable, $locked, $source, $reason, $userConfig, $policy);
         }
         return self::payload('user', $userId, 4, (string) (($user['nickname'] ?? '') ?: ($user['account'] ?? '用户')), (string) ($user['account'] ?? ''), $actorLevel, $items, $map, [
             'status' => (int) ($user['status'] ?? 0),
@@ -222,7 +439,8 @@ final class RolePermissionService
             return;
         }
         $flags = AppService::features($appId);
-        if (isset($flags[$code]) && !(bool) $flags[$code]['enabled']) {
+        $missingRequiredFlag = in_array($code, self::SHORT_VIDEO_CODES, true) && !isset($flags[$code]);
+        if ($missingRequiredFlag || (isset($flags[$code]) && !(bool) $flags[$code]['enabled'])) {
             throw new HttpException('“' . self::titleFor(self::USER_DEFINITIONS, $code) . '”已在应用级关闭，请先启用应用功能', 403, 403);
         }
         $policy = GovernanceService::effectiveFeatureForApp($appId, $code, true, $userId);

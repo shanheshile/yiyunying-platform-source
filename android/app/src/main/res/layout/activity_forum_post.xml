@@ -167,12 +167,60 @@
                     android:text="举报" />
             </LinearLayout>
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="全部评论"
-                android:textAppearance="@style/TextAppearance.Material3.TitleLarge" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/commentsHeading"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="全部评论"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                    android:textColor="@color/on_surface" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/commentThreadModeButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:contentDescription="返回全部评论"
+                    android:minWidth="0dp"
+                    android:text="返回全部"
+                    android:textSize="11sp"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_back"
+                    app:iconPadding="2dp"
+                    app:iconSize="15dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/commentThreadPageButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:contentDescription="切换评论页"
+                    android:minWidth="0dp"
+                    android:text="第 1/1 页"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/commentSortButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:contentDescription="选择评论排序方式"
+                    android:minWidth="0dp"
+                    android:text="综合排序"
+                    android:textSize="11sp"
+                    app:icon="@drawable/ic_sort"
+                    app:iconPadding="2dp"
+                    app:iconSize="15dp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/commentsContainer"

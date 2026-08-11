@@ -98,6 +98,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private static final String EXTRA_COMMENT_ID = "comment_id";
     private static final String EXTRA_PROFILE_TIMELINE = "profile_timeline";
     private static final String EXTRA_MINE = "mine";
+    private static final String EXTRA_SHORT_VIDEO = "short_video";
     private static final int MAX_MEDIA = 9;
     private static final String[] VISIBILITY_VALUES = {
         "inherit", "public", "friends", "followers", "selected", "exclude", "private"
@@ -123,6 +124,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private RequestHandle commentStickerRequest;
     private RequestHandle commentVoiceUploadRequest;
     private RequestHandle likesRequest;
+    private RequestHandle featureRequest;
     private BottomSheetDialog composerDialog;
     private SheetMomentComposerBinding composerBinding;
     private BottomSheetDialog commentsDialog;
@@ -148,6 +150,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private long targetMomentId;
     private boolean profileTimeline;
     private boolean ownProfileTimeline;
+    private boolean shortVideoMode;
+    private boolean pendingShortVideoComposer;
+    private JsonObject featureFlags = new JsonObject();
     private String targetUserTitle = "";
     private String composerVisibilityMode = "inherit";
     private Integer composerVisibleDays;
@@ -166,8 +171,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             if (selected == null) return;
             // Returning from the full picker synchronizes selection even when the user used Back.
             composerUris.clear();
+            int maxSelection = ShortVideoFeaturePolicy.maxSelection(shortVideoMode);
             for (Uri uri : selected) {
-                if (uri != null && composerUris.size() < MAX_MEDIA) composerUris.add(uri);
+                if (uri != null && composerUris.size() < maxSelection) composerUris.add(uri);
             }
             renderComposerMedia();
         });
@@ -263,6 +269,12 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         context.startActivity(new Intent(context, MomentTimelineActivity.class).putExtra(EXTRA_COMPOSE, compose));
     }
 
+    public static void openShortVideos(Context context, boolean compose) {
+        context.startActivity(new Intent(context, MomentTimelineActivity.class)
+            .putExtra(EXTRA_SHORT_VIDEO, true)
+            .putExtra(EXTRA_COMPOSE, compose));
+    }
+
     public static void openForUser(Context context, long userId, String title) {
         if (userId <= 0) return;
         long actorId = AppAccess.from(context).session().actorId();
@@ -282,6 +294,15 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     public static void openMoment(Context context, long momentId, long userId, String title) {
         if (momentId <= 0) return;
         context.startActivity(new Intent(context, MomentTimelineActivity.class)
+            .putExtra(EXTRA_MOMENT_ID, momentId)
+            .putExtra(EXTRA_USER_ID, Math.max(0L, userId))
+            .putExtra(EXTRA_USER_TITLE, title == null ? "" : title));
+    }
+
+    public static void openShortVideoMoment(Context context, long momentId, long userId, String title) {
+        if (momentId <= 0) return;
+        context.startActivity(new Intent(context, MomentTimelineActivity.class)
+            .putExtra(EXTRA_SHORT_VIDEO, true)
             .putExtra(EXTRA_MOMENT_ID, momentId)
             .putExtra(EXTRA_USER_ID, Math.max(0L, userId))
             .putExtra(EXTRA_USER_TITLE, title == null ? "" : title));
@@ -307,6 +328,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         targetUserId = getIntent().getLongExtra(EXTRA_USER_ID, 0L);
         targetMomentId = getIntent().getLongExtra(EXTRA_MOMENT_ID, 0L);
         targetCommentId = getIntent().getLongExtra(EXTRA_COMMENT_ID, 0L);
+        shortVideoMode = getIntent().getBooleanExtra(EXTRA_SHORT_VIDEO, false);
         openCommentsAfterLoad = getIntent().getBooleanExtra(EXTRA_OPEN_COMMENTS, false);
         profileTimeline = targetMomentId <= 0 && (getIntent().getBooleanExtra(EXTRA_PROFILE_TIMELINE, false)
             || targetUserId > 0L);
@@ -321,8 +343,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (targetUserTitle == null) targetUserTitle = "";
         binding = ActivityMomentTimelineBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, targetMomentId > 0
-            ? "动态详情"
+        RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, shortVideoMode
+            ? (targetMomentId > 0 ? "短视频详情" : "短视频")
+            : targetMomentId > 0 ? "动态详情"
             : targetUserId > 0 && !targetUserTitle.isEmpty() ? targetUserTitle + "的动态" : "动态");
         binding.toolbar.setNavigationOnClickListener(view -> finish());
         adapter = new MomentAdapter();
@@ -336,8 +359,14 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         binding.swipeRefresh.setOnRefreshListener(this::load);
         binding.createButton.setOnClickListener(view -> showComposer(null));
         boolean ownTimeline = ownProfileTimeline || targetUserId <= 0 || targetUserId == actorId;
-        binding.createButton.setVisibility(targetMomentId <= 0 && ownTimeline ? View.VISIBLE : View.GONE);
-        binding.emptyText.setText(ownTimeline ? "还没有发布动态" : "暂无你可以查看的动态");
+        binding.createButton.setText(shortVideoMode ? "发布短视频" : "发布动态");
+        binding.createButton.setContentDescription(shortVideoMode ? "发布短视频" : "发布动态");
+        binding.createButton.setVisibility(
+            targetMomentId <= 0 && ownTimeline && !shortVideoMode ? View.VISIBLE : View.GONE);
+        binding.emptyText.setText(shortVideoMode
+            ? (ownTimeline ? "还没有发布短视频" : "暂无你可以查看的短视频")
+            : (ownTimeline ? "还没有发布动态" : "暂无你可以查看的动态"));
+        if (shortVideoMode) binding.searchLayout.setHint("搜索短视频、用户或位置");
         binding.searchLayout.setVisibility(targetMomentId > 0 ? View.GONE : View.VISIBLE);
         if (targetMomentId <= 0) {
             binding.searchInput.addTextChangedListener(new TextWatcher() {
@@ -349,16 +378,53 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 @Override public void afterTextChanged(Editable value) { }
             });
         }
+        loadFeatureFlags();
         load();
         if (getIntent().getBooleanExtra(EXTRA_COMPOSE, false)) {
-            binding.getRoot().post(() -> {
-                if (isUiActive()) showComposer(null);
-            });
+            if (shortVideoMode) pendingShortVideoComposer = true;
+            else binding.getRoot().post(() -> {
+                    if (isUiActive()) showComposer(null);
+                });
         }
     }
 
     private void load() {
         load(true);
+    }
+
+    private void loadFeatureFlags() {
+        if (featureRequest != null) featureRequest.cancel();
+        featureRequest = AppAccess.from(this).repository().get(
+            "/api/user/features", new LinkedHashMap<>(), result -> {
+                featureRequest = null;
+                if (!isUiActive() || !result.isSuccessful()) return;
+                featureFlags = Jsons.object(result.dataObject(), "features").deepCopy();
+                refreshShortVideoControls();
+                if (shortVideoMode && pendingShortVideoComposer) {
+                    pendingShortVideoComposer = false;
+                    boolean enabled = ShortVideoFeaturePolicy.enabled(featureFlags, "short_videos")
+                        && ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_publish");
+                    if (enabled) binding.getRoot().post(() -> {
+                        if (isUiActive()) showComposer(null);
+                    });
+                    else message("管理员或上级平台已关闭短视频发布功能");
+                }
+            });
+    }
+
+    private void refreshShortVideoControls() {
+        if (!isUiActive()) return;
+        if (shortVideoMode) {
+            boolean moduleEnabled = ShortVideoFeaturePolicy.enabled(featureFlags, "short_videos");
+            boolean publishEnabled = moduleEnabled
+                && ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_publish");
+            long actorId = AppAccess.from(this).session().actorId();
+            boolean ownTimeline = ownProfileTimeline || targetUserId <= 0 || targetUserId == actorId;
+            binding.createButton.setVisibility(
+                targetMomentId <= 0 && ownTimeline && publishEnabled ? View.VISIBLE : View.GONE);
+            if (!moduleEnabled) binding.emptyText.setText("管理员已关闭短视频功能");
+        }
+        if (adapter != null) adapter.notifyItemRangeChanged(0, adapter.getItemCount());
     }
 
     private void load(boolean allowCache) {
@@ -377,6 +443,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         query.put("limit", "50");
         if (ownProfileTimeline) query.put("mine", "1");
         else if (targetUserId > 0) query.put("user_id", String.valueOf(targetUserId));
+        if (shortVideoMode) query.put("content_kind", ShortVideoFeaturePolicy.CONTENT_KIND);
         String keyword = text(binding.searchInput);
         if (!keyword.isEmpty()) query.put("keyword", keyword);
         binding.progress.setVisibility(View.VISIBLE);
@@ -436,6 +503,12 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void renderMoments(List<JsonObject> values, long generation) {
         if (!isUiActive() || adapter == null || generation != listGeneration) return;
+        if (targetMomentId > 0 && values != null && !values.isEmpty()
+            && ShortVideoFeaturePolicy.CONTENT_KIND.equals(Jsons.string(values.get(0), "content_kind"))) {
+            shortVideoMode = true;
+            RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, "短视频详情");
+            refreshShortVideoControls();
+        }
         ArrayList<JsonObject> snapshot = prepareMomentsForDisplay(values);
         Runnable render = () -> {
             if (!isUiActive() || adapter == null || generation != listGeneration) return;
@@ -462,6 +535,10 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void showComposer(JsonObject item, boolean visibilityOnly) {
         if (!isUiActive()) return;
+        if (shortVideoMode && !ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_publish")) {
+            message("管理员已关闭短视频发布功能");
+            return;
+        }
         if (composerDialog != null && composerDialog.isShowing()) return;
         editingMoment = item == null ? null : item.deepCopy();
         visibilityOnlyEdit = visibilityOnly && editingMoment != null;
@@ -488,7 +565,8 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         composerDialog = dialog;
         composerBinding = sheetBinding;
         dialog.setContentView(sheetBinding.getRoot());
-        composerBinding.titleText.setText(visibilityOnlyEdit ? "编辑可见范围" : item == null ? "发布动态" : "编辑内容");
+        composerBinding.titleText.setText(visibilityOnlyEdit ? "编辑可见范围"
+            : item == null ? (shortVideoMode ? "发布短视频" : "发布动态") : "编辑内容");
         composerBinding.publishButton.setText(visibilityOnlyEdit ? "保存范围" : item == null ? "发布" : "保存");
         if (item != null) composerBinding.contentInput.setText(Jsons.string(item, "content"));
         composerBinding.contentLayout.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
@@ -498,8 +576,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         composerBinding.locationHint.setVisibility(visibilityOnlyEdit ? View.GONE : View.VISIBLE);
         composerBinding.mediaGrid.setLayoutManager(new GridLayoutManager(this, 3));
         composerBinding.mediaGrid.setItemAnimator(null);
-        composerBinding.mediaButton.setOnClickListener(view -> mediaPicker.launch(
-            MediaPickerActivity.intent(this, false, new ArrayList<>(composerUris))));
+        composerBinding.mediaButton.setOnClickListener(view -> mediaPicker.launch(shortVideoMode
+            ? MediaPickerActivity.videoIntent(this, 1)
+            : MediaPickerActivity.intent(this, false, new ArrayList<>(composerUris))));
         composerBinding.locationButton.setOnClickListener(view -> locationPicker.launch(
             LocationPickerActivity.pickerIntent(
                 this, locationName, locationAddress, latitude, longitude)));
@@ -541,7 +620,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (composerBinding == null) return;
         JsonArray existing = editingMoment == null ? new JsonArray() : Jsons.array(editingMoment, "attachments");
         int count = composerUris.isEmpty() ? existing.size() : composerUris.size();
-        composerBinding.mediaHint.setText("图片与视频 " + count + "/" + MAX_MEDIA
+        int maximum = ShortVideoFeaturePolicy.maxSelection(shortVideoMode);
+        composerBinding.mediaHint.setText((shortVideoMode ? "短视频 " : "图片与视频 ") + count + "/" + maximum
+            + (shortVideoMode ? " · 仅支持选择 1 个视频" : "")
             + (editingMoment != null && composerUris.isEmpty() && count > 0 ? " · 选择新媒体可替换原内容" : ""));
         List<JsonObject> values = new ArrayList<>();
         if (composerUris.isEmpty()) {
@@ -778,6 +859,19 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
             message("文字和图片或视频不能同时为空");
             return;
         }
+        if (shortVideoMode) {
+            int effectiveCount = composerUris.isEmpty() ? existingCount : composerUris.size();
+            if (effectiveCount != 1) {
+                message("短视频必须且只能选择 1 个视频");
+                return;
+            }
+            for (Uri uri : composerUris) {
+                if (!ShortVideoFeaturePolicy.acceptsMime(true, mime(uri))) {
+                    message("短视频只能选择视频文件");
+                    return;
+                }
+            }
+        }
         setComposerEnabled(false);
         uploadNext(0, new JsonArray(), content);
     }
@@ -787,9 +881,9 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
         if (index >= composerUris.size()) { sendMoment(content, attachments); return; }
         Uri uri = composerUris.get(index);
         FileInfo info = fileInfo(uri);
-        if (!(info.mime.startsWith("image/") || info.mime.startsWith("video/"))) {
+        if (!ShortVideoFeaturePolicy.acceptsMime(shortVideoMode, info.mime)) {
             setComposerEnabled(true);
-            message("动态只支持图片和视频");
+            message(shortVideoMode ? "短视频只能上传视频" : "动态只支持图片和视频");
             return;
         }
         Map<String, String> fields = new LinkedHashMap<>();
@@ -818,6 +912,11 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private void sendMoment(String content, JsonArray attachments) {
         JsonObject body = new JsonObject();
         body.addProperty("content", content);
+        body.addProperty("content_kind", editingMoment == null
+            ? ShortVideoFeaturePolicy.contentKind(shortVideoMode)
+            : Jsons.string(editingMoment, "content_kind").isEmpty()
+                ? ShortVideoFeaturePolicy.contentKind(shortVideoMode)
+                : Jsons.string(editingMoment, "content_kind"));
         if (!composerUris.isEmpty() || editingMoment == null) body.add("attachments", attachments);
         body.addProperty("location_name", locationName);
         body.addProperty("location_address", locationAddress);
@@ -1021,6 +1120,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void toggleLike(JsonObject item) {
         if (!isUiActive() || actionRequest != null || item == null) return;
+        if (!allowShortVideoAction(item, "short_video_likes", "管理员已关闭短视频点赞功能")) return;
         long id = Jsons.longValue(item, "id");
         actionRequest = AppAccess.from(this).repository().post("/api/user/moments/" + id + "/like", new JsonObject(), result -> {
             actionRequest = null;
@@ -1038,6 +1138,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void toggleFavorite(JsonObject item) {
         if (!isUiActive() || actionRequest != null || item == null) return;
+        if (!allowShortVideoAction(item, "short_video_favorites", "管理员已关闭短视频收藏功能")) return;
         long id = Jsons.longValue(item, "id");
         actionRequest = AppAccess.from(this).repository().post("/api/user/moments/" + id + "/favorite", new JsonObject(), result -> {
             actionRequest = null;
@@ -1053,6 +1154,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void showLikes(JsonObject item) {
         if (!isUiActive()) return;
+        if (!allowShortVideoAction(item, "short_video_likes", "管理员已关闭短视频点赞功能")) return;
         if (likesDialog != null && likesDialog.isShowing()) return;
         likesMoment = item;
         BottomSheetDialog dialog = new BottomSheetDialog(this);
@@ -1076,6 +1178,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private void loadLikes() {
         if (likesBinding == null || likesMoment == null) return;
         if (likesRequest != null) likesRequest.cancel();
+        if (featureRequest != null) featureRequest.cancel();
         likesBinding.progress.setVisibility(View.VISIBLE);
         likesBinding.likesContainer.removeAllViews();
         likesBinding.policyText.setText("正在读取点赞可见范围...");
@@ -1205,6 +1308,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void showComments(JsonObject item) {
         if (!isUiActive()) return;
+        if (!allowShortVideoAction(item, "short_video_comments", "管理员已关闭短视频评论功能")) return;
         if (commentsDialog != null && commentsDialog.isShowing()) return;
         commentsMoment = item;
         replyingCommentId = 0L;
@@ -1981,6 +2085,7 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
 
     private void forwardMoment(JsonObject item) {
         if (!isUiActive()) return;
+        if (!allowShortVideoAction(item, "short_video_forwards", "管理员已关闭短视频转发功能")) return;
         if (actionRequest != null) { message("正在处理上一项操作"); return; }
         new YiyunyingDialogBuilder(this)
             .setTitle("转发动态")
@@ -2100,6 +2205,15 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
     private static boolean flag(JsonObject value, String key) {
         try { return value != null && value.has(key) && value.get(key).getAsBoolean(); }
         catch (RuntimeException ignored) { return false; }
+    }
+
+    private boolean allowShortVideoAction(JsonObject item, String featureCode, String disabledMessage) {
+        if (item == null || !ShortVideoFeaturePolicy.CONTENT_KIND.equals(Jsons.string(item, "content_kind"))) {
+            return true;
+        }
+        if (ShortVideoFeaturePolicy.enabled(featureFlags, featureCode)) return true;
+        message(disabledMessage);
+        return false;
     }
 
     private static Double nullableDouble(JsonObject value, String key) {
@@ -2362,7 +2476,13 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 boolean opensDetail = targetMomentId <= 0 && momentId > 0;
                 View.OnClickListener detail = view -> {
                     if (isUiActive()) {
-                        openMoment(MomentTimelineActivity.this, momentId, userId, Jsons.string(item, "display_name"));
+                        if (ShortVideoFeaturePolicy.CONTENT_KIND.equals(Jsons.string(item, "content_kind"))) {
+                            openShortVideoMoment(MomentTimelineActivity.this, momentId, userId,
+                                Jsons.string(item, "display_name"));
+                        } else {
+                            openMoment(MomentTimelineActivity.this, momentId, userId,
+                                Jsons.string(item, "display_name"));
+                        }
                     }
                 };
                 row.momentCard.setClickable(opensDetail);
@@ -2404,11 +2524,32 @@ public final class MomentTimelineActivity extends SystemInsetActivity {
                 int commentCount = Jsons.intValue(item, "comment_count", 0);
                 int favoriteCount = Jsons.intValue(item, "favorite_count", 0);
                 int forwardCount = Jsons.intValue(item, "forward_count", 0);
-                renderLikeSummary(row, item, likeCount);
+                boolean shortVideoItem = ShortVideoFeaturePolicy.CONTENT_KIND.equals(
+                    Jsons.string(item, "content_kind"));
+                boolean likesEnabled = !shortVideoItem
+                    || ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_likes");
+                boolean commentsEnabled = !shortVideoItem
+                    || ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_comments");
+                boolean favoritesEnabled = !shortVideoItem
+                    || ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_favorites");
+                boolean forwardsEnabled = !shortVideoItem
+                    || ShortVideoFeaturePolicy.enabled(featureFlags, "short_video_forwards");
+                if (likesEnabled) renderLikeSummary(row, item, likeCount);
+                else {
+                    row.likeAvatarContainer.removeAllViews();
+                    row.likeSummaryArea.setVisibility(View.GONE);
+                }
                 row.momentLikeButton.setText(actionLabel(flag(item, "is_liked") ? "已赞" : "点赞", likeCount));
                 row.momentCommentButton.setText(actionLabel("评论", commentCount));
                 row.momentFavoriteButton.setText(actionLabel(flag(item, "is_favorited") ? "已收藏" : "收藏", favoriteCount));
                 row.momentForwardButton.setText(actionLabel("转发", forwardCount));
+                row.momentLikeButton.setVisibility(likesEnabled ? View.VISIBLE : View.GONE);
+                row.momentCommentButton.setVisibility(commentsEnabled ? View.VISIBLE : View.GONE);
+                row.momentFavoriteButton.setVisibility(favoritesEnabled ? View.VISIBLE : View.GONE);
+                row.momentForwardButton.setVisibility(forwardsEnabled ? View.VISIBLE : View.GONE);
+                row.momentActionsRow.setVisibility(
+                    likesEnabled || commentsEnabled || favoritesEnabled || forwardsEnabled
+                        ? View.VISIBLE : View.GONE);
                 row.momentLikeButton.setOnClickListener(view -> toggleLike(item));
                 row.momentCommentButton.setOnClickListener(view -> showComments(item));
                 row.momentFavoriteButton.setOnClickListener(view -> toggleFavorite(item));

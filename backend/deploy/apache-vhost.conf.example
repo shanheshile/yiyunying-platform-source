@@ -8,6 +8,13 @@
         Require all granted
     </Directory>
 
+    <Directory "/www/wwwroot/appht.jjmxg.xyz/yiyunying-backend/public/uploads">
+        Header always set X-Content-Type-Options "nosniff"
+        <FilesMatch "(?i)\.svg$">
+            Require all denied
+        </FilesMatch>
+    </Directory>
+
     SetEnv APP_ENV production
     SetEnv APP_DEBUG false
     SetEnv APP_URL http://appht.jjmxg.xyz

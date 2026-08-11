@@ -48,6 +48,7 @@ import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.domain.chat.ChatDisplayNamePolicy;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.common.MediaStackAnimator;
+import xyz.jjmxg.yiyunying.ui.common.MediaStackDragPolicy;
 import xyz.jjmxg.yiyunying.ui.common.MediaStackTransitionPolicy;
 import xyz.jjmxg.yiyunying.ui.common.ThemeColors;
 import xyz.jjmxg.yiyunying.ui.browser.LinkNavigator;
@@ -529,6 +530,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         float[] down = new float[2];
         boolean[] horizontalDrag = {false};
+        boolean[] gestureBlocked = {false};
         stage.setOnClickListener(view -> {
             int index = Math.max(0, Math.min(media.size() - 1,
                 stackedPositions.getOrDefault(groupKey, 0)));
@@ -538,14 +540,20 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             gestures.onTouchEvent(event);
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
-                if (animating[0]) return true;
+                gestureBlocked[0] = animating[0];
+                if (gestureBlocked[0]) return true;
                 down[0] = event.getX();
                 down[1] = event.getY();
                 horizontalDrag[0] = false;
                 longPressed[0] = false;
                 stage.animate().cancel();
-                stage.setTranslationX(0f);
                 if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            if (gestureBlocked[0]) {
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    gestureBlocked[0] = false;
+                }
                 return true;
             }
             float deltaX = event.getX() - down[0];
@@ -557,8 +565,19 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                 }
                 if (horizontalDrag[0]) {
                     if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
-                    float maximum = dp(context, 62);
-                    stage.setTranslationX(Math.max(-maximum, Math.min(maximum, deltaX * 0.46f)));
+                    int value = Math.max(0, Math.min(media.size() - 1,
+                        stackedPositions.getOrDefault(groupKey, 0)));
+                    int target = Math.max(0, Math.min(media.size() - 1,
+                        value + (deltaX < 0f ? 1 : -1)));
+                    float maximum = dp(context, 96);
+                    float carried = Math.max(-maximum, Math.min(maximum, deltaX));
+                    MediaStackTransitionPolicy.Transition transition =
+                        MediaStackTransitionPolicy.transition(media.size(), value, target, 3,
+                            layerOffsetX, layerOffsetY);
+                    MediaStackAnimator.applyDrag(stage, transition,
+                        MediaStackDragPolicy.progress(deltaX, dp(context, 78)), carried,
+                        itemIndex -> stackLayerCard(context, media.get(itemIndex),
+                            stageWidth, stageHeight, -1));
                     return true;
                 }
                 if (Math.abs(deltaY) > touchSlop && view.getParent() != null) {
@@ -568,8 +587,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             }
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
-                if (!horizontalDrag[0] || action == MotionEvent.ACTION_CANCEL) {
-                    stage.animate().translationX(0f).setDuration(110L).start();
+                if (!horizontalDrag[0]) {
                     if (action == MotionEvent.ACTION_UP && !longPressed[0]
                         && Math.abs(deltaX) <= touchSlop && Math.abs(deltaY) <= touchSlop) {
                         view.performClick();
@@ -580,25 +598,26 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                     stackedPositions.getOrDefault(groupKey, 0)));
                 boolean next = deltaX < 0;
                 int target = Math.max(0, Math.min(media.size() - 1, value + (next ? 1 : -1)));
-                if (Math.abs(deltaX) < dp(context, 32)) target = value;
-                if (target == value) {
-                    stage.animate().translationX(next ? -dp(context, 10) : dp(context, 10))
-                        .setDuration(70L)
-                        .withEndAction(() -> stage.animate().translationX(0f).setDuration(90L).start())
-                        .start();
-                    return true;
-                }
-                float carriedTranslation = stage.getTranslationX();
-                stage.setTranslationX(0f);
-                int finalTarget = target;
-                animating[0] = true;
-                MediaStackTransitionPolicy.Transition transition =
-                    MediaStackTransitionPolicy.transition(media.size(), value, finalTarget, 3,
+                boolean commit = action == MotionEvent.ACTION_UP && target != value
+                    && Math.abs(deltaX) >= dp(context, 32);
+                int finalTarget = commit ? target : value;
+                float maximum = dp(context, 96);
+                float carried = Math.max(-maximum, Math.min(maximum, deltaX));
+                MediaStackTransitionPolicy.Transition dragged =
+                    MediaStackTransitionPolicy.transition(media.size(), value, target, 3,
                         layerOffsetX, layerOffsetY);
-                MediaStackAnimator.animate(stage, transition, carriedTranslation, 230L,
+                float dragProgress = MediaStackDragPolicy.progress(deltaX, dp(context, 78));
+                MediaStackAnimator.applyDrag(stage, dragged, dragProgress, carried,
+                    itemIndex -> stackLayerCard(context, media.get(itemIndex),
+                        stageWidth, stageHeight, -1));
+                MediaStackTransitionPolicy.Transition settle = commit ? dragged
+                    : MediaStackTransitionPolicy.transition(media.size(), target, value, 3,
+                        layerOffsetX, layerOffsetY);
+                animating[0] = true;
+                MediaStackAnimator.animate(stage, settle, 0f, commit ? 220L : 145L,
                     itemIndex -> stackLayerCard(context, media.get(itemIndex), stageWidth, stageHeight, -1),
                     () -> {
-                        stackedPositions.put(groupKey, finalTarget);
+                        if (commit) stackedPositions.put(groupKey, finalTarget);
                         renderStackLayers(stage, context, media, finalTarget, stageWidth, stageHeight,
                             layerOffsetX, layerOffsetY);
                         positionLabel.setText("第 " + (finalTarget + 1) + "/" + media.size() + " " + unit);
@@ -1174,7 +1193,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             return "位置 · " + value(metadata, "location_name", value(attachment, "file_name", "所选位置"));
         }
         if ("moment_share".equals(type) || isMomentFavorite(metadata)) {
-            return "动态 · " + value(metadata, "author_name", "用户");
+            return momentLabel(metadata) + " · " + value(metadata, "author_name", "用户");
         }
         return "收藏 · " + value(metadata, "title", value(attachment, "file_name", "收藏内容"));
     }
@@ -1204,7 +1223,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             return "点击查看发送位置";
         }
         if ("moment_share".equals(type) || isMomentFavorite(metadata)) {
-            String content = value(metadata, "content", value(metadata, "summary", value(metadata, "media_summary", "分享了一条动态")));
+            String content = value(metadata, "content", value(metadata, "summary",
+                value(metadata, "media_summary", "分享了一条" + momentLabel(metadata))));
             String location = value(metadata, "location_name", "");
             return content + (location.isEmpty() ? "" : " · " + location);
         }
@@ -1237,14 +1257,19 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if ("refunded".equals(state)) return "已退回 · 查看详情";
             if ("expired".equals(state)) return "已过期 · 查看详情";
         }
-        if ("moment_share".equals(type) || isMomentFavorite(metadata)) return "查看动态";
+        if ("moment_share".equals(type) || isMomentFavorite(metadata)) return "查看" + momentLabel(metadata);
         if ("location".equals(type)) return "查看位置";
         return "查看详情";
     }
 
     private boolean isMomentFavorite(JsonObject metadata) {
         return "moment".equalsIgnoreCase(value(metadata, "content_kind", ""))
+            || "short_video".equalsIgnoreCase(value(metadata, "content_kind", ""))
             || "moment".equalsIgnoreCase(value(metadata, "favorite_type", ""));
+    }
+
+    private String momentLabel(JsonObject metadata) {
+        return "short_video".equalsIgnoreCase(value(metadata, "content_kind", "")) ? "短视频" : "动态";
     }
 
     private String businessStateLabel(String type, String state) {
@@ -1369,15 +1394,21 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.senderBadge.setVisibility(badge.isEmpty() ? View.GONE : View.VISIBLE);
         String tone = Jsons.string(item, "sender_badge_tone");
         int background = ThemeColors.primaryContainer(holder.itemView.getContext());
-        int foreground = holder.itemView.getContext().getColor(R.color.on_primary_container);
+        int foreground = ThemeColors.resolve(holder.itemView.getContext(),
+            com.google.android.material.R.attr.colorOnPrimaryContainer,
+            R.color.on_primary_container);
         if ("warning".equals(tone)) {
             // Keep semantic warning text, but resolve the container from day/night
             // resources so the badge remains readable after a live theme switch.
             background = holder.itemView.getContext().getColor(R.color.surface_container_high);
             foreground = holder.itemView.getContext().getColor(R.color.warning);
         } else if ("secondary".equals(tone)) {
-            background = holder.itemView.getContext().getColor(R.color.secondary_container);
-            foreground = holder.itemView.getContext().getColor(R.color.on_secondary_container);
+            background = ThemeColors.resolve(holder.itemView.getContext(),
+                com.google.android.material.R.attr.colorSecondaryContainer,
+                R.color.secondary_container);
+            foreground = ThemeColors.resolve(holder.itemView.getContext(),
+                com.google.android.material.R.attr.colorOnSecondaryContainer,
+                R.color.on_secondary_container);
         }
         holder.binding.senderBadge.getBackground().mutate().setTint(background);
         holder.binding.senderBadge.setTextColor(foreground);

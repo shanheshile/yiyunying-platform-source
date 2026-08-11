@@ -249,6 +249,7 @@
                 android:background="@color/outline_variant" />
 
             <LinearLayout
+                android:id="@+id/momentActionsRow"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:gravity="center"

@@ -63,8 +63,20 @@
 59. `migrations/upgrade_20260810_forum_content_unlocks.sql`
 60. `migrations/upgrade_20260810_forum_data_consistency.sql`
 61. `migrations/upgrade_20260811_content_moderation_closure.sql`
+62. `migrations/upgrade_20260811_short_video_controls.sql`
+63. `migrations/upgrade_20260811_resource_store_review_closure.sql`
+64. `migrations/upgrade_20260811_management_shell_restructure.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.
 
-第 13、14 项顺序不能颠倒：先创建 UID、身份绑定和解绑申请主体，再补充独立审核范围字段。通信接管必须在聊天、多媒体、身份和论坛迁移完成后执行；先建立匿名快照，再升级为用户匿名与 1/2/3 级实名审计双轨。第 28 项用于已经执行过第 27 项的数据库，为通话表补充音频/视频类型；第 29 项再加入群聊、聊天室等通话上下文。第 30 项补齐群文件夹与下载统计，第 31 项加入本地 AI 知识库/会话、节日界面策略和安装包校验字段，第 33 项补齐悬赏审核字段、管理视角和笔记日期检索，第 34 项加入群邀请历史消息可见边界，第 35 项补齐添加方式、通知渠道和动态可见对象，第 36、37 项依次建立生活动态主体与隐私互动能力，第 41 项补齐红包投放范围，第 42 项为群投票补充图片选项，第 43 项加入个人资料动态置顶顺序，第 54 项固定论坛回复根楼，第 55 项把通话卡片关联到发起方原消息并迁移旧系统提示，第 56 项补齐动态评论互动，第 57 项为聊天拍摄、相册、名片和通话记录标签增加管理员开关，第 58 项为群聊、聊天室和论坛板块头像上传增加独立管理员开关，第 59 项加入帖子分章节、付费或定时解锁、附件独立规则和公开媒体文件名保护。执行后运行 `php tools/generate-reference.php` 可重新生成表结构参考；部署验收至少检查 `/api/health`、四级登录、聊天功能开关、头像上传权限、论坛解锁规则以及既有聊天/通话冒烟测试。
+第 13、14 项顺序不能颠倒：先创建 UID、身份绑定和解绑申请主体，再补充独立审核范围字段。通信接管必须在聊天、多媒体、身份和论坛迁移完成后执行；先建立匿名快照，再升级为用户匿名与 1/2/3 级实名审计双轨。第 28 项用于已经执行过第 27 项的数据库，为通话表补充音频/视频类型；第 29 项再加入群聊、聊天室等通话上下文。第 30 项补齐群文件夹与下载统计，第 31 项加入本地 AI 知识库/会话、节日界面策略和安装包校验字段，第 33 项补齐悬赏审核字段、管理视角和笔记日期检索，第 34 项加入群邀请历史消息可见边界，第 35 项补齐添加方式、通知渠道和动态可见对象，第 36、37 项依次建立生活动态主体与隐私互动能力，第 41 项补齐红包投放范围，第 42 项为群投票补充图片选项，第 43 项加入个人资料动态置顶顺序，第 54 项固定论坛回复根楼，第 55 项把通话卡片关联到发起方原消息并迁移旧系统提示，第 56 项补齐动态评论互动，第 57 项为聊天拍摄、相册、名片和通话记录标签增加管理员开关，第 58 项为群聊、聊天室和论坛板块头像上传增加独立管理员开关，第 59 项加入帖子分章节、付费或定时解锁、附件独立规则和公开媒体文件名保护，第 61 项补齐社区内容审核闭环，第 62 项加入独立短视频类型和六类权限开关，第 63 项补齐资源与应用投稿的审核留痕和暂定状态，第 64 项重构管理员四栏工作台并补齐源码分类、交流分类和赞助展示数据。
+
+第 63 项是带文件迁移的硬门禁：必须在真实维护停写和数据库、`public/uploads` 双备份后执行 SQL，随后依次运行
+`php tools/migrate-catalog-private-files.php --release-version <本次版本>`（只读预检）、
+`php tools/migrate-catalog-private-files.php --release-version <本次版本> --apply --maintenance-confirmed`，以及
+`php tools/verify-catalog-migration-report.php --report <上一步报告> --release-version <本次版本> --activate --maintenance-confirmed`。
+最后一条命令未产生 PASS 和激活凭据前，资源/商店接口会保持 503，发布脚本不得激活客户端版本策略。
+三条命令中的版本必须与 `config/release-identity.json` 一致；该身份由 `android/tools/version.ps1` 同步
+Android 版本码、版本名和下载站版本。迁移报告还会绑定身份文件 SHA-256，不能只靠两次相同的手工参数通过。
+执行后运行 `php tools/generate-reference.php` 可重新生成表结构参考；部署验收至少检查 `/api/health`、四级登录、聊天功能开关、头像上传权限、论坛解锁规则、短视频权限、资源/应用审核以及既有聊天/通话冒烟测试。

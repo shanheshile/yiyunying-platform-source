@@ -11,6 +11,17 @@ server {
     client_max_body_size 1100m;
     client_body_timeout 900s;
 
+    # 上传目录禁止直接提供 SVG，避免历史文件在同源下执行脚本。
+    location ~* ^/uploads/.*\.svg$ {
+        add_header X-Content-Type-Options nosniff always;
+        return 404;
+    }
+
+    location /uploads/ {
+        add_header X-Content-Type-Options nosniff always;
+        try_files $uri =404;
+    }
+
     location / {
         # __route preserves the original API path even when a server panel
         # rewrites PHP REQUEST_URI to /index.php or /.

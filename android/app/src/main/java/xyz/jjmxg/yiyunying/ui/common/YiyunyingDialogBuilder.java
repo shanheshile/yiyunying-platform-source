@@ -368,7 +368,8 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
             boolean destructive = ActionIconResolver.destructive(
                 button.getText() == null ? "" : button.getText().toString());
             background.setColor(primary
-                ? (destructive ? ContextCompat.getColor(context, R.color.error)
+                ? (destructive ? ThemeColors.resolve(context,
+                    android.R.attr.colorError, R.color.error)
                     : ThemeColors.primary(context))
                 : Color.TRANSPARENT);
             background.setCornerRadius(dp(16));
@@ -378,9 +379,11 @@ public final class YiyunyingDialogBuilder extends MaterialAlertDialogBuilder {
             ActionIconResolver.apply(button,
                 button.getText() == null ? "" : button.getText().toString(), 0);
             if (primary && destructive) {
-                button.setTextColor(ContextCompat.getColor(context, R.color.white));
+                int onError = ThemeColors.resolve(context,
+                    com.google.android.material.R.attr.colorOnError, R.color.on_error);
+                button.setTextColor(onError);
                 TextViewCompat.setCompoundDrawableTintList(button,
-                    ColorStateList.valueOf(ContextCompat.getColor(context, R.color.white)));
+                    ColorStateList.valueOf(onError));
             }
         }
         ViewGroup.LayoutParams raw = button.getLayoutParams();

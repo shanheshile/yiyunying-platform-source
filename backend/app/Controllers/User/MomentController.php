@@ -15,6 +15,7 @@ use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\MomentVisibilityService;
 use Yiyunying\Services\NotificationService;
+use Yiyunying\Services\RolePermissionService;
 
 final class MomentController
 {
@@ -24,14 +25,17 @@ final class MomentController
     public static function index(Request $request): \Yiyunying\Core\ApiResponse
     {
         $user = AuthService::user($request);
+        $contentKind = self::contentKind((string) $request->input('content_kind', 'moment'));
+        if ($contentKind === 'short_video') self::requireShortVideoFeature($user, 'short_videos');
         self::purgeExpired((int) $user['app_id']);
         $page = $request->page();
         $limit = $request->limit();
         $where = [
             'm.admin_id = ?', 'm.app_id = ?', 'm.status = 1', 'm.deleted_at IS NULL',
+            'm.content_kind = ?',
             "(m.audit_status = 'approved' OR m.user_id = ?)",
         ];
-        $params = [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']];
+        $params = [(int) $user['admin_id'], (int) $user['app_id'], $contentKind, (int) $user['id']];
         $targetUserId = max(0, (int) $request->input('user_id', 0));
         if ((int) $request->input('mine', 0) === 1) $targetUserId = (int) $user['id'];
         if ($targetUserId > 0) {
@@ -77,9 +81,14 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $data = $request->all();
+        $contentKind = self::contentKind((string) ($data['content_kind'] ?? 'moment'));
+        if ($contentKind === 'short_video') {
+            self::requireShortVideoFeature($user, 'short_videos');
+            self::requireShortVideoFeature($user, 'short_video_publish');
+        }
         $content = trim((string) ($data['content'] ?? ''));
         if (mb_strlen($content) > 5000) throw new HttpException('动态文字不能超过 5000 个字符', 0, 422);
-        $payload = self::mediaPayload($user, $content, $data['attachments'] ?? []);
+        $payload = self::mediaPayload($user, $content, $data['attachments'] ?? [], $contentKind);
         if ($content === '' && $payload['attachments'] === []) throw new HttpException('动态文字和媒体不能同时为空', 0, 422);
         [$locationName, $latitude, $longitude] = self::location($user, $data);
         $visibilityMode = MomentVisibilityService::normalizeMode((string) ($data['visibility_mode'] ?? 'inherit'), true);
@@ -92,18 +101,18 @@ final class MomentController
         $auditStatus = AppService::setting((int) $user['app_id'], 'moment_post_audit', false)
             ? 'pending' : 'approved';
         $momentId = Database::transaction(static function () use (
-            $user, $content, $locationName, $latitude, $longitude, $payload,
+            $user, $content, $contentKind, $locationName, $latitude, $longitude, $payload,
             $visibilityMode, $visibleDays, $visibilityUserIds, $auditStatus
         ): int {
             $id = Database::insert(
                 'INSERT INTO user_moments
-                 (admin_id, app_id, user_id, content, location_name, latitude, longitude,
+                 (admin_id, app_id, user_id, content, content_kind, location_name, latitude, longitude,
                   visibility_mode, visible_days, visibility_user_ids_json, audit_status, audit_reason,
                   status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'\', 1, NOW(), NOW())',
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'\', 1, NOW(), NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], $content,
-                    $locationName, $latitude, $longitude, $visibilityMode, $visibleDays,
+                    $contentKind, $locationName, $latitude, $longitude, $visibilityMode, $visibleDays,
                     MomentVisibilityService::encodeIds($visibilityUserIds), $auditStatus,
                 ]
             );
@@ -118,7 +127,9 @@ final class MomentController
         ]);
         return Response::success(
             ['moment' => self::find($user, $momentId, false), 'audit_status' => $auditStatus],
-            $auditStatus === 'pending' ? '动态已提交审核，通过后对其他用户展示' : '动态发布成功',
+            $auditStatus === 'pending'
+                ? ($contentKind === 'short_video' ? '短视频已提交审核，通过后对其他用户展示' : '动态已提交审核，通过后对其他用户展示')
+                : ($contentKind === 'short_video' ? '短视频发布成功' : '动态发布成功'),
             201
         );
     }
@@ -130,10 +141,19 @@ final class MomentController
         $before = self::find($user, $momentId, true);
         self::ensureOwnerAndWindow($before, $user);
         $data = $request->all();
+        $contentKind = self::contentKind((string) ($before['content_kind'] ?? 'moment'));
+        if (array_key_exists('content_kind', $data)
+            && self::contentKind((string) $data['content_kind']) !== $contentKind) {
+            throw new HttpException('发布后不能切换动态与短视频类型', 0, 409);
+        }
+        if ($contentKind === 'short_video') {
+            self::requireShortVideoFeature($user, 'short_videos');
+            self::requireShortVideoFeature($user, 'short_video_publish');
+        }
         $content = array_key_exists('content', $data) ? trim((string) $data['content']) : (string) $before['content'];
         if (mb_strlen($content) > 5000) throw new HttpException('动态文字不能超过 5000 个字符', 0, 422);
         $payload = array_key_exists('attachments', $data)
-            ? self::mediaPayload($user, $content, $data['attachments'])
+            ? self::mediaPayload($user, $content, $data['attachments'], $contentKind)
             : null;
         $attachmentCount = $payload === null ? (int) ($before['attachment_count'] ?? 0) : count($payload['attachments']);
         if ($content === '' && $attachmentCount === 0) throw new HttpException('动态文字和媒体不能同时为空', 0, 422);
@@ -173,7 +193,9 @@ final class MomentController
         LogService::userOperation($request, $user, 'moment', 'update', $momentId);
         return Response::success(
             ['moment' => self::find($user, $momentId, false), 'audit_status' => $auditStatus],
-            $auditStatus === 'pending' ? '动态已更新并重新提交审核' : '动态已更新'
+            $auditStatus === 'pending'
+                ? ($contentKind === 'short_video' ? '短视频已更新并重新提交审核' : '动态已更新并重新提交审核')
+                : ($contentKind === 'short_video' ? '短视频已更新' : '动态已更新')
         );
     }
 
@@ -181,7 +203,7 @@ final class MomentController
     {
         $user = AuthService::user($request);
         $momentId = (int) $params['moment_id'];
-        $before = self::find($user, $momentId, false);
+        $before = self::find($user, $momentId, false, false);
         self::ensureOwner($before, $user);
         $data = $request->all();
         $visibilityMode = array_key_exists('visibility_mode', $data)
@@ -217,14 +239,14 @@ final class MomentController
             'visible_days' => $visibleDays,
             'visibility_user_ids' => $visibilityUserIds,
         ]);
-        return Response::success(['moment' => self::find($user, $momentId, false)], '可见范围已更新');
+        return Response::success(['moment' => self::find($user, $momentId, false, false)], '可见范围已更新');
     }
 
     public static function delete(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = AuthService::user($request);
         $momentId = (int) $params['moment_id'];
-        $moment = self::find($user, $momentId, true);
+        $moment = self::find($user, $momentId, true, false);
         self::ensureOwner($moment, $user);
         $affected = Database::execute(
             'UPDATE user_moments SET deleted_at = NOW(), delete_expires_at = DATE_ADD(NOW(), INTERVAL 120 SECOND), updated_at = NOW()
@@ -248,7 +270,7 @@ final class MomentController
         );
         if ($affected !== 1) throw new HttpException('恢复时间已超过 2 分钟，动态已永久删除', 0, 410);
         LogService::userOperation($request, $user, 'moment', 'restore', $momentId);
-        return Response::success(['moment' => self::find($user, $momentId, false)], '动态已恢复');
+        return Response::success(['moment' => self::find($user, $momentId, false, false)], '动态已恢复');
     }
 
     public static function setPin(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -288,6 +310,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_likes');
         $existing = Database::one('SELECT id FROM moment_likes WHERE moment_id = ? AND user_id = ?', [(int) $moment['id'], (int) $user['id']]);
         if ($existing !== null) {
             Database::execute('DELETE FROM moment_likes WHERE id = ?', [(int) $existing['id']]);
@@ -317,6 +340,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_likes');
         $page = $request->page();
         $limit = $request->limit();
         $presentation = self::likePresentation($moment, $user, $limit, ($page - 1) * $limit);
@@ -336,6 +360,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_comments');
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
@@ -375,6 +400,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_comments');
         $content = trim((string) $request->input('content', ''));
         $stickerId = max(0, (int) $request->input('sticker_id', 0));
         $rawAttachments = $request->input('attachments', []);
@@ -497,6 +523,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_comments');
         $commentId = (int) $params['comment_id'];
         $comment = Database::one(
             "SELECT c.*, u.account, p.nickname FROM moment_comments c
@@ -557,6 +584,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_favorites');
         $existing = Database::one('SELECT id FROM moment_favorites WHERE moment_id = ? AND user_id = ?', [(int) $moment['id'], (int) $user['id']]);
         if ($existing !== null) {
             Database::execute('DELETE FROM moment_favorites WHERE id = ?', [(int) $existing['id']]);
@@ -579,6 +607,7 @@ final class MomentController
         $user = AuthService::user($request);
         $moment = self::find($user, (int) $params['moment_id'], false);
         self::ensureApprovedForInteraction($moment);
+        self::requireShortVideoAction($moment, $user, 'short_video_forwards');
         $targetType = strtolower(trim((string) $request->input('target_type', 'external')));
         if ($targetType === 'room') $targetType = 'group';
         if (!in_array($targetType, ['private', 'group', 'chat_room', 'service', 'forum', 'bounty', 'external'], true)) {
@@ -605,13 +634,18 @@ final class MomentController
             );
             return ['forward_id' => $forwardId] + $delivery;
         });
+        $shortVideo = (string) ($moment['content_kind'] ?? 'moment') === 'short_video';
         return Response::success(array_merge($result, [
             'forward_count' => self::count('moment_forwards', (int) $moment['id']),
-        ]), in_array($targetType, ['private', 'group', 'chat_room', 'service'], true) ? '动态已发送' : '转发记录已创建', 201);
+        ]), in_array($targetType, ['private', 'group', 'chat_room', 'service'], true)
+            ? ($shortVideo ? '短视频已发送' : '动态已发送')
+            : ($shortVideo ? '短视频转发记录已创建' : '动态转发记录已创建'), 201);
     }
 
     private static function forwardPayload(array $user, array $moment): array
     {
+        $shortVideo = (string) ($moment['content_kind'] ?? 'moment') === 'short_video';
+        $contentLabel = $shortVideo ? '短视频' : '动态';
         $attachments = is_array($moment['attachments'] ?? null) ? $moment['attachments'] : [];
         $previewUrl = '';
         $previewType = '';
@@ -623,7 +657,7 @@ final class MomentController
         }
         $summary = trim((string) ($moment['content'] ?? ''));
         if ($summary === '') $summary = trim((string) ($moment['media_summary'] ?? ''));
-        if ($summary === '') $summary = '分享了一条动态';
+        if ($summary === '') $summary = '分享了一条' . $contentLabel;
         $momentId = (int) $moment['id'];
         return MessageMediaService::userPayload($user, [
             'content' => '',
@@ -631,10 +665,10 @@ final class MomentController
                 'media_type' => 'moment_share',
                 'url' => "/api/user/moments/{$momentId}",
                 'thumbnail_url' => $previewUrl,
-                'file_name' => '动态分享',
+                'file_name' => $contentLabel . '分享',
                 'mime_type' => 'application/vnd.yiyunying.moment+json',
                 'metadata' => [
-                    'content_kind' => 'moment',
+                    'content_kind' => $shortVideo ? 'short_video' : 'moment',
                     'target_id' => $momentId,
                     'moment_id' => $momentId,
                     'author_user_id' => (int) $moment['user_id'],
@@ -759,7 +793,7 @@ final class MomentController
         return ['target_type' => 'service', 'session_id' => $sessionId, 'message_id' => $messageId];
     }
 
-    private static function find(array $user, int $momentId, bool $includeDeleted): array
+    private static function find(array $user, int $momentId, bool $includeDeleted, bool $requireFeature = true): array
     {
         $deleted = $includeDeleted ? '' : ' AND m.deleted_at IS NULL';
         $row = Database::one(
@@ -771,20 +805,50 @@ final class MomentController
             [$momentId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
         );
         if ($row === null || !MomentVisibilityService::canView($row, $user, true)) throw new HttpException('动态不存在或你无权查看', 404, 404);
+        if ($requireFeature && (string) ($row['content_kind'] ?? 'moment') === 'short_video') {
+            self::requireShortVideoFeature($user, 'short_videos');
+        }
         $row = MessageMediaService::hydrate([$row], 'moment', (int) $user['app_id'])[0];
         self::decorate($row, $user);
         return $row;
     }
 
-    private static function mediaPayload(array $user, string $content, $attachments): array
+    private static function mediaPayload(array $user, string $content, $attachments, string $contentKind): array
     {
         if (!is_array($attachments)) throw new HttpException('动态媒体格式错误', 0, 422);
+        if ($contentKind === 'short_video') {
+            if (count($attachments) !== 1) throw new HttpException('短视频只能包含 1 个视频', 0, 422);
+            $attachment = $attachments[0] ?? null;
+            $type = is_array($attachment) ? strtolower((string) ($attachment['media_type'] ?? '')) : '';
+            if ($type !== 'video') throw new HttpException('短视频只能包含 1 个视频', 0, 422);
+        }
         if (count($attachments) > self::MAX_MEDIA_COUNT) throw new HttpException('一条动态最多发布 9 张图片或视频', 0, 422);
         foreach ($attachments as $attachment) {
             $type = is_array($attachment) ? strtolower((string) ($attachment['media_type'] ?? '')) : '';
             if (!in_array($type, ['image', 'video'], true)) throw new HttpException('动态附件只支持图片或视频', 0, 422);
         }
         return MessageMediaService::userPayload($user, ['content' => $content, 'attachments' => $attachments]);
+    }
+
+    private static function contentKind(string $value): string
+    {
+        $kind = strtolower(trim($value));
+        if ($kind === '') return 'moment';
+        if (!in_array($kind, ['moment', 'short_video'], true)) {
+            throw new HttpException('内容类型仅支持动态或短视频', 0, 422);
+        }
+        return $kind;
+    }
+
+    private static function requireShortVideoAction(array $moment, array $user, string $featureCode): void
+    {
+        if ((string) ($moment['content_kind'] ?? 'moment') !== 'short_video') return;
+        self::requireShortVideoFeature($user, $featureCode);
+    }
+
+    private static function requireShortVideoFeature(array $user, string $featureCode): void
+    {
+        RolePermissionService::requireUserFeature($user, $featureCode);
     }
 
     private static function requestedVisibleDays(array $data, ?int $fallback): ?int
@@ -1037,6 +1101,7 @@ final class MomentController
             'pending' => '待审核',
             'approved' => '审核通过',
             'rejected' => '审核未通过',
+            'on_hold' => '暂定',
         ][$status] ?? '待审核';
     }
 

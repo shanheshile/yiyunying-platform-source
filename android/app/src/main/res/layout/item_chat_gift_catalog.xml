@@ -43,7 +43,7 @@
                 android:maxLines="1"
                 android:text="礼物"
                 android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:textColor="@color/on_surface" />
+                android:textColor="?attr/colorOnSurface" />
 
             <TextView
                 android:id="@+id/giftDescription"
@@ -54,7 +54,7 @@
                 android:maxLines="1"
                 android:text="选择后发送给好友"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                android:textColor="@color/on_surface_variant" />
+                android:textColor="?attr/colorOnSurfaceVariant" />
         </LinearLayout>
 
         <TextView

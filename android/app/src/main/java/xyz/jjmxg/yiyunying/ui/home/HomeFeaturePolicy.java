@@ -36,6 +36,12 @@ final class HomeFeaturePolicy {
             case "moments_compose":
             case "favorites_center":
                 return enabled(features, "social");
+            case "short_videos":
+                return enabled(features, "social") && explicitlyEnabled(features, "short_videos");
+            case "short_video_publish":
+                return enabled(features, "social")
+                    && explicitlyEnabled(features, "short_videos")
+                    && explicitlyEnabled(features, "short_video_publish");
             case "forum_posts": return enabled(features, "forum");
             case "bounties": return enabled(features, "bounties");
             case "resources":
@@ -62,5 +68,22 @@ final class HomeFeaturePolicy {
             if (actionEnabled(features, module)) return true;
         }
         return false;
+    }
+
+    private static boolean explicitlyEnabled(JsonObject features, String code) {
+        if (features == null || code == null || !features.has(code)) return false;
+        JsonElement value = features.get(code);
+        if (value == null || value.isJsonNull()) return false;
+        try {
+            if (!value.isJsonObject()) return value.getAsBoolean();
+            JsonObject envelope = value.getAsJsonObject();
+            if (envelope.has("effective_enabled") && !envelope.get("effective_enabled").isJsonNull()) {
+                return envelope.get("effective_enabled").getAsBoolean();
+            }
+            return envelope.has("enabled") && !envelope.get("enabled").isJsonNull()
+                && envelope.get("enabled").getAsBoolean();
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 }

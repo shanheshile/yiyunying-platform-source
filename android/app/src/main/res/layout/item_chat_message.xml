@@ -15,7 +15,7 @@
         android:gravity="center"
         android:includeFontPadding="true"
         android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-        android:textColor="@color/outline"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:visibility="gone" />
 
     <LinearLayout
@@ -240,7 +240,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-                    android:textColor="@color/outline" />
+                    android:textColor="?attr/colorOnSurfaceVariant" />
             </LinearLayout>
         </LinearLayout>
 

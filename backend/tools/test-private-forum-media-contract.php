@@ -21,8 +21,8 @@ foreach ($paths as $name => $path) {
     $source[$name] = (string) file_get_contents($path);
 }
 $checks = [
-    'only protected forum sections use private storage' => str_contains($source['upload'], "=== 'forum_section'")
-        && !str_contains($source['upload'], "['forum_post', 'forum_section']")
+    'protected forum and catalog binaries use private storage' => str_contains($source['upload'], "'forum_section', 'resource_source', 'store_app_package'")
+        && !str_contains($source['upload'], "'forum_post', 'forum_section'")
         && str_contains($source['upload'], "'/storage/'"),
     'forum post and comment uploads remain public' => str_contains($source['upload_controller'], "'forum_post', 'forum_comment' => ['forum']"),
     'protected forum upload requires forum and unlock capabilities' => str_contains(
@@ -43,7 +43,14 @@ $checks = [
     'signature is hmac and time bounded' => str_contains($source['private'], "hash_hmac('sha256'")
         && str_contains($source['private'], 'URL_TTL_SECONDS'),
     'download resolves only storage private paths' => str_contains($source['private'], 'privatePhysicalPath')
+        && str_contains($source['private'], "ma.target_type = 'forum_section'")
+        && str_contains($source['private'], "up.scene = 'forum_section'")
         && str_contains($source['private'], "up.file_path LIKE 'private/%'"),
+    'active private content is downloaded instead of executed' => str_contains($source['private'], 'deliveryPolicy')
+        && str_contains($source['private'], "'application/octet-stream'")
+        && str_contains($source['private'], "'attachment'")
+        && str_contains($source['private'], "'audio/'")
+        && str_contains($source['private'], "'video/'"),
     'binary response supports range requests' => str_contains($source['response'], "HTTP_RANGE")
         && str_contains($source['response'], "Content-Range"),
     'signed media route exists' => str_contains($source['routes'], "/api/public/forum-media/{attachment_id}"),
@@ -98,6 +105,22 @@ if (!$privateScenePassed) {
     exit(1);
 }
 
+$deliveryPolicy = new ReflectionMethod(\Yiyunying\Services\PrivateForumMediaService::class, 'deliveryPolicy');
+$deliveryPolicy->setAccessible(true);
+$safeImage = $deliveryPolicy->invoke(null, 'image/png', 'image/png', '/private/photo.png', 9);
+$html = $deliveryPolicy->invoke(null, 'text/html', 'text/html', '/private/file.pdf', 10);
+$mismatch = $deliveryPolicy->invoke(null, 'image/png', 'text/html', '/private/fake.png', 11);
+$pdf = $deliveryPolicy->invoke(null, 'application/pdf', 'application/pdf', '/private/report.pdf', 12);
+$svg = $deliveryPolicy->invoke(null, 'image/png', 'image/svg+xml', '/private/fake.png', 13);
+if (($safeImage['disposition'] ?? '') !== 'inline' || ($safeImage['mime_type'] ?? '') !== 'image/png'
+    || ($html['disposition'] ?? '') !== 'attachment' || ($html['mime_type'] ?? '') !== 'application/octet-stream'
+    || ($mismatch['disposition'] ?? '') !== 'attachment'
+    || ($pdf['disposition'] ?? '') !== 'attachment' || ($pdf['download_name'] ?? '') !== 'forum-attachment-12.pdf'
+    || ($svg['blocked'] ?? false) !== true) {
+    fwrite(STDERR, "Private forum media contract failed: active content delivery policy\n");
+    exit(1);
+}
+
 $originalSecurity = $GLOBALS['yiyunying_config']['security'];
 try {
     foreach (['', 'too-short', 'local-development-only-change-me',
@@ -145,16 +168,27 @@ if ($rangeFile === false) {
 }
 try {
     file_put_contents($rangeFile, '0123456789');
+    $validator = hash_file('sha256', $rangeFile);
     $_SERVER['HTTP_RANGE'] = 'bytes=-3';
-    $rangeResponse = \Yiyunying\Core\Response::file($rangeFile, 'video/mp4');
+    $_SERVER['HTTP_IF_RANGE'] = '"sha256-' . $validator . '"';
+    $rangeResponse = \Yiyunying\Core\Response::file($rangeFile, 'video/mp4', 'inline', '', $validator);
     if ($rangeResponse->httpStatus !== 206 || $rangeResponse->fileOffset !== 7
         || $rangeResponse->fileLength !== 3
-        || ($rangeResponse->headers['Content-Range'] ?? '') !== 'bytes 7-9/10') {
+        || ($rangeResponse->headers['Content-Range'] ?? '') !== 'bytes 7-9/10'
+        || ($rangeResponse->headers['ETag'] ?? '') !== '"sha256-' . $validator . '"'
+        || trim((string) ($rangeResponse->headers['Last-Modified'] ?? '')) === '') {
         fwrite(STDERR, "Private forum media contract failed: suffix range response is incorrect\n");
         exit(1);
     }
+    $_SERVER['HTTP_IF_RANGE'] = '"sha256-' . str_repeat('0', 64) . '"';
+    $restartResponse = \Yiyunying\Core\Response::file($rangeFile, 'video/mp4', 'inline', '', $validator);
+    if ($restartResponse->httpStatus !== 200 || $restartResponse->fileOffset !== 0
+        || $restartResponse->fileLength !== 10 || isset($restartResponse->headers['Content-Range'])) {
+        fwrite(STDERR, "Private forum media contract failed: mismatched If-Range did not restart the file\n");
+        exit(1);
+    }
 } finally {
-    unset($_SERVER['HTTP_RANGE']);
+    unset($_SERVER['HTTP_RANGE'], $_SERVER['HTTP_IF_RANGE']);
     @unlink($rangeFile);
 }
 echo "Private forum media contract: passed\n";

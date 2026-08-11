@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -65,6 +66,8 @@ import xyz.jjmxg.yiyunying.databinding.ActivityGroupSpaceBinding;
 import xyz.jjmxg.yiyunying.databinding.ItemRecordBinding;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
 import xyz.jjmxg.yiyunying.ui.common.QrShareDialog;
+import xyz.jjmxg.yiyunying.ui.common.RecordDetailDialog;
+import xyz.jjmxg.yiyunying.ui.common.ThemeColors;
 import xyz.jjmxg.yiyunying.ui.profile.UserProfileActivity;
 import xyz.jjmxg.yiyunying.ui.social.SocialDirectoryActivity;
 import xyz.jjmxg.yiyunying.ui.upload.ContentUriRequestBody;
@@ -78,6 +81,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private static final String EXTRA_ROOM_ID = "room_id";
     private static final String EXTRA_TITLE = "title";
     private static final String EXTRA_SECTION = "section";
+    private static final String EXTRA_ADMIN_MODE = "admin_mode";
+    private static final String EXTRA_APP_ID = "app_id";
     private ActivityGroupSpaceBinding binding;
     private final List<JsonObject> items = new ArrayList<>();
     private SpaceAdapter adapter;
@@ -89,6 +94,8 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private RequestHandle avatarUploadRequest;
     private RequestHandle avatarPolicyRequest;
     private long roomId;
+    private long adminAppId;
+    private boolean adminMode;
     private String roomKind = "group";
     private String section = "members";
     private String uploadMode = "file";
@@ -102,6 +109,13 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private String roomName = "";
     private String roomDescription = "";
     private String roomAnnouncement = "";
+    private String roomJoinMode = "approval";
+    private boolean roomAllowMemberInvite;
+    private boolean roomMuteAll;
+    private int roomStatus = 1;
+    private boolean roomCanManage;
+    private boolean roomCanInvite;
+    private boolean roomLoaded;
     private boolean roomProfilesEnabled = true;
     private boolean groupAvatarUploadEnabled = true;
     private boolean chatroomAvatarUploadEnabled = true;
@@ -183,11 +197,26 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             .putExtra(EXTRA_SECTION, section));
     }
 
+    public static void openAdmin(Context context, long appId, long roomId, String title) {
+        context.startActivity(new Intent(context, GroupSpaceActivity.class)
+            .putExtra(EXTRA_ADMIN_MODE, true)
+            .putExtra(EXTRA_APP_ID, appId)
+            .putExtra(EXTRA_ROOM_ID, roomId)
+            .putExtra(EXTRA_TITLE, title)
+            .putExtra(EXTRA_SECTION, "members"));
+    }
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         roomId = getIntent().getLongExtra(EXTRA_ROOM_ID, 0);
-        if (roomId <= 0) { finish(); return; }
+        adminMode = getIntent().getBooleanExtra(EXTRA_ADMIN_MODE, false);
+        adminAppId = getIntent().getLongExtra(EXTRA_APP_ID, 0);
+        if (roomId <= 0 || (adminMode && adminAppId <= 0)) { finish(); return; }
         section = normalizeSection(getIntent().getStringExtra(EXTRA_SECTION));
+        if (adminMode) {
+            section = "members";
+            currentRole = GroupManagementPolicy.SYSTEM_ADMIN;
+        }
         binding = ActivityGroupSpaceBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         binding.toolbar.setNavigationOnClickListener(view -> navigateBack());
@@ -195,7 +224,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             @Override public void handleOnBackPressed() { navigateBack(); }
         });
         binding.groupName.setText(getIntent().getStringExtra(EXTRA_TITLE));
-        binding.groupAvatar.setImageResource(R.drawable.ic_group);
+        binding.groupAvatar.setImageResource(R.drawable.bg_group_avatar_placeholder);
         binding.groupAvatarButton.setOnClickListener(view ->
             avatarPicker.launch(MediaPickerActivity.imageIntent(this, 1)));
         binding.groupEditButton.setOnClickListener(view -> showRoomProfileEditor());
@@ -211,6 +240,13 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             : ("votes".equals(section) ? R.id.tabVotes
             : ("solitaires".equals(section) ? R.id.tabSolitaires : R.id.tabMembers)));
         binding.tabs.check(initialTab);
+        if (adminMode) {
+            binding.tabFiles.setVisibility(View.GONE);
+            binding.tabAlbums.setVisibility(View.GONE);
+            binding.tabVotes.setVisibility(View.GONE);
+            binding.tabSolitaires.setVisibility(View.GONE);
+            binding.groupQrButton.setVisibility(View.GONE);
+        }
         binding.tabs.setOnCheckedStateChangeListener((group, checkedIds) -> {
             if (checkedIds.isEmpty()) return;
             int id = checkedIds.get(0);
@@ -255,22 +291,38 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             this.roomName = roomName;
             roomDescription = Jsons.string(room, "description");
             roomAnnouncement = Jsons.string(room, "announcement");
+            roomJoinMode = Jsons.string(room, "join_mode");
+            if (roomJoinMode.isEmpty()) roomJoinMode = "approval";
+            roomAllowMemberInvite = bool(room, "allow_member_invite");
+            roomMuteAll = bool(room, "mute_all");
+            roomStatus = Jsons.intValue(room, "status", 1);
             if (!roomName.isEmpty()) binding.groupName.setText(roomName);
-            currentRole = Jsons.string(room, "current_role");
-            if (currentRole.isEmpty()) currentRole = "member";
+            binding.groupDescription.setText(roomDescription);
+            binding.groupDescription.setVisibility(roomDescription.isEmpty() ? View.GONE : View.VISIBLE);
+            if (!adminMode) {
+                currentRole = Jsons.string(room, "current_role");
+                if (currentRole.isEmpty()) currentRole = "member";
+            }
+            roomCanManage = adminMode || (room.has("can_manage")
+                ? bool(room, "can_manage") : GroupManagementPolicy.isManager(currentRole));
+            roomCanInvite = adminMode || (room.has("can_invite")
+                ? bool(room, "can_invite")
+                : GroupManagementPolicy.canInvite(currentRole, roomAllowMemberInvite));
+            roomLoaded = true;
             String nextIcon = Jsons.string(room, "icon");
             ImageLoader.get().invalidate(ImageLoader.get().absoluteUrl(this, roomIcon));
             roomIcon = nextIcon;
             ImageLoader.get().load(
                 ImageLoader.get().absoluteUrl(this, roomIcon),
                 binding.groupAvatar,
-                R.drawable.ic_group
+                R.drawable.bg_group_avatar_placeholder
             );
             groupNumber = String.valueOf(20000000000L + Jsons.longValue(room, "id"));
             groupCreatedAt = Jsons.string(room, "created_at");
             String created = groupCreatedAt.isEmpty() ? "未记录" : groupCreatedAt;
             binding.groupMeta.setText(entityNumberLabel() + " " + groupNumber
                 + " · " + memberLabel() + " " + Jsons.longValue(room, "member_count") + " 人"
+                + (adminMode ? " · " + (roomStatus == 1 ? "已启用" : "已停用") : "")
                 + " · 创建时间 " + created);
             binding.announcement.setText(roomAnnouncement.isEmpty()
                 ? "暂无" + entityLabel() + "公告"
@@ -291,7 +343,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 if (binding == null || isFinishing() || isDestroyed() || !result.isSuccessful()) return;
                 UploadPolicyStore.update(this, Jsons.object(result.dataObject(), "upload_limits"));
                 JsonObject features = Jsons.object(result.dataObject(), "features");
-                roomProfilesEnabled = featureEnabled(features, "chat_rooms", true);
+                roomProfilesEnabled = adminMode || featureEnabled(features, "chat_rooms", true);
                 groupAvatarUploadEnabled = featureEnabled(features, "group_avatar_upload", true);
                 chatroomAvatarUploadEnabled = featureEnabled(features, "chatroom_avatar_upload", true);
                 renderAvatarAction();
@@ -300,12 +352,16 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void renderAvatarAction() {
         if (binding == null) return;
-        boolean manager = "owner".equals(currentRole) || "admin".equals(currentRole);
+        boolean manager = adminMode || roomCanManage || GroupManagementPolicy.isManager(currentRole);
         boolean enabled = isChatRoom() ? chatroomAvatarUploadEnabled : groupAvatarUploadEnabled;
         binding.groupAvatarButton.setText("更换" + entityLabel() + "头像");
-        binding.groupAvatarButton.setVisibility(manager && roomProfilesEnabled && enabled ? View.VISIBLE : View.GONE);
+        binding.groupAvatarButton.setVisibility(roomLoaded && manager && roomProfilesEnabled && enabled
+            ? View.VISIBLE : View.GONE);
         binding.groupEditButton.setText("编辑" + entityLabel() + "资料");
-        binding.groupEditButton.setVisibility(manager && roomProfilesEnabled ? View.VISIBLE : View.GONE);
+        binding.groupEditButton.setVisibility(roomLoaded && manager && roomProfilesEnabled ? View.VISIBLE : View.GONE);
+        binding.groupQrButton.setVisibility(roomLoaded && !adminMode
+            && (roomCanInvite || GroupManagementPolicy.canInvite(currentRole, roomAllowMemberInvite))
+            ? View.VISIBLE : View.GONE);
         binding.groupAvatar.setContentDescription(entityLabel() + "头像，点击可预览");
         binding.groupAvatar.setOnClickListener(view -> {
             if (roomIcon.isEmpty()) {
@@ -335,12 +391,38 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         announcement.setText(roomAnnouncement);
         announcement.setMinLines(2);
         announcement.setMaxLines(6);
+        String[] selectedJoinMode = new String[]{roomJoinMode};
+        MaterialButton joinMode = new MaterialButton(this);
+        joinMode.setText("入群方式：" + joinModeLabel(selectedJoinMode[0]));
+        joinMode.setOnClickListener(view -> new YiyunyingDialogBuilder(this)
+            .setTitle("选择入群方式")
+            .setItems(new String[]{"公开加入", "申请后审核", "仅限邀请"}, (choiceDialog, which) -> {
+                selectedJoinMode[0] = new String[]{"open", "approval", "invite"}[which];
+                joinMode.setText("入群方式：" + joinModeLabel(selectedJoinMode[0]));
+            })
+            .setNegativeButton("取消", null)
+            .show());
+        MaterialSwitch allowInvite = new MaterialSwitch(this);
+        allowInvite.setText("允许普通成员邀请好友");
+        allowInvite.setChecked(roomAllowMemberInvite);
+        MaterialSwitch muteAll = new MaterialSwitch(this);
+        muteAll.setText("全员禁言（群主和管理员除外）");
+        muteAll.setChecked(roomMuteAll);
+        MaterialSwitch enabled = new MaterialSwitch(this);
+        enabled.setText("启用此" + entityLabel());
+        enabled.setChecked(roomStatus == 1);
         content.addView(name);
         content.addView(description);
         content.addView(announcement);
+        content.addView(joinMode);
+        content.addView(allowInvite);
+        content.addView(muteAll);
+        if (adminMode) content.addView(enabled);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
         AlertDialog dialog = new YiyunyingDialogBuilder(this)
             .setTitle("编辑" + entityLabel() + "资料")
-            .setView(content)
+            .setView(scroll)
             .setPositiveButton("保存", null)
             .setNegativeButton("取消", null)
             .create();
@@ -355,6 +437,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 body.addProperty("name", nextName);
                 body.addProperty("description", description.getText().toString().trim());
                 body.addProperty("announcement", announcement.getText().toString().trim());
+                body.addProperty("join_mode", selectedJoinMode[0]);
+                body.addProperty("allow_member_invite", allowInvite.isChecked());
+                body.addProperty("mute_all", muteAll.isChecked());
+                if (adminMode) body.addProperty("status", enabled.isChecked());
                 dialog.dismiss();
                 binding.progress.setVisibility(View.VISIBLE);
                 actionRequest = AppAccess.from(this).repository().put(base(), body, result -> {
@@ -402,7 +488,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 ImageLoader.get().load(
                     ImageLoader.get().absoluteUrl(this, roomIcon),
                     binding.groupAvatar,
-                    R.drawable.ic_group
+                    R.drawable.bg_group_avatar_placeholder
                 );
                 toast(result.message().isEmpty() ? entityLabel() + "头像已更新" : result.message());
                 loadRoom();
@@ -424,7 +510,12 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
 
     private void updateActionLabel() {
         if (binding == null) return;
-        if ("members".equals(section)) { binding.actionButton.setText("邀请成员"); binding.actionButton.setVisibility(View.VISIBLE); }
+        if ("members".equals(section)) {
+            binding.actionButton.setText(adminMode ? "添加成员" : "邀请成员");
+            binding.actionButton.setVisibility(
+                roomLoaded && (roomCanInvite || GroupManagementPolicy.canInvite(currentRole, roomAllowMemberInvite))
+                    ? View.VISIBLE : View.GONE);
+        }
         else if ("files".equals(section)) { binding.actionButton.setText("上传 / 新建文件夹"); binding.actionButton.setVisibility(View.VISIBLE); }
         else if ("albums".equals(section)) { binding.actionButton.setText("上传 / 新建相册"); binding.actionButton.setVisibility(View.VISIBLE); }
         else if ("votes".equals(section)) { binding.actionButton.setText("发起投票"); binding.actionButton.setVisibility(View.VISIBLE); }
@@ -489,6 +580,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     }
 
     private void inviteMember() {
+        if (adminMode) {
+            showAdminAddMember();
+            return;
+        }
         long[] excluded = new long[items.size()];
         int count = 0;
         for (JsonObject member : items) {
@@ -497,6 +592,51 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         }
         if (count != excluded.length) excluded = java.util.Arrays.copyOf(excluded, count);
         friendPicker.launch(SocialDirectoryActivity.pickFriendsIntent(this, 50, "邀请" + memberLabel(), excluded));
+    }
+
+    private void showAdminAddMember() {
+        LinearLayout content = form();
+        EditText userId = input("用户编号");
+        userId.setInputType(InputType.TYPE_CLASS_NUMBER);
+        String[] selectedRole = new String[]{"member"};
+        MaterialButton role = new MaterialButton(this);
+        role.setText("成员角色：普通成员");
+        role.setOnClickListener(view -> new YiyunyingDialogBuilder(this)
+            .setTitle("选择成员角色")
+            .setItems(new String[]{"普通成员", adminRoleName(), ownerRoleName()}, (dialog, which) -> {
+                selectedRole[0] = new String[]{"member", "admin", "owner"}[which];
+                role.setText("成员角色：" + roleName(selectedRole[0]));
+            })
+            .setNegativeButton("取消", null)
+            .show());
+        content.addView(userId);
+        content.addView(role);
+        AlertDialog dialog = new YiyunyingDialogBuilder(this)
+            .setTitle("添加" + memberLabel())
+            .setView(content)
+            .setPositiveButton("添加", null)
+            .setNegativeButton("取消", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(view -> {
+                long targetId;
+                try {
+                    targetId = Long.parseLong(userId.getText().toString().trim());
+                } catch (NumberFormatException invalid) {
+                    userId.setError("请输入有效的用户编号");
+                    return;
+                }
+                if (targetId <= 0) {
+                    userId.setError("用户编号必须大于 0");
+                    return;
+                }
+                JsonObject body = new JsonObject();
+                body.addProperty("user_id", targetId);
+                body.addProperty("role", selectedRole[0]);
+                dialog.dismiss();
+                executeMemberAction("post", base() + "/members", body);
+            }));
+        dialog.show();
     }
 
     private void confirmInvitations(List<JsonObject> selected) {
@@ -1040,6 +1180,10 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     }
 
     private void showMemberActions(JsonObject member) {
+        if (adminMode) {
+            showAdminMemberActions(member);
+            return;
+        }
         long targetId = Jsons.longValue(member, "user_id");
         long selfId = AppAccess.from(this).session().actorId();
         String targetRole = Jsons.string(member, "role");
@@ -1072,6 +1216,51 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 else if ("禁言管理".equals(action)) showMuteActions(member);
                 else if (removeAction.equals(action)) confirmRemoveMember(member);
             })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void showAdminMemberActions(JsonObject member) {
+        long targetId = Jsons.longValue(member, "user_id");
+        String targetRole = Jsons.string(member, "role");
+        List<String> actions = new ArrayList<>();
+        actions.add("查看成员资料");
+        if (!"owner".equals(targetRole)) {
+            actions.add("设为" + ownerRoleName());
+            if (!"admin".equals(targetRole)) actions.add("设为" + adminRoleName());
+            if (!"member".equals(targetRole)) actions.add("设为普通成员");
+            actions.add("禁言管理");
+            actions.add("移出" + entityLabel());
+        }
+        new YiyunyingDialogBuilder(this)
+            .setTitle(first(member, "nickname", "account") + " · " + roleName(targetRole))
+            .setItems(actions.toArray(new String[0]), (dialog, which) -> {
+                String action = actions.get(which);
+                if ("查看成员资料".equals(action)) {
+                    RecordDetailDialog.show(this, "成员资料", member);
+                } else if (("设为" + ownerRoleName()).equals(action)) {
+                    confirmAdminOwnerChange(member);
+                } else if (("设为" + adminRoleName()).equals(action)) {
+                    updateMemberRole(targetId, "admin");
+                } else if ("设为普通成员".equals(action)) {
+                    updateMemberRole(targetId, "member");
+                } else if ("禁言管理".equals(action)) {
+                    showMuteActions(member);
+                } else if (("移出" + entityLabel()).equals(action)) {
+                    confirmRemoveMember(member);
+                }
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void confirmAdminOwnerChange(JsonObject member) {
+        new YiyunyingDialogBuilder(this)
+            .setTitle("设置" + ownerRoleName())
+            .setMessage("确定将“" + first(member, "nickname", "account") + "”设为" + ownerRoleName()
+                + "吗？原" + ownerRoleName() + "将自动变为普通成员。")
+            .setPositiveButton("确定", (dialog, which) ->
+                updateMemberRole(Jsons.longValue(member, "user_id"), "owner"))
             .setNegativeButton("取消", null)
             .show();
     }
@@ -1143,7 +1332,11 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     }
 
     private void openItem(JsonObject item) {
-        if ("members".equals(section)) { UserProfileActivity.open(this, Jsons.longValue(item, "user_id")); return; }
+        if ("members".equals(section)) {
+            if (adminMode) RecordDetailDialog.show(this, "成员资料", item);
+            else UserProfileActivity.open(this, Jsons.longValue(item, "user_id"));
+            return;
+        }
         if ("files".equals(section)) {
             if (bool(item, "is_folder")) { enterFolder(item); return; }
             openGroupFile(item);
@@ -1269,7 +1462,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 + (bool(vote, "allow_change") ? " · 可修改" : " · 提交后不可修改")
                 + (bool(vote, "anonymous") ? " · 匿名" : "")
                 + (endsAt.isEmpty() ? "" : "\n截止时间：" + endsAt));
-            ruleView.setTextColor(getColor(R.color.primary));
+            ruleView.setTextColor(ThemeColors.primary(this));
             ruleView.setPadding(dp(4), dp(2), dp(4), dp(8));
             content.addView(ruleView);
             List<CompoundButton> controls = new ArrayList<>();
@@ -1373,7 +1566,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
         status.setText((active ? "进行中" : "已结束") + "  ·  "
             + (endsAt.isEmpty() ? "长期有效" : "截止 " + endsAt));
         status.setTextSize(13f);
-        status.setTextColor(getColor(active ? R.color.primary : R.color.on_surface_variant));
+        status.setTextColor(active ? ThemeColors.primary(this) : getColor(R.color.on_surface_variant));
         status.setPadding(dp(4), 0, dp(4), dp(10));
         content.addView(status);
         String description = Jsons.string(solitaire, "description");
@@ -1405,7 +1598,7 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
             TextView member = new TextView(this);
             member.setText((index + 1) + "  " + first(entry, "nickname", "account"));
             member.setTextSize(12.5f);
-            member.setTextColor(getColor(R.color.primary));
+            member.setTextColor(ThemeColors.primary(this));
             TextView value = new TextView(this);
             value.setText(Jsons.string(entry, "content"));
             value.setTextSize(15f);
@@ -1477,13 +1670,22 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
     private String fileRootName() { return isChatRoom() ? "聊天室文件" : "群文件"; }
     private String spacePrefix() { return isChatRoom() ? "聊天室" : "群"; }
 
-    private String base() { return "/api/user/chat-rooms/" + roomId; }
+    private String base() {
+        return adminMode
+            ? "/api/admin/apps/" + adminAppId + "/chat-rooms/" + roomId
+            : "/api/user/chat-rooms/" + roomId;
+    }
     private void toast(String message) {
         if (binding == null || isFinishing() || isDestroyed()) return;
         Snackbar.make(binding.getRoot(), message == null || message.isEmpty() ? "操作未完成" : message, Snackbar.LENGTH_LONG).show();
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private String roleName(String role) { return "owner".equals(role) ? ownerRoleName() : ("admin".equals(role) ? adminRoleName() : memberLabel()); }
+    private String joinModeLabel(String value) {
+        if ("open".equals(value)) return "公开加入";
+        if ("invite".equals(value)) return "仅限邀请";
+        return "申请后审核";
+    }
     private interface TextResult { void onResult(String first, String second); }
 
     private static final class VoteOptionDraft {
@@ -1589,14 +1791,22 @@ public final class GroupSpaceActivity extends xyz.jjmxg.yiyunying.ui.common.Syst
                 holder.binding.avatar.setText(title.isEmpty() ? "人" : title.substring(0, 1));
             }
             holder.binding.subtitle.setText(subtitle(item));
-            holder.binding.metadata.setText("members".equals(renderedSection) ? Jsons.string(item, "joined_at") : Jsons.string(item, "created_at")); holder.binding.moreButton.setVisibility(View.GONE); holder.binding.selectionCheck.setVisibility(View.GONE);
+            holder.binding.metadata.setText("members".equals(renderedSection) ? Jsons.string(item, "joined_at") : Jsons.string(item, "created_at"));
+            boolean self = !adminMode && Jsons.longValue(item, "user_id") == AppAccess.from(GroupSpaceActivity.this).session().actorId();
+            boolean showMemberManagement = "members".equals(renderedSection)
+                && (GroupManagementPolicy.canChangeRole(currentRole, Jsons.string(item, "role"), self)
+                || GroupManagementPolicy.canModerate(currentRole, Jsons.string(item, "role"), self));
+            holder.binding.moreButton.setVisibility(showMemberManagement ? View.VISIBLE : View.GONE);
+            holder.binding.moreButton.setContentDescription("管理“" + title + "”");
+            holder.binding.moreButton.setOnClickListener(view -> showMemberActions(item));
+            holder.binding.selectionCheck.setVisibility(View.GONE);
             holder.binding.getRoot().setOnClickListener(view -> openItem(item));
             holder.binding.getRoot().setOnLongClickListener(view -> { showItemActions(item); return true; });
         }
         @Override public int getItemCount() { return items.size(); }
         private String title(JsonObject item) { return "members".equals(renderedSection) ? first(item, "nickname", "account") : first(item, "name", "title"); }
         private String subtitle(JsonObject item) {
-            if ("members".equals(renderedSection)) return roleName(Jsons.string(item, "role")) + " · UID " + Jsons.string(item, "uid");
+            if ("members".equals(renderedSection)) return roleName(Jsons.string(item, "role")) + " · 用户编号 " + Jsons.string(item, "uid");
             if ("files".equals(renderedSection)) {
                 if (bool(item, "is_folder")) return Jsons.longValue(item, "child_count") + " 项内容 · 创建者 " + first(item, "nickname", "account");
                 return fileType(Jsons.string(item, "mime_type")) + " · " + sizeText(Jsons.longValue(item, "size_bytes"))

@@ -64,7 +64,7 @@
                         android:gravity="center"
                         android:minWidth="22dp"
                         android:paddingHorizontal="6dp"
-                        android:textColor="@color/white"
+                        android:textColor="?attr/colorOnError"
                         android:textSize="12sp"
                         android:visibility="gone" />
                     <ImageView
@@ -114,7 +114,7 @@
                             android:gravity="center"
                             android:minWidth="22dp"
                             android:paddingHorizontal="6dp"
-                            android:textColor="@color/white"
+                            android:textColor="?attr/colorOnError"
                             android:textSize="12sp"
                             android:visibility="gone" />
                     </LinearLayout>
@@ -199,7 +199,7 @@
                             android:gravity="center"
                             android:minWidth="22dp"
                             android:paddingHorizontal="6dp"
-                            android:textColor="@color/white"
+                            android:textColor="?attr/colorOnError"
                             android:textSize="12sp"
                             android:visibility="gone" />
                     </LinearLayout>

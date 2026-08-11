@@ -24,19 +24,22 @@
 
 1 级可以查看和管理整棵树。2 级之间互不可见，2 级不能管理 1 级，也不能访问其他 2 级的数据。3 级之间按 `admin_id` 隔离；同一 3 级的不同应用继续按 `app_id` 隔离。
 
-## 2. 默认账号与注册归属
+## 2. 首次安装身份与注册归属
 
-安装后提供：
+全新安装不提供默认账号、默认密码、固定平台 KEY、固定 APP KEY 或公开 app_secret。
+部署者可以在导入 `database/install.sql` 前，于同一个数据库会话中显式注入各层身份哈希；
+未完整注入的层级只创建随机不可认证且 `status=0` 的占位数据，其下级也不会启用。
 
 ```text
-1 级平台：root / 123456
-2 级授权平台：authorized / 123456
-2 级平台标识：yiyunying-authorized
-3 级 admin：admin / 123456
-3 级所属平台标识：yiyunying-root
-演示应用：app_key=yiyunying-demo
-4 级 user：user / 123456
+1 级平台：显式 PLATFORM KEY + 账号 + PHP password_hash
+2 级授权平台（可选）：显式 PLATFORM KEY + 账号 + PHP password_hash
+3 级管理员（可选）：显式账号 + PHP password_hash
+应用（可选）：显式 APP KEY + 随机 app_secret 的 SHA-256
+4 级用户（可选）：显式 UID + 账号 + PHP password_hash
 ```
+
+完整变量名、同会话 `SOURCE` 步骤和安全验收命令见 `deploy/DEPLOY.md`。测试身份只能注入一次性本地数据库，
+不得复制到生产环境或提交到版本库。
 
 3 级公开注册接口为 `POST /api/admin/register`：
 

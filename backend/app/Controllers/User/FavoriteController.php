@@ -10,6 +10,7 @@ use Yiyunying\Core\Response;
 use Yiyunying\Services\AuthService;
 use Yiyunying\Services\ForumVisibilityService;
 use Yiyunying\Services\MessageMediaService;
+use Yiyunying\Services\RolePermissionService;
 
 final class FavoriteController
 {
@@ -39,15 +40,21 @@ final class FavoriteController
         if (!isset(self::CATEGORIES[$category])) throw new HttpException('收藏分类不存在', 0, 422);
         $keyword = trim((string) $request->input('keyword', ''));
 
-        $messages = self::messages($user);
-        $posts = self::posts($user);
-        $moments = self::moments($user);
-        $notes = self::notes($user);
-        $bounties = self::bounties($user);
-        $resources = self::resources($user);
-        $apps = self::apps($user);
-        $goods = self::goods($user);
-        $uploads = self::uploads($user);
+        $states = RolePermissionService::effectiveUserFeatures($user, [
+            'messages', 'forum', 'social', 'documents', 'bounties',
+            'resources', 'store', 'shop', 'remote_files',
+        ]);
+        $allowed = static fn(string $code): bool =>
+            (bool) ($states[$code]['effective_enabled'] ?? false);
+        $messages = $allowed('messages') ? self::messages($user) : [];
+        $posts = $allowed('forum') ? self::posts($user) : [];
+        $moments = $allowed('social') ? self::moments($user) : [];
+        $notes = $allowed('documents') ? self::notes($user) : [];
+        $bounties = $allowed('bounties') ? self::bounties($user) : [];
+        $resources = $allowed('resources') ? self::resources($user) : [];
+        $apps = $allowed('store') ? self::apps($user) : [];
+        $goods = $allowed('shop') ? self::goods($user) : [];
+        $uploads = $allowed('remote_files') ? self::uploads($user) : [];
         $images = array_values(array_filter(
             array_merge($messages, $uploads),
             static fn(array $item): bool => self::hasMediaType($item, ['image'])
@@ -204,8 +211,15 @@ final class FavoriteController
 
     private static function moments(array $user): array
     {
+        $shortVideoFeatures = RolePermissionService::effectiveUserFeatures(
+            $user,
+            ['short_videos', 'short_video_favorites']
+        );
+        $shortVideoFavoritesEnabled = (bool) ($shortVideoFeatures['short_videos']['effective_enabled'] ?? false)
+            && (bool) ($shortVideoFeatures['short_video_favorites']['effective_enabled'] ?? false);
+        $kindFilter = $shortVideoFavoritesEnabled ? '' : " AND moment.content_kind <> 'short_video'";
         $items = Database::all(
-            "SELECT moment.id, moment.user_id, moment.content, moment.location_name,
+            "SELECT moment.id, moment.user_id, moment.content, moment.content_kind, moment.location_name,
                     moment.created_at, moment.edited_at, favorite.created_at AS favorited_at,
                     author.account AS author_account, profile.nickname AS author_name
              FROM moment_favorites favorite
@@ -215,7 +229,7 @@ final class FavoriteController
               WHERE favorite.admin_id = ? AND favorite.app_id = ? AND favorite.user_id = ?
                 AND moment.admin_id = ? AND moment.app_id = ?
                 AND moment.status = 1 AND moment.deleted_at IS NULL
-                AND (moment.audit_status = 'approved' OR moment.user_id = ?)",
+                AND (moment.audit_status = 'approved' OR moment.user_id = ?){$kindFilter}",
             [
                 (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
                 (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
@@ -226,16 +240,17 @@ final class FavoriteController
             $content = trim((string) ($item['content'] ?? ''));
             $author = trim((string) ($item['author_name'] ?? ''));
             if ($author === '') $author = (string) ($item['author_account'] ?? '用户');
+            $shortVideo = (string) ($item['content_kind'] ?? 'moment') === 'short_video';
             $item['favorite_type'] = 'moment';
             $item['target_id'] = (int) $item['id'];
             $item['source_type'] = 'moment';
-            $item['source_action'] = '打开动态';
-            $item['title'] = $content !== '' ? mb_substr($content, 0, 80) : '图片动态';
-            $item['summary'] = '动态 · ' . $author;
+            $item['source_action'] = $shortVideo ? '打开短视频' : '打开动态';
+            $item['title'] = $content !== '' ? mb_substr($content, 0, 80) : ($shortVideo ? '短视频' : '图片动态');
+            $item['summary'] = ($shortVideo ? '短视频 · ' : '动态 · ') . $author;
             $item['preview_url'] = self::previewUrl($item);
             $item['snapshot'] = [
-                '收藏类型' => '动态',
-                '动态内容' => $content !== '' ? $content : '图片动态',
+                '收藏类型' => $shortVideo ? '短视频' : '动态',
+                '动态内容' => $content !== '' ? $content : ($shortVideo ? '短视频' : '图片动态'),
                 '发布者' => $author,
                 '位置' => (string) ($item['location_name'] ?? ''),
                 '发布时间' => (string) ($item['created_at'] ?? ''),
@@ -351,7 +366,8 @@ final class FavoriteController
              FROM resource_reactions reaction INNER JOIN resources resource ON resource.id = reaction.resource_id
              LEFT JOIN resource_categories category ON category.id = resource.category_id
              WHERE reaction.user_id = ? AND reaction.reaction_type = 'favorite'
-               AND resource.app_id = ? AND resource.status = 1 AND resource.deleted_at IS NULL",
+               AND resource.app_id = ? AND resource.audit_status = 'approved'
+               AND resource.status = 1 AND resource.deleted_at IS NULL",
             [(int) $user['id'], (int) $user['app_id']]
         );
         $items = MessageMediaService::hydrate($items, 'resource', (int) $user['app_id']);
@@ -382,7 +398,8 @@ final class FavoriteController
                     app.version_name, reaction.created_at AS favorited_at
              FROM store_app_reactions reaction INNER JOIN store_apps app ON app.id = reaction.store_app_id
              WHERE reaction.user_id = ? AND reaction.reaction_type = 'favorite'
-               AND app.app_id = ? AND app.status = 1 AND app.deleted_at IS NULL",
+               AND app.app_id = ? AND app.audit_status = 'approved'
+               AND app.status = 1 AND app.deleted_at IS NULL",
             [(int) $user['id'], (int) $user['app_id']]
         );
         $items = MessageMediaService::hydrate($items, 'store_app', (int) $user['app_id']);

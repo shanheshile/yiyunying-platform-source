@@ -5,25 +5,48 @@ namespace Yiyunying\Services;
 
 use Yiyunying\Core\Database;
 use Yiyunying\Core\HttpException;
+use Yiyunying\Core\Validator;
 
 final class SubmissionInspectionService
 {
+    public const MAX_CATALOG_PRICE_BALANCE = 1000000000;
+
+    public static function catalogPrice(mixed $value): int
+    {
+        return Validator::integer($value, 'price_balance', 0, self::MAX_CATALOG_PRICE_BALANCE);
+    }
+
     private const APP_CATEGORIES = [
         '暂无分类', '生活', '社交', '游戏', '工具', '影音',
         '学习', '办公', '购物', '出行', '健康', '金融',
     ];
 
-    private const SOURCE_CATEGORIES = [
-        'Android', 'HarmonyOS', 'iOS', 'Web', 'PHP', 'Java',
-        'Python', 'JavaScript', 'C/C++', 'Rust', '数据库', 'iApp', '其他',
+    /**
+     * Canonical source-market taxonomy. Application code must consume this list instead of
+     * carrying controller-local copies; database migrations mirror it and are contract-tested.
+     */
+    private const SOURCE_CATEGORY_SEEDS = [
+        ['name' => 'Android Java 源码', 'description' => 'Android 原生 Java 源码、示例与完整工程'],
+        ['name' => 'iApp 源码', 'description' => 'iApp 源码、界面示例与可复用模块'],
+        ['name' => 'Lua 源码', 'description' => 'Lua 脚本、源码模块与完整示例'],
+        ['name' => 'Web 源码', 'description' => '网页、前端界面与 Web 完整工程源码'],
+        ['name' => 'PHP 源码', 'description' => 'PHP 服务端源码、接口与完整工程'],
+        ['name' => 'Python 源码', 'description' => 'Python 脚本、服务与完整工程源码'],
+        ['name' => 'JavaScript 源码', 'description' => 'JavaScript、Node.js 与前端框架源码'],
+        ['name' => 'HarmonyOS 源码', 'description' => 'HarmonyOS、ArkTS 与鸿蒙应用源码'],
+        ['name' => 'iOS 源码', 'description' => 'iOS、Swift 与苹果应用完整源码'],
+        ['name' => 'C/C++ 源码', 'description' => 'C、C++ 源码、库与完整工程'],
+        ['name' => '数据库源码', 'description' => '数据库脚本、结构、查询与迁移源码'],
+        ['name' => '通用模块', 'description' => '好友聊天、群聊、登录注册、论坛、文档和商城等独立模块'],
+        ['name' => '其他源码', 'description' => '未归入标准技术分类的其他源码与示例'],
     ];
 
     private const APP_EXTENSIONS = ['apk', 'apks', 'xapk', 'hap', 'ipa'];
 
     private const SOURCE_EXTENSIONS = [
         'zip', '7z', 'rar', 'tar', 'gz', 'iapp', 'py', 'java', 'php',
-        'html', 'htm', 'js', 'css', 'sql', 'c', 'cc', 'cpp', 'h', 'hpp',
-        'rs', 'kt', 'kts', 'swift', 'xml', 'json', 'yaml', 'yml',
+        'html', 'htm', 'js', 'jsx', 'ts', 'tsx', 'css', 'sql', 'c', 'cc', 'cpp', 'h', 'hpp',
+        'rs', 'kt', 'kts', 'lua', 'ets', 'swift', 'xml', 'json', 'yaml', 'yml',
     ];
 
     public static function normalizeResourceType(string $type): string
@@ -35,23 +58,64 @@ final class SubmissionInspectionService
         return 'app_store';
     }
 
+    public static function catalogScene(string $kind): string
+    {
+        return self::normalizeResourceType($kind) === 'app_store'
+            ? 'store_app_package'
+            : 'resource_source';
+    }
+
+    public static function catalogCoverScene(string $kind): string
+    {
+        return self::normalizeResourceType($kind) === 'app_store'
+            ? 'store_app_icon'
+            : 'resource_cover';
+    }
+
+    /** @return array<int, array{name: string, description: string, sort_order: int}> */
+    public static function sourceCategorySeeds(): array
+    {
+        $count = count(self::SOURCE_CATEGORY_SEEDS);
+        $seeds = [];
+        foreach (self::SOURCE_CATEGORY_SEEDS as $index => $seed) {
+            $seeds[] = [
+                'name' => $seed['name'],
+                'description' => $seed['description'],
+                'sort_order' => ($count - $index) * 10,
+            ];
+        }
+        return $seeds;
+    }
+
     public static function seedResourceCategories(int $adminId, int $appId, string $type): void
     {
         $type = self::normalizeResourceType($type);
-        $names = $type === 'source_market' ? self::SOURCE_CATEGORIES : self::APP_CATEGORIES;
-        foreach ($names as $index => $name) {
+        $categories = $type === 'source_market'
+            ? self::sourceCategorySeeds()
+            : array_map(
+                static fn (string $name, int $index): array => [
+                    'name' => $name,
+                    'description' => '应用商店标准分类',
+                    'sort_order' => count(self::APP_CATEGORIES) - $index,
+                ],
+                self::APP_CATEGORIES,
+                array_keys(self::APP_CATEGORIES)
+            );
+        foreach ($categories as $category) {
             Database::execute(
-                'INSERT IGNORE INTO resource_categories
+                'INSERT INTO resource_categories
                  (admin_id, app_id, resource_type, name, icon, description, sort_order, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+                 ON DUPLICATE KEY UPDATE description = VALUES(description), sort_order = VALUES(sort_order),
+                   status = 1, updated_at = NOW()',
                 [
                     $adminId,
                     $appId,
                     $type,
-                    $name,
+                    $category['name'],
                     '',
-                    $type === 'source_market' ? '源码商城标准分类' : '应用商店标准分类',
-                    count($names) - $index,
+                    $category['description'],
+                    $category['sort_order'],
                 ]
             );
         }
@@ -89,7 +153,7 @@ final class SubmissionInspectionService
             }
         }
 
-        $fallback = $type === 'source_market' ? '其他' : '暂无分类';
+        $fallback = $type === 'source_market' ? '其他源码' : '暂无分类';
         $name = self::canonicalCategory(
             trim((string) ($data['category_name'] ?? $data['category'] ?? '')),
             $type,
@@ -174,6 +238,16 @@ final class SubmissionInspectionService
 
     public static function present(array $row): array
     {
+        $row['review_revision'] = self::reviewRevision($row);
+        if (is_array($row['attachments'] ?? null)) {
+            foreach ($row['attachments'] as &$attachment) {
+                if (is_array($attachment)) unset($attachment['review_identity']);
+            }
+            unset($attachment);
+        }
+        // Never serialize a stored raw catalog URL. Authorized controllers add
+        // an authenticated download endpoint after entitlement checks.
+        unset($row['download_url'], $row['apk_url'], $row['source_url']);
         $metadata = $row['metadata_json'] ?? null;
         if (is_string($metadata) && $metadata !== '') {
             $decoded = json_decode($metadata, true);
@@ -198,6 +272,7 @@ final class SubmissionInspectionService
                 'pending' => '待审核',
                 'approved' => '已通过',
                 'rejected' => '未通过',
+                'on_hold' => '暂定',
             ][$audit] ?? '待审核';
         }
 
@@ -212,6 +287,50 @@ final class SubmissionInspectionService
         return $row;
     }
 
+    /** Stable review token over content that an auditor actually approves. */
+    public static function reviewRevision(array $row): string
+    {
+        $fields = isset($row['package_name'])
+            ? [
+                'user_id', 'category_id', 'name', 'package_name', 'version_name', 'version_code',
+                'icon_url', 'size_bytes', 'description', 'metadata_json', 'file_sha256',
+                'risk_level', 'risk_reason', 'source_upload_id', 'icon_upload_id', 'price_integral',
+            ]
+            : [
+                'user_id', 'category_id', 'resource_type', 'title', 'description', 'cover_url',
+                'size_bytes', 'file_sha256', 'risk_level', 'risk_reason', 'source_upload_id',
+                'cover_upload_id', 'metadata_json', 'price_integral',
+                'attachments_json', 'images_json', 'tags_json',
+            ];
+        $snapshot = [];
+        foreach ($fields as $field) {
+            $value = $row[$field] ?? null;
+            $snapshot[$field] = is_scalar($value) || $value === null ? $value : null;
+        }
+        $attachments = is_array($row['attachments'] ?? null) ? $row['attachments'] : [];
+        $attachmentSnapshot = [];
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) continue;
+            $stable = [
+                'id' => (int) ($attachment['id'] ?? 0),
+                'sort_order' => (int) ($attachment['sort_order'] ?? 0),
+                'review_identity' => strtolower((string) ($attachment['review_identity'] ?? '')),
+            ];
+            if (preg_match('/^[a-f0-9]{64}$/', $stable['review_identity']) !== 1) {
+                throw new \RuntimeException('Attachment is missing a stable review identity');
+            }
+            $attachmentSnapshot[] = $stable;
+        }
+        usort($attachmentSnapshot, static function (array $left, array $right): int {
+            return [(int) ($left['sort_order'] ?? 0), (int) ($left['id'] ?? 0)]
+                <=> [(int) ($right['sort_order'] ?? 0), (int) ($right['id'] ?? 0)];
+        });
+        $snapshot['attachments'] = $attachmentSnapshot;
+        $json = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        if (!is_string($json)) throw new \RuntimeException('Unable to build review revision');
+        return hash('sha256', $json);
+    }
+
     private static function inspect(
         int $adminId,
         int $appId,
@@ -224,24 +343,54 @@ final class SubmissionInspectionService
             'source_upload_id', 'upload_id', 'file_upload_id', 'apk_upload_id',
         ]);
         $coverUploadId = self::firstInt($data, ['cover_upload_id', 'icon_upload_id']);
-        $source = $sourceUploadId > 0
-            ? self::verifiedUpload($sourceUploadId, $adminId, $appId, $userId)
-            : null;
+        if ($sourceUploadId <= 0) {
+            throw new HttpException(
+                $kind === 'app_store'
+                    ? '应用安装包必须通过软件内上传，不能使用外部公开地址'
+                    : '源码文件必须通过软件内上传，不能使用外部公开地址',
+                0,
+                422
+            );
+        }
+        $source = self::verifiedUpload($sourceUploadId, $adminId, $appId, $userId);
+        $expectedScene = self::catalogScene($kind);
+        if (strtolower(trim((string) ($source['scene'] ?? ''))) !== $expectedScene) {
+            throw new HttpException('所选上传文件类型与投稿类型不一致，请重新选择', 0, 422);
+        }
+        $source = UploadStorageService::verifiedPrivateCatalogUpload(
+            $sourceUploadId,
+            $adminId,
+            $appId,
+            $expectedScene,
+            true
+        );
         $cover = $coverUploadId > 0
             ? self::verifiedUpload($coverUploadId, $adminId, $appId, $userId)
             : null;
-
-        $urlField = $kind === 'app_store' ? 'apk_url' : 'download_url';
-        $sourceUrl = $source !== null
-            ? (string) $source['file_url']
-            : trim((string) ($data[$urlField] ?? $data['download_url'] ?? $data['apk_url'] ?? ''));
-        if ($sourceUrl === '') {
-            throw new HttpException($kind === 'app_store' ? '请选择应用安装包' : '请选择源码文件', 0, 422);
+        if ($cover !== null) {
+            $coverScene = self::catalogCoverScene($kind);
+            if (strtolower(trim((string) ($cover['scene'] ?? ''))) !== $coverScene) {
+                throw new HttpException('所选封面或图标的上传场景不正确，请重新上传', 0, 422);
+            }
+            if (!str_starts_with(strtolower(trim((string) ($cover['mime_type'] ?? ''))), 'image/')) {
+                throw new HttpException('封面或图标必须使用图片文件', 0, 422);
+            }
+            if (strtolower(trim((string) ($cover['mime_type'] ?? ''))) === 'image/svg+xml') {
+                throw new HttpException('封面或图标不支持 SVG，请改用 PNG、JPG、GIF 或 WebP', 0, 422);
+            }
+            $coverPath = ltrim(str_replace('\\', '/', (string) ($cover['file_path'] ?? '')), '/');
+            $coverUrl = trim((string) ($cover['file_url'] ?? ''));
+            if (str_starts_with($coverPath, 'private/')
+                || $coverUrl === ''
+                || preg_match('#^(https?://|/)#i', $coverUrl) !== 1) {
+                throw new HttpException('封面或图标必须通过公开图片上传通道重新上传', 0, 422);
+            }
         }
 
-        $fileName = $source !== null
-            ? (string) $source['original_name']
-            : trim((string) ($data['file_name'] ?? $data['original_name'] ?? basename((string) parse_url($sourceUrl, PHP_URL_PATH))));
+        // Private catalog payloads deliberately have no directly reachable URL.
+        $sourceUrl = '';
+
+        $fileName = (string) $source['original_name'];
         $extension = strtolower((string) pathinfo($fileName, PATHINFO_EXTENSION));
         $allowed = $kind === 'app_store' ? self::APP_EXTENSIONS : self::SOURCE_EXTENSIONS;
         if ($extension !== '' && !in_array($extension, $allowed, true)) {
@@ -257,12 +406,8 @@ final class SubmissionInspectionService
         $metadata = self::metadata($data['metadata'] ?? $data['metadata_json'] ?? []);
         $metadata['file_name'] = mb_substr($fileName, 0, 255);
         $metadata['extension'] = $extension;
-        $metadata['mime_type'] = $source !== null
-            ? (string) ($source['mime_type'] ?? '')
-            : mb_substr((string) ($data['mime_type'] ?? ''), 0, 120);
-        $metadata['size_bytes'] = $source !== null
-            ? (int) ($source['size_bytes'] ?? 0)
-            : max(0, (int) ($data['size_bytes'] ?? $data['size'] ?? 0));
+        $metadata['mime_type'] = (string) ($source['mime_type'] ?? '');
+        $metadata['size_bytes'] = (int) ($source['size_bytes'] ?? 0);
         foreach ([
             'package_name', 'version_name', 'version_code', 'platform', 'language',
             'min_sdk', 'target_sdk', 'permissions', 'framework', 'license',
@@ -272,11 +417,13 @@ final class SubmissionInspectionService
             }
         }
 
-        $hash = $source !== null
-            ? strtolower((string) ($source['sha256'] ?? ''))
-            : strtolower(trim((string) ($data['file_sha256'] ?? $data['sha256'] ?? '')));
+        $hash = strtolower((string) ($source['sha256'] ?? ''));
         if ($hash !== '' && !preg_match('/^[a-f0-9]{64}$/', $hash)) {
             $hash = '';
+        }
+        $coverHash = strtolower((string) ($cover['sha256'] ?? ''));
+        if ($coverHash !== '' && !preg_match('/^[a-f0-9]{64}$/', $coverHash)) {
+            $coverHash = '';
         }
 
         $risk = self::risk($source, $kind, $extension, $sourceUrl);
@@ -306,9 +453,93 @@ final class SubmissionInspectionService
             'risk_reason' => mb_substr($risk['reason'], 0, 1000),
             'source_upload_id' => $sourceUploadId > 0 ? $sourceUploadId : null,
             'cover_upload_id' => $coverUploadId > 0 ? $coverUploadId : null,
+            'cover_sha256' => $coverHash,
             'metadata_json' => $metadataJson,
             'force_audit' => $risk['level'] !== 'low',
         ];
+    }
+
+    /**
+     * Final in-transaction reference gate. Inspection happens before content is
+     * written, so the upload row must be locked and revalidated to prevent a
+     * concurrent library deletion from creating a dangling catalog entry.
+     */
+    public static function lockCatalogUploadReference(
+        int $uploadId,
+        int $adminId,
+        int $appId,
+        ?int $userId,
+        string $expectedScene,
+        string $expectedSha256 = ''
+    ): array {
+        $upload = self::lockUploadReferenceRow(
+            $uploadId, $adminId, $appId, $userId, $expectedScene
+        );
+        if (!str_starts_with((string) ($upload['file_path'] ?? ''), 'private/')
+            || UploadStorageService::privatePhysicalPath((string) $upload['file_path']) === null) {
+            throw new HttpException('所选文件尚未完成私有化存储，不能保存条目', 0, 409);
+        }
+        $pendingCleanup = Database::one(
+            "SELECT id FROM catalog_file_migrations
+             WHERE upload_id = ? AND cleanup_status <> 'cleaned' LIMIT 1",
+            [$uploadId]
+        );
+        if ($pendingCleanup !== null) {
+            throw new HttpException('旧公开副本尚未完成清理，不能保存或审核条目', 0, 409);
+        }
+        self::assertLockedUploadHash($upload, $expectedSha256);
+        return $upload;
+    }
+
+    public static function lockCatalogCoverReference(
+        int $uploadId,
+        int $adminId,
+        int $appId,
+        ?int $userId,
+        string $expectedScene,
+        string $expectedSha256 = ''
+    ): array {
+        $upload = self::lockUploadReferenceRow(
+            $uploadId, $adminId, $appId, $userId, $expectedScene
+        );
+        if (!str_starts_with(strtolower(trim((string) ($upload['mime_type'] ?? ''))), 'image/')) {
+            throw new HttpException('封面或图标必须使用图片文件', 0, 409);
+        }
+        $path = ltrim(str_replace('\\', '/', (string) ($upload['file_path'] ?? '')), '/');
+        $url = trim((string) ($upload['file_url'] ?? ''));
+        if (str_starts_with($path, 'private/') || $url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) {
+            throw new HttpException('封面或图标已失效或不在公开图片存储中，请重新上传', 0, 409);
+        }
+        self::assertLockedUploadHash($upload, $expectedSha256);
+        return $upload;
+    }
+
+    private static function lockUploadReferenceRow(
+        int $uploadId,
+        int $adminId,
+        int $appId,
+        ?int $userId,
+        string $expectedScene
+    ): array {
+        $where = 'id = ? AND admin_id = ? AND app_id = ? AND scene = ? AND status = 1';
+        $params = [$uploadId, $adminId, $appId, strtolower(trim($expectedScene))];
+        if ($userId !== null) {
+            $where .= ' AND user_id = ?';
+            $params[] = $userId;
+        }
+        $upload = Database::one("SELECT * FROM uploads WHERE {$where} FOR UPDATE", $params);
+        if ($upload === null) {
+            throw new HttpException('所选文件已失效、被删除或不属于当前账号，请重新上传', 0, 409);
+        }
+        return $upload;
+    }
+
+    private static function assertLockedUploadHash(array $upload, string $expectedSha256): void
+    {
+        $expectedSha256 = strtolower(trim($expectedSha256));
+        if ($expectedSha256 !== '' && !hash_equals($expectedSha256, strtolower((string) ($upload['sha256'] ?? '')))) {
+            throw new HttpException('文件内容指纹已变化，请重新检查后提交', 0, 409);
+        }
     }
 
     private static function verifiedUpload(
@@ -340,8 +571,8 @@ final class SubmissionInspectionService
             ];
         }
 
-        $path = (string) ($upload['file_path'] ?? '');
-        if ($path === '' || !is_file($path) || !is_readable($path)) {
+        $path = UploadStorageService::storedPhysicalPath((string) ($upload['file_path'] ?? ''));
+        if ($path === null || !is_readable($path)) {
             return [
                 'level' => 'review',
                 'label' => '等待人工复核',
@@ -379,13 +610,6 @@ final class SubmissionInspectionService
                 'level' => 'review',
                 'label' => '等待人工复核',
                 'reason' => '源码包含可执行逻辑，系统已收录并等待人工安全审核',
-            ];
-        }
-        if ($url === '') {
-            return [
-                'level' => 'review',
-                'label' => '等待人工复核',
-                'reason' => '文件地址无效',
             ];
         }
         return ['level' => 'low', 'label' => '检查通过', 'reason' => '文件类型、来源和基础特征检查通过'];
@@ -449,25 +673,26 @@ final class SubmissionInspectionService
         $haystack = strtolower($requested . ' ' . $name . ' ' . $packageName);
         if ($type === 'source_market') {
             $rules = [
-                'Android' => ['android', 'apk', '安卓', 'kotlin'],
-                'HarmonyOS' => ['harmony', '鸿蒙', 'hap', 'arkts'],
-                'iOS' => ['ios', 'iphone', 'ipa', 'swift'],
-                'PHP' => ['php'],
-                'Java' => ['java'],
-                'Python' => ['python', '.py', 'django', 'flask'],
-                'JavaScript' => ['javascript', 'node', 'vue', 'react', 'typescript', '.js'],
-                'C/C++' => ['c++', 'cpp', '.c', '.h'],
-                'Rust' => ['rust', '.rs'],
-                '数据库' => ['sql', 'mysql', 'database', '数据库'],
-                'iApp' => ['iapp'],
-                'Web' => ['web', 'html', 'css', '网页', '前端'],
+                'JavaScript 源码' => ['javascript', 'node', 'vue', 'react', 'typescript', '.js'],
+                'Android Java 源码' => ['android', 'apk', '安卓', 'kotlin', 'java'],
+                'iApp 源码' => ['iapp'],
+                'Lua 源码' => ['lua', '.lua'],
+                'Web 源码' => ['web', 'html', 'css', '网页', '前端'],
+                'PHP 源码' => ['php'],
+                'Python 源码' => ['python', '.py', 'django', 'flask'],
+                'HarmonyOS 源码' => ['harmony', '鸿蒙', 'hap', 'arkts'],
+                'iOS 源码' => ['ios', 'iphone', 'ipa', 'swift'],
+                'C/C++ 源码' => ['c++', 'cpp', '.c', '.h'],
+                '数据库源码' => ['sql', 'mysql', 'database', '数据库'],
+                '通用模块' => ['通用模块', '聊天模块', '群聊模块', '登录注册模块', '论坛模块'],
             ];
             foreach ($rules as $category => $keywords) {
                 if (self::containsAny($haystack, $keywords)) {
                     return $category;
                 }
             }
-            return in_array($requested, self::SOURCE_CATEGORIES, true) ? $requested : '其他';
+            $categoryNames = array_column(self::SOURCE_CATEGORY_SEEDS, 'name');
+            return in_array($requested, $categoryNames, true) ? $requested : '其他源码';
         }
 
         $rules = [
@@ -509,5 +734,49 @@ final class SubmissionInspectionService
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
         $index = min((int) floor(log($bytes, 1024)), count($units) - 1);
         return round($bytes / (1024 ** $index), $index === 0 ? 0 : 2) . ' ' . $units[$index];
+    }
+
+    public static function requireCatalogMigrationReady(int $appId): void
+    {
+        if (AppService::setting($appId, 'catalog_private_migration_ready', false) !== true) {
+            throw new HttpException('资源与应用目录正在进行文件安全维护，请稍后再试', 0, 503);
+        }
+    }
+
+    /**
+     * Serialize every catalog mutation against the private-file migration and
+     * re-check the internal gate while the setting row is locked.
+     */
+    public static function catalogWriteTransaction(int $appId, callable $callback): mixed
+    {
+        return Database::transaction(static function () use ($appId, $callback): mixed {
+                $gate = Database::one(
+                    "SELECT setting_value, value_type FROM app_settings
+                     WHERE app_id = ? AND setting_key = 'catalog_private_migration_ready' LOCK IN SHARE MODE",
+                    [$appId]
+                );
+                if ($gate === null || (string) ($gate['value_type'] ?? '') !== 'bool'
+                    || !in_array(strtolower(trim((string) ($gate['setting_value'] ?? ''))), ['1', 'true'], true)) {
+                    throw new HttpException('资源与应用目录正在进行文件安全维护，请稍后再试', 0, 503);
+                }
+                return $callback();
+        });
+    }
+
+    /** Serialize app creation and catalog writes against migration activation. */
+    public static function catalogSchemaTransaction(callable $callback): mixed
+    {
+        $lock = Database::one("SELECT GET_LOCK('yiyunying_catalog_private_migration', 0) AS acquired");
+        if ((int) ($lock['acquired'] ?? 0) !== 1) {
+            throw new HttpException('资源与应用目录正在进行文件安全维护，请稍后再试', 0, 503);
+        }
+        try {
+            return Database::transaction(static fn (): mixed => $callback());
+        } finally {
+            try {
+                Database::one("SELECT RELEASE_LOCK('yiyunying_catalog_private_migration') AS released");
+            } catch (\Throwable) {
+            }
+        }
     }
 }

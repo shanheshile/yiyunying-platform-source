@@ -7,6 +7,7 @@ public enum FieldType {
     INTEGER,
     DECIMAL,
     BOOLEAN,
+    SELECT,
     DATE_TIME,
     JSON
 }

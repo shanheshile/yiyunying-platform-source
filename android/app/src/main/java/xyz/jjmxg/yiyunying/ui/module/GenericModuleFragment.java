@@ -49,6 +49,7 @@ import xyz.jjmxg.yiyunying.ui.common.ContentReportDialog;
 import xyz.jjmxg.yiyunying.ui.common.GlassActionDialog;
 import xyz.jjmxg.yiyunying.ui.common.EntitlementEditorDialog;
 import xyz.jjmxg.yiyunying.ui.chat.ChatActivity;
+import xyz.jjmxg.yiyunying.ui.chat.GroupSpaceActivity;
 import xyz.jjmxg.yiyunying.ui.common.UiGuard;
 import xyz.jjmxg.yiyunying.ui.management.ManagedUsersActivity;
 import xyz.jjmxg.yiyunying.ui.permission.RolePermissionActivity;
@@ -72,6 +73,7 @@ public final class GenericModuleFragment extends BaseFragment {
     private boolean focusHandled;
     private String pendingImageUploadPath = "";
     private String pendingImageUploadTitle = "";
+    private String auditStatusFilter = "";
     private final Map<String, JsonObject> selectedRecords = new LinkedHashMap<>();
     private final ActivityResultLauncher<Intent> bountyPublisher = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -146,6 +148,7 @@ public final class GenericModuleFragment extends BaseFragment {
             if (page < totalPages) { page++; load(true); }
         });
         configureSearch();
+        configureAuditFilter();
         configureBatchSelection();
         if (spec.createAction() != null) {
             binding.fab.setVisibility(View.VISIBLE);
@@ -181,6 +184,41 @@ public final class GenericModuleFragment extends BaseFragment {
         load(true);
     }
 
+    private void configureAuditFilter() {
+        if (!supportsAuditFilter()) return;
+        binding.auditFilterButton.setVisibility(View.VISIBLE);
+        binding.auditFilterButton.setOnClickListener(anchor -> {
+            PopupMenu menu = new PopupMenu(requireContext(), anchor);
+            menu.getMenu().add(0, 1, 0, "全部状态");
+            menu.getMenu().add(0, 2, 1, "待审核");
+            menu.getMenu().add(0, 3, 2, "暂定");
+            menu.getMenu().add(0, 4, 3, "已通过");
+            menu.getMenu().add(0, 5, 4, "不通过");
+            menu.setOnMenuItemClickListener(item -> {
+                if (item.getItemId() == 2) auditStatusFilter = "pending";
+                else if (item.getItemId() == 3) auditStatusFilter = "on_hold";
+                else if (item.getItemId() == 4) auditStatusFilter = "approved";
+                else if (item.getItemId() == 5) auditStatusFilter = "rejected";
+                else auditStatusFilter = "";
+                String label = item.getTitle() == null ? "全部状态" : item.getTitle().toString();
+                binding.auditFilterButton.setContentDescription("审核状态筛选：" + label);
+                binding.auditFilterButton.setTooltipText("当前：" + label);
+                page = 1;
+                load(true);
+                return true;
+            });
+            menu.show();
+        });
+    }
+
+    private boolean supportsAuditFilter() {
+        if (app().session().role() != Role.ADMIN) return false;
+        return "resources".equals(spec.id()) || "store_apps".equals(spec.id())
+            || "forum_posts".equals(spec.id()) || "forum_comments".equals(spec.id())
+            || "moments".equals(spec.id()) || "moment_comments".equals(spec.id())
+            || "short_videos".equals(spec.id()) || "short_video_comments".equals(spec.id());
+    }
+
     private void load(boolean fullLoading) {
         final String path;
         try {
@@ -203,6 +241,7 @@ public final class GenericModuleFragment extends BaseFragment {
             String keyword = binding.searchInput.getText() == null ? "" : binding.searchInput.getText().toString().trim();
             if (!keyword.isEmpty()) query.put(spec.searchParameter(), keyword);
         }
+        if (!auditStatusFilter.isEmpty()) query.put("audit_status", auditStatusFilter);
         app().repository().getCached(path, query, cached -> {
             if (binding == null || !cached.isSuccessful()) return;
             UiGuard.run(binding.getRoot(), "module-cache/" + spec.id(), () -> {
@@ -406,8 +445,13 @@ public final class GenericModuleFragment extends BaseFragment {
         }
         if ("chat_rooms".equals(spec.id())) {
             if (app().session().role() == Role.ADMIN) {
-                String entity = "chat_room".equals(Jsons.string(snapshot, "room_kind")) ? "聊天室" : "群聊";
-                RecordDetailDialog.show(context, "用户" + entity + "资料", snapshot);
+                long selectedAppId = app().session().selectedAppId();
+                if (selectedAppId <= 0) {
+                    host().requestAppSelection();
+                    return;
+                }
+                GroupSpaceActivity.openAdmin(context, selectedAppId,
+                    Jsons.longValue(snapshot, "id"), Jsons.string(snapshot, "name"));
             } else if (booleanValue(snapshot, "joined")) {
                 ChatActivity.openRoom(context, Jsons.longValue(snapshot, "id"), Jsons.string(snapshot, "name"));
             } else {
@@ -454,7 +498,8 @@ public final class GenericModuleFragment extends BaseFragment {
 
     private boolean isModerationModule() {
         return "forum_posts".equals(spec.id()) || "forum_comments".equals(spec.id())
-            || "moments".equals(spec.id()) || "moment_comments".equals(spec.id());
+            || "moments".equals(spec.id()) || "moment_comments".equals(spec.id())
+            || "short_videos".equals(spec.id()) || "short_video_comments".equals(spec.id());
     }
 
     private void loadModerationDetail(JsonObject item) {
@@ -476,6 +521,12 @@ public final class GenericModuleFragment extends BaseFragment {
         } else if ("moments".equals(spec.id())) {
             segment = "moments";
             dataKey = "moment";
+        } else if ("short_videos".equals(spec.id())) {
+            segment = "short-videos";
+            dataKey = "moment";
+        } else if ("short_video_comments".equals(spec.id())) {
+            segment = "short-video-comments";
+            dataKey = "comment";
         } else {
             segment = "moment-comments";
             dataKey = "comment";
@@ -557,6 +608,10 @@ public final class GenericModuleFragment extends BaseFragment {
         Context context = activeContext();
         if (context == null) return;
         List<GlassActionDialog.Action> actions = new ArrayList<>();
+        if (app().session().role() == Role.ADMIN && "chat_rooms".equals(spec.id())) {
+            actions.add(new GlassActionDialog.Action("打开群管理", R.drawable.ic_group,
+                () -> recordClicked(item)));
+        }
         for (ActionSpec action : spec.itemActions()) {
             actions.add(new GlassActionDialog.Action(shortActionTitle(action.title()), actionIcon(action.title()),
                 () -> { if (activeContext() != null) executeAction(action, item); }));
@@ -762,6 +817,16 @@ public final class GenericModuleFragment extends BaseFragment {
             return;
         }
         binding.progress.setVisibility(View.VISIBLE);
+        if (item != null && action.pathTemplate().endsWith("/audit")
+            && !body.has("expected_audit_status")) {
+            String currentStatus = Jsons.string(item, "audit_status");
+            if (!currentStatus.isEmpty()) body.addProperty("expected_audit_status", currentStatus);
+        }
+        if (item != null && action.pathTemplate().endsWith("/audit")
+            && !body.has("expected_review_revision")) {
+            String currentRevision = Jsons.string(item, "review_revision");
+            if (!currentRevision.isEmpty()) body.addProperty("expected_review_revision", currentRevision);
+        }
         String idempotencyKey = action.idempotent() ? UUID.randomUUID().toString() : "";
         Map<String, String> query = new LinkedHashMap<>();
         JsonObject requestBody = body;
@@ -781,9 +846,37 @@ public final class GenericModuleFragment extends BaseFragment {
                     if (context != null) RecordDetailDialog.show(context, action.title(), result.dataObject());
                     return;
                 }
+                if (!Jsons.string(result.dataObject(), "app_secret").isEmpty()) {
+                    showOneTimeAppSecret(result.dataObject(), item, () -> {
+                        if (binding == null) return;
+                        message(binding.getRoot(), result.message().isEmpty() ? "应用密钥已安全交付" : result.message());
+                        if (action.refreshAfter()) load(false);
+                    });
+                    return;
+                }
                 message(binding.getRoot(), result.message().isEmpty() ? "操作成功" : result.message());
                 if (action.refreshAfter()) load(false);
             }));
+    }
+
+    private void showOneTimeAppSecret(JsonObject data, @Nullable JsonObject item, Runnable afterSaved) {
+        Context context = activeContext();
+        if (context == null) return;
+        JsonObject initialApp = Jsons.object(data, "initial_app");
+        if (initialApp.entrySet().isEmpty()) initialApp = Jsons.object(data, "app");
+        if (initialApp.entrySet().isEmpty() && item != null) initialApp = item;
+        String appName = Jsons.string(initialApp, "name");
+        String appKey = Jsons.string(initialApp, "app_key");
+        String secret = Jsons.string(data, "app_secret");
+        new YiyunyingDialogBuilder(context)
+            .setTitle("请保存一次性应用密钥")
+            .setMessage("应用名称：" + (appName.isEmpty() ? "未命名应用" : appName)
+                + "\n应用 API 唯一 ID：" + appKey
+                + "\n一次性应用密钥：" + secret
+                + "\n\n此密钥只显示这一次，请立即保存到服务端安全配置；不要放进客户端或聊天记录。")
+            .setCancelable(false)
+            .setPositiveButton("我已安全保存", (dialog, which) -> afterSaved.run())
+            .show();
     }
 
     private static String firstNonEmpty(String... values) {

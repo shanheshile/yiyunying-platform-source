@@ -14,6 +14,7 @@ final class MessageMediaService
     ];
     private const PUBLIC_MEDIA_TARGET_TYPES = [
         'forum_post', 'forum_comment', 'forum_section', 'moment', 'moment_comment',
+        'resource_comment', 'shop_goods_comment',
     ];
     private const MAX_ATTACHMENTS = 200;
 
@@ -100,6 +101,28 @@ final class MessageMediaService
 
     public static function save(string $targetType, int $targetId, array $payload): void
     {
+        Database::transaction(static function () use ($targetType, $targetId, $payload): void {
+            self::lockAttachmentReferences($payload);
+            self::insertAttachments($targetType, $targetId, $payload);
+        });
+    }
+
+    public static function replace(string $targetType, int $targetId, array $payload): void
+    {
+        Database::transaction(static function () use ($targetType, $targetId, $payload): void {
+            // Lock uploads before touching reference rows. UploadLibraryService::remove
+            // uses the same upload -> reference order, preventing a delete/write race.
+            self::lockAttachmentReferences($payload);
+            Database::execute(
+                'DELETE FROM media_attachments WHERE admin_id = ? AND app_id = ? AND target_type = ? AND target_id = ?',
+                [(int) $payload['admin_id'], (int) $payload['app_id'], $targetType, $targetId]
+            );
+            self::insertAttachments($targetType, $targetId, $payload);
+        });
+    }
+
+    private static function insertAttachments(string $targetType, int $targetId, array $payload): void
+    {
         $sort = 0;
         $publicMedia = self::isPublicMediaTarget($targetType);
         foreach ($payload['attachments'] as $attachment) {
@@ -127,13 +150,60 @@ final class MessageMediaService
         }
     }
 
-    public static function replace(string $targetType, int $targetId, array $payload): void
+    private static function lockAttachmentReferences(array $payload): void
     {
-        Database::execute(
-            'DELETE FROM media_attachments WHERE admin_id = ? AND app_id = ? AND target_type = ? AND target_id = ?',
-            [(int) $payload['admin_id'], (int) $payload['app_id'], $targetType, $targetId]
+        $uploadIds = [];
+        $stickerIds = [];
+        foreach ((array) ($payload['attachments'] ?? []) as $attachment) {
+            if (!is_array($attachment)) continue;
+            $uploadId = max(0, (int) ($attachment['upload_id'] ?? 0));
+            $stickerId = max(0, (int) ($attachment['sticker_id'] ?? 0));
+            if ($uploadId > 0) $uploadIds[$uploadId] = true;
+            if ($stickerId > 0) $stickerIds[$stickerId] = true;
+        }
+
+        $uploadIds = array_keys($uploadIds);
+        sort($uploadIds, SORT_NUMERIC);
+        if ($uploadIds !== []) {
+            $placeholders = implode(',', array_fill(0, count($uploadIds), '?'));
+            $where = "id IN ({$placeholders}) AND admin_id = ? AND app_id = ? AND status = 1";
+            $params = array_merge($uploadIds, [(int) $payload['admin_id'], (int) $payload['app_id']]);
+            $ownerUserId = $payload['owner_user_id'] ?? null;
+            if ($ownerUserId !== null) {
+                $where .= ' AND user_id = ?';
+                $params[] = (int) $ownerUserId;
+            } else {
+                $where .= ' AND user_id IS NULL';
+            }
+            $lockedUploads = Database::all(
+                "SELECT id FROM uploads WHERE {$where} ORDER BY id FOR UPDATE",
+                $params
+            );
+            if (count($lockedUploads) !== count($uploadIds)) {
+                throw new HttpException('附件上传已失效、被删除或不属于当前发布者，请重新上传', 0, 409);
+            }
+        }
+
+        $stickerIds = array_keys($stickerIds);
+        sort($stickerIds, SORT_NUMERIC);
+        if ($stickerIds === []) return;
+        $ownerUserId = $payload['owner_user_id'] ?? null;
+        if ($ownerUserId === null) {
+            throw new HttpException('管理员不能引用用户私有表情包', 0, 422);
+        }
+        $placeholders = implode(',', array_fill(0, count($stickerIds), '?'));
+        $lockedStickers = Database::all(
+            "SELECT s.id FROM stickers s INNER JOIN sticker_packs p
+               ON p.id = s.pack_id AND p.admin_id = s.admin_id AND p.app_id = s.app_id
+             WHERE s.id IN ({$placeholders}) AND s.admin_id = ? AND s.app_id = ? AND s.user_id = ?
+               AND s.status = 1 AND p.status = 1 ORDER BY s.id FOR UPDATE",
+            array_merge($stickerIds, [
+                (int) $payload['admin_id'], (int) $payload['app_id'], (int) $ownerUserId,
+            ])
         );
-        self::save($targetType, $targetId, $payload);
+        if (count($lockedStickers) !== count($stickerIds)) {
+            throw new HttpException('表情已失效、被删除或不属于当前发布者，请重新选择', 0, 409);
+        }
     }
 
     public static function assertPrivateForumUploads(array $payload): void
@@ -196,9 +266,11 @@ final class MessageMediaService
         }
         $rows = Database::all(
             "SELECT ma.id, ma.app_id, ma.target_id, ma.media_type, ma.upload_id, ma.sticker_id, ma.url,
+                     ma.thumbnail_url AS stored_thumbnail_url,
                      COALESCE(NULLIF(up.thumbnail_url, ''), ma.thumbnail_url) AS thumbnail_url,
                     ma.file_name, ma.mime_type, ma.size_bytes, ma.width, ma.height, ma.duration_ms,
                     ma.sort_order, ma.metadata_json,
+                    COALESCE(up.sha256, '') AS upload_sha256,
                     COALESCE(NULLIF(up.original_file_url, ''), NULLIF(up.file_url, ''), ma.url) AS original_file_url,
                     COALESCE(NULLIF(up.optimized_file_url, ''), ma.url) AS optimized_file_url,
                     COALESCE(NULLIF(up.original_size_bytes, 0), ma.size_bytes) AS original_size_bytes,
@@ -217,6 +289,25 @@ final class MessageMediaService
         foreach ($rows as $row) {
             $targetId = (int) $row['target_id'];
             unset($row['target_id']);
+            $reviewJson = json_encode([
+                'id' => (int) $row['id'],
+                'media_type' => (string) $row['media_type'],
+                'upload_id' => $row['upload_id'] === null ? null : (int) $row['upload_id'],
+                'sticker_id' => $row['sticker_id'] === null ? null : (int) $row['sticker_id'],
+                'url' => (string) $row['url'],
+                'thumbnail_url' => (string) ($row['stored_thumbnail_url'] ?? ''),
+                'file_name' => (string) $row['file_name'],
+                'mime_type' => (string) $row['mime_type'],
+                'size_bytes' => (int) $row['size_bytes'],
+                'width' => (int) $row['width'],
+                'height' => (int) $row['height'],
+                'duration_ms' => (int) $row['duration_ms'],
+                'sort_order' => (int) $row['sort_order'],
+                'metadata_json' => (string) ($row['metadata_json'] ?? ''),
+                'upload_sha256' => strtolower((string) ($row['upload_sha256'] ?? '')),
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($reviewJson)) throw new \RuntimeException('Unable to build attachment review identity');
+            $row['review_identity'] = hash('sha256', $reviewJson);
             $row['id'] = (int) $row['id'];
             $row['app_id'] = (int) $row['app_id'];
             $privatePath = ltrim(str_replace('\\', '/', (string) $row['upload_file_path']), '/');
@@ -227,7 +318,7 @@ final class MessageMediaService
                 $row['original_file_url'] = $signedUrl;
                 $row['optimized_file_url'] = $signedUrl;
             }
-            unset($row['upload_file_path'], $row['app_id']);
+            unset($row['upload_file_path'], $row['app_id'], $row['stored_thumbnail_url'], $row['upload_sha256']);
             $row['upload_id'] = $row['upload_id'] === null ? null : (int) $row['upload_id'];
             $row['sticker_id'] = $row['sticker_id'] === null ? null : (int) $row['sticker_id'];
             foreach (['size_bytes', 'original_size_bytes', 'width', 'height', 'duration_ms', 'sort_order'] as $key) {

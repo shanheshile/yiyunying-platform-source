@@ -45,7 +45,9 @@ $checks = [
     'section purchase only accepts approved posts' => str_contains($experience, "p.audit_status = 'approved'"),
     'section asset type is immutable and balance only' => str_contains($experience, '内容节资产类型创建后不可修改')
         && str_contains($experience, "\$assetType !== 'balance'"),
-    'section purchase adjusts the persisted asset' => str_contains($experience, 'WalletService::adjust($user, $assetType')
+    'section purchase adjusts the persisted asset' => str_contains($experience, 'WalletService::adjust(')
+        && str_contains($experience, "WalletService::canonicalAmount('balance'")
+        && str_contains($experience, 'WalletService::negativeAmount($assetType, $price)')
         && str_contains($experience, 'asset_type, created_at'),
     'protected existing attachments enforce feature policy' => str_contains($experience, 'sectionAttachmentCount')
         && str_contains($experience, 'forum_attachment_unlock'),
@@ -83,7 +85,7 @@ $checks = [
         && str_contains($experience, 'ABSOLUTE_UNLOCK_MAX_FUTURE_DAYS = 36500'),
     'unlock price uses an administrator bounded balance cap' => str_contains($experience, 'forum_unlock_max_price_balance')
         && str_contains($experience, 'DEFAULT_UNLOCK_MAX_PRICE_BALANCE = 1000000000.0')
-        && str_contains($experience, '$price > $maximumPrice')
+        && str_contains($experience, '$priceUnits > $maximumPriceUnits')
         && str_contains($experience, '$section[\'price_balance\'] <= $maximumPrice')
         && str_contains($experience, '价格不符合当前管理员限制，暂不可购买'),
     'published media names are sanitized as an immutable invariant' => str_contains($media, 'isPublicMediaTarget')

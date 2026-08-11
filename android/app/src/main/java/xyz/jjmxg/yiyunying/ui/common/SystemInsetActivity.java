@@ -59,8 +59,10 @@ public abstract class SystemInsetActivity extends AppCompatActivity {
         appliedFont = AppearanceStyleStore.font(this);
         AppearanceStyleStore.applyAccent(this);
         AppearanceStyleStore.applyFontTheme(this);
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), usePlatformDecorInsets());
         super.onCreate(state);
+        // AppCompat installs and configures its decor during super.onCreate(). Apply the
+        // edge-to-edge policy afterwards so it cannot be reset before the content is added.
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), usePlatformDecorInsets());
         suppressAppearanceTransitions();
         showSystemBars();
     }
@@ -96,8 +98,30 @@ public abstract class SystemInsetActivity extends AppCompatActivity {
         });
     }
 
+    @Override public void setContentView(int layoutResId) {
+        super.setContentView(layoutResId);
+        installContentPolicy(contentRoot());
+    }
+
     @Override public void setContentView(View view) {
         super.setContentView(view);
+        installContentPolicy(view);
+    }
+
+    @Override public void setContentView(View view, ViewGroup.LayoutParams params) {
+        super.setContentView(view, params);
+        installContentPolicy(view);
+    }
+
+    private View contentRoot() {
+        View content = findViewById(android.R.id.content);
+        if (!(content instanceof ViewGroup)) return content;
+        ViewGroup group = (ViewGroup) content;
+        return group.getChildCount() == 0 ? content : group.getChildAt(group.getChildCount() - 1);
+    }
+
+    private void installContentPolicy(View view) {
+        if (view == null) return;
         installAppearanceObserver(view);
         view.post(() -> {
             applyRuntimeAppearance(view);
@@ -117,15 +141,19 @@ public abstract class SystemInsetActivity extends AppCompatActivity {
             Insets cutout = windowInsets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.displayCutout());
             Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
             int safeLeft = Math.max(Math.max(status.left, navigation.left), cutout.left);
-            int safeTop = Math.max(status.top, cutout.top);
+            int safeTop = resolveSafeTop(
+                status.top,
+                cutout.top,
+                systemDimension("status_bar_height"),
+                getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode()
+            );
             int safeRight = Math.max(Math.max(status.right, navigation.right), cutout.right);
             int safeBottom = Math.max(navigation.bottom, cutout.bottom);
             // Android 15/16 vendor builds can report a non-zero but still undersized
-            // first-frame inset. Always keep portrait content below the physical status
-            // area instead of allowing the search/header row to sit under a cutout.
-            if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
-                safeTop = Math.max(safeTop, systemDimension("status_bar_height"));
-            }
+            // first-frame inset. Keep full-screen portrait content below the physical status
+            // area, but never synthesize that inset in freeform/split-screen where the window
+            // has its own caption and no device status bar above its content.
             int targetLeft = left + safeLeft;
             int targetTop = top + safeTop;
             int targetRight = right + safeRight;
@@ -141,6 +169,13 @@ public abstract class SystemInsetActivity extends AppCompatActivity {
             showSystemBars();
             ViewCompat.requestApplyInsets(view);
         });
+    }
+
+    static int resolveSafeTop(int statusTop, int cutoutTop, int physicalStatusBarHeight,
+                              boolean portrait, boolean multiWindow) {
+        int safeTop = Math.max(statusTop, cutoutTop);
+        if (portrait && !multiWindow) safeTop = Math.max(safeTop, physicalStatusBarHeight);
+        return safeTop;
     }
 
     private void showSystemBars() {

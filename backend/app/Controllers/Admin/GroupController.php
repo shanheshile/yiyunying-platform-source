@@ -17,6 +17,7 @@ use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageForwardService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\MessagePresentationService;
+use Yiyunying\Services\ProfileAvatarService;
 
 final class GroupController
 {
@@ -59,12 +60,14 @@ final class GroupController
         $isChatroom = $roomKind === ChatRoomService::ROOM_CHATROOM;
         $entity = $isChatroom ? '聊天室' : '群聊';
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
+        $icon = mb_substr(trim((string) $request->input('icon', '')), 0, 500);
+        if ($icon !== '') self::requireAvatarFeature($appId, $roomKind);
         $defaultJoinMode = $isChatroom ? ChatRoomService::JOIN_OPEN : ChatRoomService::JOIN_APPROVAL;
         $joinMode = ChatRoomService::joinMode($request->input('join_mode', $defaultJoinMode));
         $memberLimitKey = $isChatroom ? 'chatroom_default_max_members' : 'group_default_max_members';
         $defaultMemberLimit = max(2, (int) AppService::setting($appId, $memberLimitKey, 500));
         $roomId = Database::transaction(static function () use (
-            $request, $admin, $appId, $name, $joinMode, $roomKind, $defaultMemberLimit
+            $request, $admin, $appId, $name, $icon, $joinMode, $roomKind, $defaultMemberLimit
         ): int {
             $id = Database::insert(
                 'INSERT INTO chat_rooms
@@ -72,7 +75,7 @@ final class GroupController
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
                 [
                     (int) $admin['id'], $appId, $name,
-                    mb_substr((string) $request->input('icon', ''), 0, 500),
+                    $icon,
                     mb_substr((string) $request->input('description', ''), 0, 1000),
                     ContentTagService::encode($request->input('tags', [])),
                     $roomKind,
@@ -105,8 +108,13 @@ final class GroupController
         [$admin, $appId] = self::context($request, $params);
         $room = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $params['room_id']);
         $before = ChatRoomService::detail($room);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
         $name = array_key_exists('name', $request->all())
             ? Validator::string($request->input('name'), 'name', 1, 100) : (string) $room['name'];
+        if (array_key_exists('icon', $request->all())
+            && trim((string) $request->input('icon', '')) !== '') {
+            self::requireAvatarFeature($appId, $roomKind);
+        }
         $status = array_key_exists('status', $request->all())
             ? (Validator::boolean($request->input('status'), 'status') ? 1 : 0) : (int) $room['status'];
         Database::execute(
@@ -131,9 +139,35 @@ final class GroupController
         }
         $updated = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $room['id']);
         if ($policyValues !== []) ChatRoomService::savePolicy($updated, $policyValues);
+        $updated = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $room['id']);
         $after = ChatRoomService::detail($updated);
-        LogService::adminOperation($request, (int) $admin['id'], $appId, 'group', 'update', (int) $room['id'], $before, $after);
-        return Response::success(['room' => $after], '群聊已更新');
+        LogService::adminOperation($request, (int) $admin['id'], $appId, $roomKind, 'update', (int) $room['id'], $before, $after);
+        return Response::success(['room' => $after], self::roomEntity($room) . '已更新');
+    }
+
+    public static function avatar(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        [$admin, $appId] = self::context($request, $params);
+        $room = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $params['room_id']);
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        self::requireAvatarFeature($appId, $roomKind);
+        $result = ProfileAvatarService::upload($roomKind, (int) $room['id']);
+        Database::execute(
+            'UPDATE chat_rooms SET icon = ?, updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
+            [(string) $result['avatar'], (int) $room['id'], (int) $admin['id'], $appId]
+        );
+        $updated = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $room['id']);
+        LogService::adminOperation(
+            $request, (int) $admin['id'], $appId, $roomKind, 'avatar_update', (int) $room['id']
+        );
+        return Response::success(
+            $result + [
+                'icon' => (string) $result['avatar'],
+                'room' => ChatRoomService::detail($updated),
+            ],
+            self::roomEntity($room) . '头像上传成功',
+            201
+        );
     }
 
     public static function delete(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -141,8 +175,9 @@ final class GroupController
         [$admin, $appId] = self::context($request, $params);
         $room = ChatRoomService::adminRoom((int) $admin['id'], $appId, (int) $params['room_id']);
         Database::execute('UPDATE chat_rooms SET status = 0, updated_at = NOW() WHERE id = ?', [(int) $room['id']]);
-        LogService::adminOperation($request, (int) $admin['id'], $appId, 'group', 'dissolve', (int) $room['id'], $room, null);
-        return Response::success(['room_id' => (int) $room['id']], '群聊已解散');
+        $roomKind = ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP);
+        LogService::adminOperation($request, (int) $admin['id'], $appId, $roomKind, 'dissolve', (int) $room['id'], $room, null);
+        return Response::success(['room_id' => (int) $room['id']], self::roomEntity($room) . '已解散');
     }
 
     public static function members(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -155,7 +190,7 @@ final class GroupController
         $total = (int) (Database::one('SELECT COUNT(*) AS total FROM chat_room_members WHERE room_id = ?', [(int) $room['id']])['total'] ?? 0);
         $items = Database::all(
             "SELECT m.id, m.user_id, m.role, m.mute_until, m.joined_at,
-                    u.account, p.nickname, p.avatar
+                    u.uid, u.account, p.nickname, p.avatar, p.signature
              FROM chat_room_members m INNER JOIN users u ON u.id = m.user_id
              LEFT JOIN user_profiles p ON p.user_id = u.id
              WHERE m.room_id = ? ORDER BY FIELD(m.role, 'owner', 'admin', 'member'), m.id
@@ -180,7 +215,7 @@ final class GroupController
             return $member;
         });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'group_member', 'add', $userId, null, $member);
-        return Response::success(['member' => $member], '成员已加入群聊', 201);
+        return Response::success(['member' => $member], '成员已加入' . self::roomEntity($room), 201);
     }
 
     public static function updateMember(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -191,12 +226,13 @@ final class GroupController
         $member = ChatRoomService::member((int) $room['id'], $userId);
         if ($member === null) throw new HttpException('群成员不存在', 404, 404);
         $role = ChatRoomService::memberRole($request->input('role', $member['role']));
+        if ((string) $member['role'] === 'owner' && $role !== 'owner') {
+            throw new HttpException('请直接将其他成员设为' . self::ownerRoleName($room) . '，系统会自动完成转让', 0, 409);
+        }
         Database::transaction(static function () use ($room, $userId, $role): void {
             if ($role === 'owner') {
                 Database::execute("UPDATE chat_room_members SET role = 'member' WHERE room_id = ? AND role = 'owner'", [(int) $room['id']]);
                 ChatRoomService::savePolicy($room, ['owner_user_id' => $userId]);
-            } elseif ((string) (ChatRoomService::member((int) $room['id'], $userId)['role'] ?? '') === 'owner') {
-                ChatRoomService::savePolicy($room, ['owner_user_id' => null]);
             }
             Database::execute('UPDATE chat_room_members SET role = ? WHERE room_id = ? AND user_id = ?', [$role, (int) $room['id'], $userId]);
         });
@@ -223,10 +259,12 @@ final class GroupController
         $userId = (int) $params['user_id'];
         $member = ChatRoomService::member((int) $room['id'], $userId);
         if ($member === null) throw new HttpException('群成员不存在', 404, 404);
-        if ((string) $member['role'] === 'owner') ChatRoomService::savePolicy($room, ['owner_user_id' => null]);
+        if ((string) $member['role'] === 'owner') {
+            throw new HttpException('请先将其他成员设为' . self::ownerRoleName($room) . '，再移出原' . self::ownerRoleName($room), 0, 409);
+        }
         ChatRoomService::removeMember($room, $userId);
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'group_member', 'remove', $userId, $member, null);
-        return Response::success(['user_id' => $userId], '成员已移出群聊');
+        return Response::success(['user_id' => $userId], '成员已移出' . self::roomEntity($room));
     }
 
     public static function messages(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -404,6 +442,27 @@ final class GroupController
         $appId = (int) $params['app_id'];
         AppService::owned((int) $admin['id'], $appId);
         return [$admin, $appId];
+    }
+
+    private static function requireAvatarFeature(int $appId, string $roomKind): void
+    {
+        AppService::requireFeature(
+            $appId,
+            $roomKind === ChatRoomService::ROOM_CHATROOM
+                ? 'chatroom_avatar_upload'
+                : 'group_avatar_upload'
+        );
+    }
+
+    private static function roomEntity(array $room): string
+    {
+        return ChatRoomService::roomKind($room['room_kind'] ?? ChatRoomService::ROOM_GROUP)
+            === ChatRoomService::ROOM_CHATROOM ? '聊天室' : '群聊';
+    }
+
+    private static function ownerRoleName(array $room): string
+    {
+        return self::roomEntity($room) === '聊天室' ? '聊天室创建者' : '群主';
     }
 
     private static function messageItems(Request $request, int $roomId, int $appId): array

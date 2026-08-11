@@ -22,7 +22,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.databinding.FragmentSettingsBinding;
@@ -44,6 +46,7 @@ public final class SettingsFragment extends BaseFragment {
     private final Map<String, JsonElement> settingTypes = new LinkedHashMap<>();
     private final Map<String, View> featureViews = new LinkedHashMap<>();
     private final Map<String, JsonElement> featureConfigs = new LinkedHashMap<>();
+    private final Set<String> lockedFeatureCodes = new LinkedHashSet<>();
 
     public static SettingsFragment newInstance(String moduleId) {
         SettingsFragment fragment = new SettingsFragment();
@@ -84,12 +87,18 @@ public final class SettingsFragment extends BaseFragment {
     }
 
     private void loadFeatures() {
+        featureViews.clear();
+        featureConfigs.clear();
+        lockedFeatureCodes.clear();
         String path = "/api/admin/apps/" + app().session().selectedAppId() + "/features";
         track(app().repository().get(path, new LinkedHashMap<>(), result -> {
             if (binding == null) return;
             binding.progress.setVisibility(View.GONE);
             if (!result.isSuccessful()) return;
-            renderFeatures(Jsons.object(result.dataObject(), "features"));
+            renderFeatures(
+                Jsons.object(result.dataObject(), "features"),
+                Jsons.object(result.dataObject(), "effective_features")
+            );
         }));
     }
 
@@ -105,7 +114,10 @@ public final class SettingsFragment extends BaseFragment {
         }
     }
 
-    private void renderFeatures(JsonObject features) {
+    private void renderFeatures(JsonObject features, JsonObject effectiveFeatures) {
+        featureViews.clear();
+        featureConfigs.clear();
+        lockedFeatureCodes.clear();
         if (features.entrySet().isEmpty()) return;
         android.widget.TextView heading = new android.widget.TextView(requireContext());
         heading.setText("功能开关");
@@ -113,10 +125,19 @@ public final class SettingsFragment extends BaseFragment {
         LinearLayout.LayoutParams headingParams = params();
         headingParams.topMargin = dp(22);
         binding.fieldsContainer.addView(heading, headingParams);
-        featureViews.clear();
-        featureConfigs.clear();
         for (Map.Entry<String, JsonElement> entry : features.entrySet()) {
             View field = createField(entry.getKey(), entry.getValue(), true, new JsonObject());
+            JsonObject policy = Jsons.object(effectiveFeatures, entry.getKey());
+            if (field instanceof MaterialSwitch && jsonBoolean(policy, "locked", false)) {
+                MaterialSwitch toggle = (MaterialSwitch) field;
+                boolean effective = jsonBoolean(policy, "effective_enabled", false);
+                String hint = featurePolicyHint(policy, effective);
+                toggle.setChecked(effective);
+                toggle.setEnabled(false);
+                toggle.setText(featureLabel(entry.getKey()) + "\n" + hint);
+                toggle.setContentDescription(featureLabel(entry.getKey()) + "，" + hint);
+                lockedFeatureCodes.add(entry.getKey());
+            }
             binding.fieldsContainer.addView(field, params());
             featureViews.put(entry.getKey(), field);
             JsonElement value = entry.getValue();
@@ -198,11 +219,18 @@ public final class SettingsFragment extends BaseFragment {
     private void saveFeatures() {
         JsonArray features = new JsonArray();
         for (Map.Entry<String, View> entry : featureViews.entrySet()) {
+            if (lockedFeatureCodes.contains(entry.getKey())) continue;
             features.add(FeatureSavePayload.build(
                 entry.getKey(),
                 ((MaterialSwitch) entry.getValue()).isChecked(),
                 featureConfigs.get(entry.getKey())
             ));
+        }
+        if (features.size() == 0) {
+            finishSave();
+            message(binding.getRoot(), "规则已保存；上级锁定的功能保持不变");
+            load();
+            return;
         }
         JsonObject body = new JsonObject();
         body.add("features", features);
@@ -245,10 +273,17 @@ public final class SettingsFragment extends BaseFragment {
 
     private String featureLabel(String key) {
         Map<String, String> labels = new LinkedHashMap<>();
-        labels.put("user_profile", "个人资料"); labels.put("documents", "文档中心"); labels.put("resources", "资源大厅");
+        labels.put("user_account", "用户账号"); labels.put("user_profile", "个人资料");
+        labels.put("sign_invite", "签到与邀请"); labels.put("documents", "文档中心");
+        labels.put("notices", "公告通知"); labels.put("resources", "资源大厅"); labels.put("store", "应用商店");
         labels.put("forum", "论坛社区"); labels.put("messages", "消息好友"); labels.put("chat_rooms", "聊天室");
-        labels.put("customer_service", "客服"); labels.put("cards", "卡密"); labels.put("commerce", "商城互动");
-        labels.put("remote_files", "远程文件"); labels.put("feedback", "意见反馈");
+        labels.put("service", "在线客服"); labels.put("customer_service", "客服"); labels.put("cards", "卡密");
+        labels.put("payments", "支付与资金"); labels.put("commerce", "商城互动"); labels.put("shop", "余额商城");
+        labels.put("red_packets", "红包"); labels.put("lottery", "抽奖"); labels.put("votes", "投票");
+        labels.put("remote_files", "远程文件"); labels.put("feedback", "意见反馈"); labels.put("bot", "智能助手");
+        labels.put("bounties", "悬赏"); labels.put("level_forum", "等级论坛权限");
+        labels.put("social", "社交与动态"); labels.put("notifications", "通知中心");
+        labels.put("withdrawals", "余额提现"); labels.put("chat_extensions", "聊天扩展");
         labels.put("chat_camera", "聊天拍摄"); labels.put("chat_album", "聊天相册");
         labels.put("chat_contact_card", "聊天名片"); labels.put("chat_call_record_label", "聊天记录显示通话标签");
         labels.put("group_avatar_upload", "群聊头像上传"); labels.put("chatroom_avatar_upload", "聊天室头像上传");
@@ -256,6 +291,12 @@ public final class SettingsFragment extends BaseFragment {
         labels.put("forum_chapters", "帖子分章节"); labels.put("forum_paid_unlock", "帖子余额解锁");
         labels.put("forum_scheduled_unlock", "帖子定时解锁"); labels.put("forum_attachment_unlock", "帖子附件独立解锁");
         labels.put("forum_media_filename_privacy", "帖子与评论媒体原文件名保护（安全强制）");
+        labels.put("short_videos", "短视频功能"); labels.put("short_video_publish", "发布短视频");
+        labels.put("short_video_comments", "短视频评论"); labels.put("short_video_likes", "短视频点赞");
+        labels.put("short_video_favorites", "短视频收藏"); labels.put("short_video_forwards", "短视频转发");
+        labels.put("balance_document_purchase", "余额购买笔记额度");
+        labels.put("balance_membership_purchase", "余额购买会员");
+        labels.put("hierarchical_activities", "分层活动管理");
         return labels.getOrDefault(key, key.replace('_', ' '));
     }
 
@@ -268,6 +309,19 @@ public final class SettingsFragment extends BaseFragment {
         return "聊天消息刷新：每 " + milliseconds(effective) + " 获取一次新消息\n"
             + "允许范围：" + milliseconds(minimum) + " 至 " + milliseconds(maximum) + "\n"
             + (locked ? "当前值已由上级强制锁定，下级不能修改。" : "当前层级可以在上级允许范围内调整。");
+    }
+
+    private String featurePolicyHint(JsonObject policy, boolean effective) {
+        int level = Jsons.intValue(policy, "forced_by_level", 0);
+        String source = level == 1 ? "1级总控" : level == 2 ? "2级授权平台" : "上级平台";
+        return "最终状态：" + (effective ? "已开启" : "已关闭")
+            + "；来源：" + source + "强制规则（已锁定）";
+    }
+
+    private static boolean jsonBoolean(JsonObject value, String key, boolean fallback) {
+        if (value == null || !value.has(key) || value.get(key).isJsonNull()) return fallback;
+        try { return value.get(key).getAsBoolean(); }
+        catch (RuntimeException ignored) { return fallback; }
     }
 
     private String milliseconds(long value) {

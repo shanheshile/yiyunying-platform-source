@@ -8,10 +8,18 @@ $paths = [
     'app_service' => $root . '/app/Services/AppService.php',
     'routes' => $root . '/routes/api.php',
     'group_controller' => $root . '/app/Controllers/User/GroupController.php',
+    'admin_group_controller' => $root . '/app/Controllers/Admin/GroupController.php',
+    'chat_room_service' => $root . '/app/Services/ChatRoomService.php',
+    'admin_access' => $root . '/app/Services/AdminAccessService.php',
     'forum_controller' => $root . '/app/Controllers/Admin/ForumController.php',
     'group_activity' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/chat/GroupSpaceActivity.java',
     'module_registry' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/domain/module/ModuleRegistry.java',
     'generic_module' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/module/GenericModuleFragment.java',
+    'group_policy' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/chat/GroupManagementPolicy.java',
+    'record_adapter' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/common/RecordAdapter.java',
+    'message_center_adapter' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/home/MessageCenterAdapter.java',
+    'group_layout' => dirname($root) . '/android/app/src/main/res/layout/activity_group_space.xml',
+    'group_placeholder' => dirname($root) . '/android/app/src/main/res/drawable/bg_group_avatar_placeholder.xml',
     'profile' => dirname($root) . '/android/app/src/main/java/xyz/jjmxg/yiyunying/ui/profile/ProfileFragment.java',
 ];
 
@@ -33,10 +41,21 @@ $checks = [
     'portable migration has no stored procedure' => !preg_match('/\bDELIMITER\b|CREATE\s+PROCEDURE/i', $contents['migration']),
     'migration preserves existing administrator choices' => !str_contains($contents['migration'], '`enabled` = VALUES(`enabled`)'),
     'group avatar route is present' => str_contains($contents['routes'], "/api/user/chat-rooms/{room_id}/avatar"),
+    'admin group avatar route is present' => str_contains($contents['routes'], "/api/admin/apps/{app_id}/chat-rooms/{room_id}/avatar"),
     'forum plate avatar route is present' => str_contains($contents['routes'], "/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar"),
     'group avatar requires manager' => str_contains($contents['group_controller'], 'ChatRoomService::requireManager($user, $room)'),
     'group avatar uses validated image upload' => str_contains($contents['group_controller'], 'ProfileAvatarService::upload($roomKind'),
     'group direct icon update is also policy controlled' => substr_count($contents['group_controller'], "'group_avatar_upload'") >= 2,
+    'admin avatar verifies tenancy and feature flag' => str_contains($contents['admin_group_controller'], 'self::requireAvatarFeature($appId, $roomKind)')
+        && str_contains($contents['admin_group_controller'], 'ProfileAvatarService::upload($roomKind')
+        && str_contains($contents['admin_group_controller'], 'id = ? AND admin_id = ? AND app_id = ?'),
+    'admin group routes reuse communication RBAC' => str_contains($contents['admin_access'], 'chat-rooms')
+        && str_contains($contents['admin_access'], 'communication.manage'),
+    'admin cannot orphan a room by removing the owner' => str_contains($contents['admin_group_controller'], '请先将其他成员设为')
+        && str_contains($contents['admin_group_controller'], '再移出原'),
+    'room detail exposes effective management capabilities' => str_contains($contents['chat_room_service'], "\$result['can_manage']")
+        && str_contains($contents['chat_room_service'], "\$result['can_invite']")
+        && str_contains($contents['chat_room_service'], "\$result['can_change_member_roles']"),
     'group create icon is policy controlled by room type' => str_contains($contents['group_controller'], "if (\$icon !== '')")
         && str_contains($contents['group_controller'], "\$isChatroom ? 'chatroom_avatar_upload' : 'group_avatar_upload'"),
     'plate avatar verifies app ownership' => str_contains($contents['forum_controller'], 'admin_id = ? AND app_id = ?'),
@@ -46,6 +65,19 @@ $checks = [
         && str_contains($contents['forum_controller'], "if (\$icon !== '')"),
     'group UI has local avatar picker' => str_contains($contents['group_activity'], 'MediaPickerActivity.imageIntent(this, 1)'),
     'group UI uploads to scoped endpoint' => str_contains($contents['group_activity'], 'base() + "/avatar"'),
+    'admin opens live group management UI' => str_contains($contents['generic_module'], 'GroupSpaceActivity.openAdmin(')
+        && str_contains($contents['group_activity'], '"/api/admin/apps/" + adminAppId + "/chat-rooms/" + roomId'),
+    'group UI uses centralized role visibility policy' => str_contains($contents['group_activity'], 'GroupManagementPolicy.canInvite')
+        && str_contains($contents['group_policy'], 'canChangeRole')
+        && str_contains($contents['group_policy'], 'canModerate'),
+    'group list renders real icon with themed placeholder' => str_contains($contents['record_adapter'], '"chat_rooms".equals(spec.id())')
+        && str_contains($contents['record_adapter'], 'R.drawable.bg_group_avatar_placeholder')
+        && str_contains($contents['message_center_adapter'], 'groupAvatar ? R.drawable.bg_group_avatar_placeholder'),
+    'group avatar is cropped and uses semantic theme colors' => str_contains($contents['group_layout'], 'android:scaleType="centerCrop"')
+        && str_contains($contents['group_layout'], 'ShapeableImageView')
+        && str_contains($contents['group_placeholder'], '?attr/colorPrimaryContainer'),
+    'admin status toggle writes the real update field' => str_contains($contents['group_activity'], 'body.addProperty("status", enabled.isChecked())')
+        && str_contains($contents['admin_group_controller'], "array_key_exists('status', \$request->all())"),
     'admin board UI exposes image upload action' => str_contains($contents['module_registry'], '"UPLOAD_IMAGE"'),
     'generic admin uploader validates upload policy' => str_contains($contents['generic_module'], 'UploadPolicyStore.accepts(context, "image", size)'),
     'personal profile follows admin edit policy' => str_contains($contents['profile'], 'profile_edit_enabled'),

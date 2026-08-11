@@ -4,12 +4,13 @@
     <color name="on_primary">#FFFFFF</color>
     <color name="primary_container">#E8F1FF</color>
     <color name="on_primary_container">#123A72</color>
-    <color name="secondary">#4B78B8</color>
+    <color name="secondary">#4A77B7</color>
     <color name="on_secondary">#FFFFFF</color>
     <color name="secondary_container">#EAF2FF</color>
     <color name="on_secondary_container">#254A7A</color>
     <color name="tertiary">#476DA5</color>
     <color name="error">#BA1A1A</color>
+    <color name="on_error">#FFFFFF</color>
     <color name="surface">#FFFFFF</color>
     <color name="surface_container">#F5F8FC</color>
     <color name="surface_container_high">#EAF0F7</color>
@@ -20,7 +21,7 @@
     <color name="on_surface_variant">#5B687A</color>
     <color name="outline">#AAB7C8</color>
     <color name="outline_variant">#D6DEE9</color>
-    <color name="success">#238A57</color>
+    <color name="success">#228755</color>
     <color name="warning">#9B5B00</color>
     <color name="white">#FFFFFF</color>
     <color name="transparent">#00000000</color>

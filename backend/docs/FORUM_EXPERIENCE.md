@@ -67,12 +67,17 @@
 ## 3. 评论与回复
 
 - 评论和对评论的回复统一保存在帖子详情中，`parent_id` 形成树形关系。
+- 帖子详情首屏只返回主评论；每条主评论提供准确的 `reply_count` 和最多 2 条 `reply_preview`，展开时再请求对应评论串，避免回复与主评论割裂显示。
+- 评论列表支持 `scope=roots/thread` 与 `sort=comprehensive/hot/latest/earliest`。`thread` 必须传 `root_comment_id`，也可传通知携带的任意 `comment_id` 由服务端在当前帖子、应用和租户内解析，响应回显 `resolved_root_comment_id`。评论串响应的 `items[0]` 固定为完整主评论，后接当前页回复；主评论不占回复页的 `limit`，`pagination` 和 `reply_total` 统计回复，`thread_total` 统计主评论加回复。深链只传 `comment_id` 且未指定页码时，服务端会自动返回目标回复所在页并回显 `focused_reply_page`。
+- 评论综合排序在置顶规则后依次考虑点赞、收藏和新鲜度；热度排序使用点赞/收藏互动权重且不混入时间，最新与最早排序只改变时间方向。四种排序均来自服务端白名单，未知值回退为综合排序。
+- 主评论分页只统计 `parent_id` 为空的记录，不与回复表连接，因此不会因回复数量造成重复或错误页数。评论和每一级回复都只按“审核通过或当前作者本人”可见；缺失、隐藏、跨租户、跨评论串或循环父链全部按不可见处理。
 - 帖子发布者可以置顶评论或回复，数量受 `forum_self_comment_pin_limit` 控制。
 - 帖子和评论均支持点赞、取消点赞、收藏、取消收藏、转发和举报。
 - 管理员仍可按原有审核、锁定、删除、置顶和加精接口治理内容。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| GET | `/api/user/forum-posts/{post_id}/comments` | 分页读取主评论或指定评论串；支持 `scope,sort,root_comment_id,comment_id,page,limit` |
 | POST | `/api/user/forum-posts/{post_id}/comments` | 评论或回复；回复时传 `parent_id` |
 | POST | `/api/user/forum-content/{target_type}/{target_id}/like` | 点赞或取消；`target_type=post/comment` |
 | POST | `/api/user/forum-content/{target_type}/{target_id}/favorite` | 收藏或取消 |
@@ -143,7 +148,7 @@ PUT /api/user/forum-personal/{target_type}/{target_id}/position
 | GET | `/api/user/forum-posts` |
 | GET | `/api/user/forum-posts/{post_id}` |
 
-用户帖子列表支持板块、关键词、标签、日期和热度排序；详情自动返回当前用户的购买、点赞、收藏和个人排序状态。
+用户帖子列表支持板块、关键词、标签、日期以及 `comprehensive/hot/latest/earliest` 四种固定排序；未知值安全回退为综合排序。个人置顶/置底和官方置顶规则始终先于所选排序；详情自动返回当前用户的购买、点赞、收藏和个人排序状态。
 
 ### 3 级管理员
 

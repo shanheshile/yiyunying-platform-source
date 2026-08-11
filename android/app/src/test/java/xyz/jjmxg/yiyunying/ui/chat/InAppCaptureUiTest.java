@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 import android.util.Size;
 
@@ -28,13 +29,28 @@ public final class InAppCaptureUiTest {
         View root = controller.get().getLayoutInflater()
             .inflate(R.layout.activity_in_app_capture, null, false);
 
-        assertNotNull(root.findViewById(R.id.capturePreview));
-        assertTrue(root.findViewById(R.id.capturePreview).isClickable());
+        assertTrue(((ViewGroup) root).isMotionEventSplittingEnabled());
+        View preview = root.findViewById(R.id.capturePreview);
+        assertNotNull(preview);
+        assertTrue(preview.isClickable());
+        assertTrue(preview.getContentDescription().toString().contains("双指缩放"));
         assertNotNull(root.findViewById(R.id.captureClose));
         assertNotNull(root.findViewById(R.id.captureSwitchCamera));
         assertNotNull(root.findViewById(R.id.captureFocusFrame));
         assertNotNull(root.findViewById(R.id.captureFocusStatus));
         assertEquals(View.GONE, root.findViewById(R.id.captureFocusIndicator).getVisibility());
+        View zoomSeek = root.findViewById(R.id.captureZoomSeek);
+        assertNotNull(zoomSeek);
+        assertTrue(zoomSeek.getContentDescription().toString().contains("当前 1.0 倍"));
+        assertEquals("1.0×", ((TextView) root.findViewById(R.id.captureZoomValue)).getText().toString());
+        assertNotNull(root.findViewById(R.id.captureReviewImage));
+        assertNotNull(root.findViewById(R.id.captureReviewVideo));
+        View reviewContainer = root.findViewById(R.id.captureReviewContainer);
+        assertEquals(View.GONE, reviewContainer.getVisibility());
+        assertTrue(reviewContainer.isClickable());
+        assertEquals(View.GONE, root.findViewById(R.id.captureReviewActions).getVisibility());
+        assertEquals("取消/重拍", ((TextView) root.findViewById(R.id.captureRetake)).getText().toString());
+        assertTrue(((TextView) root.findViewById(R.id.captureConfirm)).getText().toString().contains("确认"));
         View shutter = root.findViewById(R.id.captureShutter);
         assertNotNull(shutter);
         assertTrue(shutter.isClickable());
@@ -45,6 +61,8 @@ public final class InAppCaptureUiTest {
         assertTrue(hint.getText().toString().contains("点按聚焦"));
         assertTrue(hint.getText().toString().contains("拖动跟焦"));
         assertTrue(hint.getText().toString().contains("长按锁焦"));
+        assertTrue(hint.getText().toString().contains("解锁"));
+        assertTrue(hint.getText().toString().contains("调焦距"));
         TextView timer = root.findViewById(R.id.recordingTimer);
         assertEquals("00:00 / 01:00", timer.getText().toString());
         assertEquals(View.GONE, timer.getVisibility());

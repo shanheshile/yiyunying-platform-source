@@ -17,7 +17,9 @@ final class AdminProvisionService
         if (!hash_equals((string) ($data['password'] ?? ''), (string) $data['password_confirmation'])) {
             throw new HttpException('两次输入的密码不一致', 0, 422);
         }
-        return Database::transaction(static function () use ($platform, $data, $request): array {
+        // Acquire the catalog lock before the transaction begins and retain it until every
+        // account, entitlement, bootstrap-app and registration-log write is committed.
+        return SubmissionInspectionService::catalogSchemaTransaction(static function () use ($platform, $data, $request): array {
             $locked = self::lockPlatform((int) $platform['id']);
             PlatformService::assertActive($locked);
             self::assertPublicRegistrationAllowed($locked, $request);
@@ -40,9 +42,12 @@ final class AdminProvisionService
         array $data,
         Request $request,
         array $grant,
-        string $reason = '平台创建'
+        string $reason = '平台创建',
+        ?callable $afterProvision = null
     ): array {
-        return Database::transaction(static function () use ($platform, $data, $request, $grant, $reason): array {
+        // Platform-created administrators follow the exact same locked atomic boundary as
+        // self-registration, including delivery of the compiled bootstrap app identity.
+        return SubmissionInspectionService::catalogSchemaTransaction(static function () use ($platform, $data, $request, $grant, $reason, $afterProvision): array {
             $locked = self::lockPlatform((int) $platform['id']);
             PlatformService::assertActive($locked);
             PlatformService::requireAdminQuota($locked);
@@ -54,8 +59,11 @@ final class AdminProvisionService
                 true,
                 $reason,
                 (int) $admin['id'],
-                $grant
+                (array) ($admin['registration_gift'] ?? [])
             );
+            if ($afterProvision !== null) {
+                $afterProvision($admin);
+            }
             return $admin;
         });
     }
@@ -93,7 +101,7 @@ final class AdminProvisionService
         $platformId = (int) $platform['id'];
         $min = max(1, (int) PlatformService::setting($platformId, 'admin_account_min_length', 3));
         $max = min(64, max($min, (int) PlatformService::setting($platformId, 'admin_account_max_length', 32)));
-        Validator::required($data, ['account', 'password']);
+        Validator::required($data, ['account', 'password', 'app_key']);
         $account = Validator::string($data['account'], 'account', $min, $max);
         if (preg_match('/^[A-Za-z0-9_.-]+$/', $account) !== 1) {
             throw new HttpException('account 只能包含字母、数字、下划线、点和短横线', 0, 422);
@@ -101,6 +109,12 @@ final class AdminProvisionService
         if (Database::one('SELECT id FROM admins WHERE platform_id = ? AND account = ?', [$platformId, $account])) {
             throw new HttpException('当前平台下 admin 账号已存在', 0, 409);
         }
+        $appKey = Validator::string($data['app_key'], 'app_key', 3, 80);
+        if (preg_match('/^[A-Za-z0-9._-]+$/', $appKey) !== 1) {
+            throw new HttpException('app_key 只能包含字母、数字、点、下划线和短横线', 0, 422);
+        }
+        $appName = mb_substr(trim((string) ($data['app_name'] ?? '')), 0, 100);
+        if ($appName === '') $appName = $account . '的应用';
         $password = (string) $data['password'];
         if (strlen($password) < 6 || strlen($password) > 72) {
             throw new HttpException('password 长度必须在 6-72 个字节之间', 0, 422);
@@ -114,14 +128,19 @@ final class AdminProvisionService
         if ($phone !== '') IdentityService::assertAvailable('phone', $phone);
         $gift = $customGrant ?? self::defaultGrant($platformId);
         $gift['vip_days'] = max(1, (int) ($gift['vip_days'] ?? 3));
-        $gift['app_quota'] = max(0, (int) ($gift['app_quota'] ?? 1));
+        // A bootstrap app is mandatory for administrator authentication, so a newly
+        // provisioned account must always receive capacity for at least that first app.
+        $gift['app_quota'] = max(1, (int) ($gift['app_quota'] ?? 1));
         $gift['remote_document_quota'] = max(0, (int) ($gift['remote_document_quota'] ?? 3));
         $gift['integral'] = max(0, (int) ($gift['integral'] ?? 15));
         $trialDays = max(1, (int) ($gift['vip_days'] ?? 3));
         $expiredAt = date('Y-m-d H:i:s', time() + $trialDays * 86400);
         $result = Database::transaction(static function () use (
-            $platformId, $platform, $data, $request, $account, $password, $email, $phone, $gift, $expiredAt
+                $platformId, $platform, $data, $request, $account, $appKey, $appName, $password, $email, $phone, $gift, $expiredAt
         ): array {
+            if (Database::one('SELECT id FROM apps WHERE app_key = ? LIMIT 1', [$appKey]) !== null) {
+                throw new HttpException('应用 API 唯一 ID 已被占用，请使用另一份安装配置', 0, 409);
+            }
             $adminId = Database::insert(
                 'INSERT INTO admins
                  (platform_id, account, password_hash, nickname, avatar, email, phone, status,
@@ -146,7 +165,7 @@ final class AdminProvisionService
                  VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, NOW(), NOW())',
                 [
                     $platformId, $adminId, (string) ($gift['membership_level'] ?? 'trial'), 'active', $expiredAt,
-                    max(0, (int) ($gift['app_quota'] ?? 1)),
+                    max(1, (int) ($gift['app_quota'] ?? 1)),
                     max(0, (int) ($gift['remote_document_quota'] ?? 3)),
                     (int) ($gift['integral'] ?? 15), '1,2,3,4,5,6,7', $platformId,
                 ]
@@ -174,13 +193,41 @@ final class AdminProvisionService
                 'admin 注册赠送平台余额',
                 $platformId
             );
-            return ['admin_id' => $adminId, 'gift' => $gift, 'membership_expired_at' => $expiredAt];
+            $admin = AdminAccessService::context($adminId);
+            // The bootstrap application is created in the same transaction as the account and
+            // entitlement. A quota or category-initialization failure therefore rolls all three
+            // records back and never leaves a loginable admin without its compiled app identity.
+            AdminAccessService::requireAppQuota($admin, true);
+            $appSecret = rtrim(strtr(base64_encode(random_bytes(36)), '+/', '-_'), '=');
+            $appId = Database::insert(
+                'INSERT INTO apps
+                 (admin_id, app_key, app_secret_hash, name, app_type, logo, description, status, version, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())',
+                [$adminId, $appKey, hash('sha256', $appSecret), $appName, 'general', '', '', '1.0.0']
+            );
+            AppService::seedDefaults($adminId, $appId);
+            SubmissionInspectionService::seedResourceCategories($adminId, $appId, 'source_market');
+            return [
+                'admin_id' => $adminId,
+                'gift' => $gift,
+                'membership_expired_at' => $expiredAt,
+                'initial_app' => [
+                    'id' => $appId,
+                    'app_key' => $appKey,
+                    'name' => $appName,
+                    'app_type' => 'general',
+                    'status' => 1,
+                ],
+                'initial_app_secret' => $appSecret,
+            ];
         });
         $publicGift = $result['gift'];
         $publicGift['balance'] = (int) ($publicGift['integral'] ?? 0);
         unset($publicGift['integral']);
         return array_merge(AdminAccessService::context((int) $result['admin_id']), [
             'registration_gift' => $publicGift,
+            'initial_app' => $result['initial_app'],
+            'initial_app_secret' => $result['initial_app_secret'],
         ]);
     }
 
@@ -319,7 +366,7 @@ final class AdminProvisionService
         return [
             'membership_level' => 'trial',
             'vip_days' => max(1, (int) PlatformService::setting($platformId, 'admin_free_trial_days', 3)),
-            'app_quota' => max(0, (int) PlatformService::setting($platformId, 'admin_free_app_quota', 1)),
+            'app_quota' => max(1, (int) PlatformService::setting($platformId, 'admin_free_app_quota', 1)),
             'remote_document_quota' => max(0, (int) PlatformService::setting($platformId, 'admin_free_remote_document_quota', 3)),
             'integral' => max(0, (int) PlatformService::setting($platformId, 'admin_free_balance', 15)),
         ];

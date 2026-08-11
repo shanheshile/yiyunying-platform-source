@@ -2,7 +2,7 @@
 
 > 本文件由 `php tools/generate-reference.php` 从 `routes/api.php` 生成。功能说明与参数见 `API_FULL.md`。
 
-- 注册路由：769
+- 注册路由：811
 - 四级角色：1 级平台所有者、2 级授权平台、3 级 admin、4 级 user
 
 ## 平台治理接口（148）
@@ -158,7 +158,7 @@
 | `POST` | `/api/platform/exchanges/{exchange_id}/refund` | `Yiyunying\Controllers\Platform\ExchangeController::refund` |
 | `GET` | `/api/platform/balance-logs` | `Yiyunying\Controllers\Platform\ExchangeController::integralLogs` |
 
-## 管理员接口（264）
+## 管理员接口（301）
 
 | 方法 | 路径 | 处理器 |
 | --- | --- | --- |
@@ -171,6 +171,15 @@
 | `POST` | `/api/admin/profile/avatar` | `Yiyunying\Controllers\Admin\AuthController::avatar` |
 | `PUT` | `/api/admin/password` | `Yiyunying\Controllers\Admin\AuthController::password` |
 | `GET` | `/api/admin/login-logs` | `Yiyunying\Controllers\Admin\AuthController::loginLogs` |
+| `GET` | `/api/admin/security/sessions` | `Yiyunying\Controllers\Admin\AuthController::sessions` |
+| `DELETE` | `/api/admin/security/sessions/{session_id}` | `Yiyunying\Controllers\Admin\AuthController::revokeSession` |
+| `DELETE` | `/api/admin/account` | `Yiyunying\Controllers\Admin\AuthController::deleteAccount` |
+| `GET` | `/api/admin/workbench` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::overview` |
+| `PUT` | `/api/admin/workbench/public-profile` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::savePublicProfile` |
+| `GET` | `/api/admin/sponsors` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::sponsors` |
+| `POST` | `/api/admin/sponsors` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::createSponsor` |
+| `PUT` | `/api/admin/sponsors/{sponsor_id}` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::updateSponsor` |
+| `DELETE` | `/api/admin/sponsors/{sponsor_id}` | `Yiyunying\Controllers\Admin\ManagementWorkbenchController::deleteSponsor` |
 | `GET` | `/api/admin/identity-unbind-requests` | `Yiyunying\Controllers\Admin\IdentityController::index` |
 | `POST` | `/api/admin/identity-unbind-requests/{request_id}/review` | `Yiyunying\Controllers\Admin\IdentityController::review` |
 | `GET` | `/api/admin/my-identity-unbind-requests` | `Yiyunying\Controllers\Admin\IdentityController::mine` |
@@ -192,6 +201,8 @@
 | `GET` | `/api/admin/community/posts/{post_id}` | `Yiyunying\Controllers\Admin\CommunityController::show` |
 | `POST` | `/api/admin/community/posts/{post_id}/comments` | `Yiyunying\Controllers\Admin\CommunityController::comment` |
 | `POST` | `/api/admin/community/posts/{post_id}/reactions` | `Yiyunying\Controllers\Admin\CommunityController::reaction` |
+| `POST` | `/api/admin/community/posts/{post_id}/pin` | `Yiyunying\Controllers\Admin\CommunityController::pin` |
+| `POST` | `/api/admin/community/posts/{post_id}/reports` | `Yiyunying\Controllers\Admin\CommunityController::report` |
 | `DELETE` | `/api/admin/community/posts/{post_id}` | `Yiyunying\Controllers\Admin\CommunityController::delete` |
 | `GET` | `/api/admin/poll-categories` | `Yiyunying\Controllers\Admin\PollController::categories` |
 | `POST` | `/api/admin/poll-categories` | `Yiyunying\Controllers\Admin\PollController::createCategory` |
@@ -221,6 +232,7 @@
 | `POST` | `/api/admin/apps/{app_id}/disable` | `Yiyunying\Controllers\Admin\AppController::disable` |
 | `DELETE` | `/api/admin/apps/{app_id}` | `Yiyunying\Controllers\Admin\AppController::delete` |
 | `POST` | `/api/admin/apps/{app_id}/secret/reset` | `Yiyunying\Controllers\Admin\AppController::resetSecret` |
+| `POST` | `/api/admin/apps/{app_id}/key/verify` | `Yiyunying\Controllers\Admin\AppController::verifyKey` |
 | `GET` | `/api/admin/apps/{app_id}/settings` | `Yiyunying\Controllers\Admin\AppController::settings` |
 | `PUT` | `/api/admin/apps/{app_id}/settings` | `Yiyunying\Controllers\Admin\AppController::saveSettings` |
 | `GET` | `/api/admin/apps/{app_id}/features` | `Yiyunying\Controllers\Admin\AppController::features` |
@@ -303,14 +315,27 @@
 | `PUT` | `/api/admin/apps/{app_id}/resource-categories/{category_id}` | `Yiyunying\Controllers\Admin\ResourceController::updateCategory` |
 | `DELETE` | `/api/admin/apps/{app_id}/resource-categories/{category_id}` | `Yiyunying\Controllers\Admin\ResourceController::deleteCategory` |
 | `GET` | `/api/admin/apps/{app_id}/resources` | `Yiyunying\Controllers\Admin\ResourceController::resources` |
+| `GET` | `/api/admin/apps/{app_id}/resource-comments` | `Yiyunying\Controllers\Admin\ResourceController::resourceComments` |
+| `GET` | `/api/admin/apps/{app_id}/resource-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ResourceController::showResourceComment` |
+| `PUT` | `/api/admin/apps/{app_id}/resource-comments/{comment_id}/hide` | `Yiyunying\Controllers\Admin\ResourceController::hideResourceComment` |
+| `PUT` | `/api/admin/apps/{app_id}/resource-comments/{comment_id}/restore` | `Yiyunying\Controllers\Admin\ResourceController::restoreResourceComment` |
+| `DELETE` | `/api/admin/apps/{app_id}/resource-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ResourceController::deleteResourceComment` |
+| `GET` | `/api/admin/apps/{app_id}/resources/{resource_id}` | `Yiyunying\Controllers\Admin\ResourceController::showResource` |
+| `GET` | `/api/admin/apps/{app_id}/resources/{resource_id}/download` | `Yiyunying\Controllers\Admin\ResourceController::downloadResource` |
 | `PUT` | `/api/admin/apps/{app_id}/resources/{resource_id}/audit` | `Yiyunying\Controllers\Admin\ResourceController::audit` |
 | `PUT` | `/api/admin/apps/{app_id}/resources/{resource_id}` | `Yiyunying\Controllers\Admin\ResourceController::updateResource` |
 | `DELETE` | `/api/admin/apps/{app_id}/resources/{resource_id}` | `Yiyunying\Controllers\Admin\ResourceController::deleteResource` |
 | `GET` | `/api/admin/apps/{app_id}/store-categories` | `Yiyunying\Controllers\Admin\ResourceController::storeCategories` |
 | `POST` | `/api/admin/apps/{app_id}/store-categories` | `Yiyunying\Controllers\Admin\ResourceController::createStoreCategory` |
+| `PUT` | `/api/admin/apps/{app_id}/store-categories/{category_id}` | `Yiyunying\Controllers\Admin\ResourceController::updateStoreCategory` |
+| `DELETE` | `/api/admin/apps/{app_id}/store-categories/{category_id}` | `Yiyunying\Controllers\Admin\ResourceController::deleteStoreCategory` |
 | `GET` | `/api/admin/apps/{app_id}/store-apps` | `Yiyunying\Controllers\Admin\ResourceController::storeApps` |
 | `POST` | `/api/admin/apps/{app_id}/store-apps` | `Yiyunying\Controllers\Admin\ResourceController::createStoreApp` |
+| `GET` | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | `Yiyunying\Controllers\Admin\ResourceController::showStoreApp` |
+| `GET` | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/download` | `Yiyunying\Controllers\Admin\ResourceController::downloadStoreApp` |
 | `PUT` | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit` | `Yiyunying\Controllers\Admin\ResourceController::auditStoreApp` |
+| `PUT` | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | `Yiyunying\Controllers\Admin\ResourceController::updateStoreApp` |
+| `DELETE` | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | `Yiyunying\Controllers\Admin\ResourceController::deleteStoreApp` |
 | `GET` | `/api/admin/apps/{app_id}/forum-plates` | `Yiyunying\Controllers\Admin\ForumController::plates` |
 | `GET` | `/api/admin/apps/{app_id}/forum-categories` | `Yiyunying\Controllers\Admin\ForumStructureController::categories` |
 | `POST` | `/api/admin/apps/{app_id}/forum-categories` | `Yiyunying\Controllers\Admin\ForumStructureController::createCategory` |
@@ -357,6 +382,12 @@
 | `GET` | `/api/admin/apps/{app_id}/moment-comments` | `Yiyunying\Controllers\Admin\ContentModerationController::comments` |
 | `GET` | `/api/admin/apps/{app_id}/moment-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ContentModerationController::showComment` |
 | `PUT` | `/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit` | `Yiyunying\Controllers\Admin\ContentModerationController::auditComment` |
+| `GET` | `/api/admin/apps/{app_id}/short-videos` | `Yiyunying\Controllers\Admin\ContentModerationController::shortVideos` |
+| `GET` | `/api/admin/apps/{app_id}/short-videos/{moment_id}` | `Yiyunying\Controllers\Admin\ContentModerationController::showShortVideo` |
+| `PUT` | `/api/admin/apps/{app_id}/short-videos/{moment_id}/audit` | `Yiyunying\Controllers\Admin\ContentModerationController::auditShortVideo` |
+| `GET` | `/api/admin/apps/{app_id}/short-video-comments` | `Yiyunying\Controllers\Admin\ContentModerationController::shortVideoComments` |
+| `GET` | `/api/admin/apps/{app_id}/short-video-comments/{comment_id}` | `Yiyunying\Controllers\Admin\ContentModerationController::showShortVideoComment` |
+| `PUT` | `/api/admin/apps/{app_id}/short-video-comments/{comment_id}/audit` | `Yiyunying\Controllers\Admin\ContentModerationController::auditShortVideoComment` |
 | `GET` | `/api/admin/apps/{app_id}/forum-report-tags` | `Yiyunying\Controllers\Admin\ForumController::reportTags` |
 | `POST` | `/api/admin/apps/{app_id}/forum-report-tags` | `Yiyunying\Controllers\Admin\ForumController::createReportTag` |
 | `PUT` | `/api/admin/apps/{app_id}/forum-report-tags/{tag_id}` | `Yiyunying\Controllers\Admin\ForumController::updateReportTag` |
@@ -373,6 +404,7 @@
 | `POST` | `/api/admin/apps/{app_id}/chat-rooms` | `Yiyunying\Controllers\Admin\GroupController::create` |
 | `GET` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}` | `Yiyunying\Controllers\Admin\GroupController::show` |
 | `PUT` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}` | `Yiyunying\Controllers\Admin\GroupController::update` |
+| `POST` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}/avatar` | `Yiyunying\Controllers\Admin\GroupController::avatar` |
 | `DELETE` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}` | `Yiyunying\Controllers\Admin\GroupController::delete` |
 | `GET` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}/members` | `Yiyunying\Controllers\Admin\GroupController::members` |
 | `POST` | `/api/admin/apps/{app_id}/chat-rooms/{room_id}/members` | `Yiyunying\Controllers\Admin\GroupController::addMember` |
@@ -399,6 +431,11 @@
 | `POST` | `/api/admin/apps/{app_id}/shop-goods` | `Yiyunying\Controllers\Admin\CommerceController::createGoods` |
 | `PUT` | `/api/admin/apps/{app_id}/shop-goods/{goods_id}` | `Yiyunying\Controllers\Admin\CommerceController::updateGoods` |
 | `DELETE` | `/api/admin/apps/{app_id}/shop-goods/{goods_id}` | `Yiyunying\Controllers\Admin\CommerceController::deleteGoods` |
+| `GET` | `/api/admin/apps/{app_id}/shop-goods-comments` | `Yiyunying\Controllers\Admin\CommerceController::shopGoodsComments` |
+| `GET` | `/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}` | `Yiyunying\Controllers\Admin\CommerceController::showShopGoodsComment` |
+| `PUT` | `/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/hide` | `Yiyunying\Controllers\Admin\CommerceController::hideShopGoodsComment` |
+| `PUT` | `/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/restore` | `Yiyunying\Controllers\Admin\CommerceController::restoreShopGoodsComment` |
+| `DELETE` | `/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}` | `Yiyunying\Controllers\Admin\CommerceController::deleteShopGoodsComment` |
 | `GET` | `/api/admin/apps/{app_id}/red-packets` | `Yiyunying\Controllers\Admin\CommerceController::redPackets` |
 | `POST` | `/api/admin/apps/{app_id}/red-packets/{packet_id}/force-refund` | `Yiyunying\Controllers\Admin\CommerceController::forceRefundRedPacket` |
 | `GET` | `/api/admin/apps/{app_id}/lottery-prizes` | `Yiyunying\Controllers\Admin\CommerceController::lotteryPrizes` |
@@ -427,7 +464,7 @@
 | `GET` | `/api/admin/apps/{app_id}/api-logs` | `Yiyunying\Controllers\Admin\StatisticsController::apiLogs` |
 | `GET` | `/api/admin/apps/{app_id}/operation-logs` | `Yiyunying\Controllers\Admin\StatisticsController::operationLogs` |
 
-## 用户接口（332）
+## 用户接口（336）
 
 | 方法 | 路径 | 处理器 |
 | --- | --- | --- |
@@ -437,6 +474,7 @@
 | `POST` | `/api/user/token/refresh` | `Yiyunying\Controllers\User\AuthController::refresh` |
 | `GET` | `/api/user/me` | `Yiyunying\Controllers\User\AuthController::me` |
 | `GET` | `/api/user/permissions` | `Yiyunying\Controllers\User\AuthController::permissions` |
+| `GET` | `/api/user/features` | `Yiyunying\Controllers\User\AuthController::features` |
 | `POST` | `/api/user/heartbeat` | `Yiyunying\Controllers\User\AuthController::heartbeat` |
 | `GET` | `/api/user/identity-unbind-requests` | `Yiyunying\Controllers\User\IdentityController::index` |
 | `POST` | `/api/user/identity-unbind-requests` | `Yiyunying\Controllers\User\IdentityController::create` |
@@ -516,6 +554,7 @@
 | `POST` | `/api/user/resources` | `Yiyunying\Controllers\User\ResourceController::submit` |
 | `GET` | `/api/user/resources/{resource_id}` | `Yiyunying\Controllers\User\ResourceController::showResource` |
 | `POST` | `/api/user/resources/{resource_id}/buy` | `Yiyunying\Controllers\User\ResourceController::buy` |
+| `GET` | `/api/user/resources/{resource_id}/download` | `Yiyunying\Controllers\User\ResourceController::downloadResource` |
 | `POST` | `/api/user/resources/{resource_id}/comments` | `Yiyunying\Controllers\User\ResourceController::comment` |
 | `POST` | `/api/user/resources/{resource_id}/rating` | `Yiyunying\Controllers\User\ResourceController::rating` |
 | `POST` | `/api/user/resources/{resource_id}/reactions` | `Yiyunying\Controllers\User\ResourceController::resourceReaction` |
@@ -528,6 +567,8 @@
 | `GET` | `/api/user/store-apps` | `Yiyunying\Controllers\User\ResourceController::storeApps` |
 | `POST` | `/api/user/store-apps` | `Yiyunying\Controllers\User\ResourceController::submitStoreApp` |
 | `GET` | `/api/user/store-apps/{store_app_id}` | `Yiyunying\Controllers\User\ResourceController::showStoreApp` |
+| `POST` | `/api/user/store-apps/{store_app_id}/buy` | `Yiyunying\Controllers\User\ResourceController::buyStoreApp` |
+| `GET` | `/api/user/store-apps/{store_app_id}/download` | `Yiyunying\Controllers\User\ResourceController::downloadStoreApp` |
 | `POST` | `/api/user/store-apps/{store_app_id}/reactions` | `Yiyunying\Controllers\User\ResourceController::storeReaction` |
 | `GET` | `/api/user/favorites/store-apps` | `Yiyunying\Controllers\User\ResourceController::favoriteStoreApps` |
 | `GET` | `/api/user/favorites/uploads` | `Yiyunying\Controllers\User\FileFeedbackController::favoriteUploads` |
@@ -764,12 +805,13 @@
 | `GET` | `/api/user/ai/conversations/{conversation_id}/messages` | `Yiyunying\Controllers\User\AiConversationController::messages` |
 | `DELETE` | `/api/user/ai/conversations/{conversation_id}` | `Yiyunying\Controllers\User\AiConversationController::delete` |
 
-## 公开接口（23）
+## 公开接口（24）
 
 | 方法 | 路径 | 处理器 |
 | --- | --- | --- |
 | `GET` | `/api/public/app` | `Yiyunying\Controllers\PublicApi\BootstrapController::app` |
 | `GET` | `/api/public/bootstrap` | `Yiyunying\Controllers\PublicApi\BootstrapController::bootstrap` |
+| `GET` | `/api/public/branding` | `Yiyunying\Controllers\PublicApi\BrandingController::show` |
 | `GET` | `/api/public/features` | `Yiyunying\Controllers\PublicApi\BootstrapController::features` |
 | `GET` | `/api/public/notices` | `Yiyunying\Controllers\PublicApi\BootstrapController::notices` |
 | `GET` | `/api/public/banners` | `Yiyunying\Controllers\PublicApi\BootstrapController::banners` |

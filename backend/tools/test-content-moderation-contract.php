@@ -55,11 +55,11 @@ $checks = [
     'moment review is tenant scoped and transaction locked' =>
         substr_count($source['admin'], 'FOR UPDATE') >= 2
         && substr_count($source['admin'], 'admin_id = ? AND app_id = ?') >= 5,
-    'comment approval locks every approved ancestor and rejection cascades through descendants' =>
+    'comment approval locks every approved ancestor and non-public decisions cascade through descendants' =>
         str_contains($source['admin'], 'assertApprovedMomentParentChain(')
-        && str_contains($source['admin'], 'rejectMomentCommentDescendants(')
+        && str_contains($source['admin'], 'transitionMomentCommentDescendants(')
         && str_contains($source['forum'], 'assertApprovedForumParentChain(')
-        && str_contains($source['forum'], 'rejectForumCommentDescendants(')
+        && str_contains($source['forum'], 'transitionForumCommentDescendants(')
         && substr_count($source['admin'], 'ORDER BY id FOR UPDATE') >= 1
         && substr_count($source['forum'], 'ORDER BY id FOR UPDATE') >= 1,
     'parent-content joins never expose an invisible parent' =>
@@ -68,6 +68,18 @@ $checks = [
     'rejections require a human-readable reason' =>
         str_contains($source['admin'], '拒绝审核时必须填写原因')
         && str_contains($source['forum'], '拒绝审核时必须填写原因'),
+    'three-state decisions accept optional hold notes and clear stale rejection reasons on approval' =>
+        substr_count($source['admin'], "['approved', 'rejected', 'on_hold']") >= 1
+        && substr_count($source['forum'], "['approved', 'rejected', 'on_hold']") >= 1
+        && str_contains($source['admin'], "if (\$status === 'approved') \$reason = ''")
+        && str_contains($source['forum'], "if (\$status === 'approved') \$reason = ''")
+        && str_contains($source['admin'], "'on_hold' => '暂定'")
+        && str_contains($source['forum'], "'on_hold' => '暂定'"),
+    'top-level hold and rejection lock and transition every active child' =>
+        str_contains($source['admin'], 'transitionAllMomentComments(')
+        && str_contains($source['forum'], 'transitionAllForumComments(')
+        && str_contains($source['admin'], "if (\$status !== 'approved')")
+        && str_contains($source['forum'], "if (\$status !== 'approved')"),
     'all content decisions write administrator audit logs' =>
         str_contains($source['admin'], "'moment_moderation'")
         && str_contains($source['admin'], "'moment_comment_moderation'")
@@ -95,6 +107,10 @@ $checks = [
         substr_count($source['user_forum'], 'ensureApprovedForInteraction($post);') >= 5
         && str_contains($source['user_forum'], "comment.audit_status = 'approved'")
         && str_contains($source['user_forum'], "post.audit_status = 'approved'"),
+    'held forum content cannot be reported or otherwise interacted with through owner visibility' =>
+        str_contains($source['user_forum'], "deleted_at IS NULL AND audit_status = 'approved'")
+        && substr_count($source['user_forum'], "AND comment.audit_status = 'approved'") >= 2
+        && substr_count($source['user_forum'], "AND post.audit_status = 'approved'") >= 2,
     'all user-side forum edits re-enter review when post moderation is enabled' =>
         str_contains($source['user_forum'], "\$audit = AppService::setting((int) \$user['app_id'], 'forum_post_audit', false)")
         && !str_contains($source['user_forum'], "\$audit = \$isOwner && AppService::setting"),
@@ -107,12 +123,14 @@ $checks = [
         && str_contains($source['forum_notifications'], "'forum_mention'")
         && str_contains($source['forum_notifications'], 'mentionIds('),
     'community moderation permission guards dynamic endpoints' =>
-        str_contains($source['access'], 'forum-comments|moments|moment-comments|reports')
+        str_contains($source['access'], 'forum-comments|moments|moment-comments|short-videos|short-video-comments|reports')
         && str_contains($source['roles'], '社区内容与审核'),
-    'Android uses explicit approve and required-reason reject actions' =>
+    'Android uses explicit approve reject and optional-note hold actions' =>
         substr_count($source['modules'], '.fixed("audit_status", "approved")') >= 4
         && substr_count($source['modules'], '.fixed("audit_status", "rejected")') >= 4
-        && substr_count($source['modules'], 'multilineRequired("reason", "拒绝原因（必填）")') >= 4,
+        && substr_count($source['modules'], '.fixed("audit_status", "on_hold")') >= 4
+        && substr_count($source['modules'], 'multilineRequired("reason", "拒绝原因（必填）")') >= 4
+        && substr_count($source['modules'], 'multiline("reason", "暂定说明（可选）")') >= 4,
     'Android loads server detail before review and refreshes after actions' =>
         str_contains($source['generic'], 'loadModerationDetail(snapshot)')
         && str_contains($source['generic'], '"moment-comments"')

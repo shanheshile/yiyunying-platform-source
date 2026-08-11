@@ -40,8 +40,10 @@
                 android:id="@+id/groupAvatar"
                 android:layout_width="72dp"
                 android:layout_height="72dp"
+                android:background="?attr/colorPrimaryContainer"
                 android:contentDescription="群聊或聊天室头像"
                 android:scaleType="centerCrop"
+                android:src="@drawable/bg_group_avatar_placeholder"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium" />
 
             <LinearLayout
@@ -64,6 +66,16 @@
                     android:layout_marginTop="4dp"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                     android:textColor="@color/on_surface_variant" />
+
+                <TextView
+                    android:id="@+id/groupDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:maxLines="3"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/announcement"

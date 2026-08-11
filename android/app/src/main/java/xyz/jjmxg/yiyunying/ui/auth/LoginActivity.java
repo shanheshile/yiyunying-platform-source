@@ -5,10 +5,12 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AlertDialog;
+
+import com.google.gson.JsonObject;
+
+import java.util.Collections;
 
 import xyz.jjmxg.yiyunying.ui.common.YiyunyingDialogBuilder;
 import xyz.jjmxg.yiyunying.ui.common.SafeTextInput;
@@ -17,7 +19,9 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import xyz.jjmxg.yiyunying.BuildConfig;
+import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.core.AppAccess;
+import xyz.jjmxg.yiyunying.data.api.Jsons;
 import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.data.session.EndpointPolicy;
 import xyz.jjmxg.yiyunying.data.session.SessionManager;
@@ -33,24 +37,32 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
     private ActivityLoginBinding binding;
     private Role selectedRole = AppEdition.role();
     private RequestHandle request;
+    private boolean buildIdentityValid;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SessionManager session = AppAccess.from(this).session();
+        buildIdentityValid = applyBuildIdentity(session);
+        boolean forceLogin = getIntent().getBooleanExtra(EXTRA_FORCE_LOGIN, false);
+        if (forceLogin) {
+            session.clearAuthentication();
+        }
         if (session.isAuthenticated() && !session.isCompatibleWithEdition()) {
             session.clearAuthentication();
         }
-        if (session.isCompatibleWithEdition() && !getIntent().getBooleanExtra(EXTRA_FORCE_LOGIN, false)) {
-            openMain();
-            return;
-        }
+        boolean validateExistingSession = buildIdentityValid
+            && session.isCompatibleWithEdition()
+            && !forceLogin;
         binding = ActivityLoginBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         CrashNotice.showPending(this);
-        binding.serverInput.setText(session.baseUrl());
-        binding.platformKeyInput.setText(session.platformKey());
-        binding.appKeyInput.setText(session.appKey());
+        // Login identity must come from the installed edition. Values persisted by an older
+        // version are deliberately ignored so a previously editable endpoint or tenant key can
+        // never override the developer-provisioned build identity.
+        binding.serverInput.setText(BuildConfig.DEFAULT_API_BASE_URL);
+        binding.platformKeyInput.setText(BuildConfig.DEFAULT_PLATFORM_KEY);
+        binding.appKeyInput.setText(BuildConfig.DEFAULT_APP_KEY);
         binding.accountInput.setText(session.account().isEmpty() ? AppEdition.defaultAccount() : session.account());
         binding.roleToggle.setVisibility(View.GONE);
         updateRole(selectedRole);
@@ -67,19 +79,102 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
             return false;
         });
         binding.formContainer.post(this::constrainFormWidth);
+        if (!buildIdentityValid) {
+            setAuthenticationEntryEnabled(false);
+            showConnectionConfigurationError();
+        } else if (validateExistingSession) {
+            validateExistingSession(session);
+        }
+    }
+
+    private boolean applyBuildIdentity(SessionManager session) {
+        try {
+            String normalized = EndpointPolicy.normalize(BuildConfig.DEFAULT_API_BASE_URL);
+            String tenantKey = AppEdition.role() == Role.USER
+                ? BuildConfig.DEFAULT_APP_KEY.trim()
+                : BuildConfig.DEFAULT_PLATFORM_KEY.trim();
+            if (tenantKey.isEmpty()
+                || (AppEdition.role() == Role.ADMIN && BuildConfig.DEFAULT_APP_KEY.trim().isEmpty())) {
+                throw new IllegalArgumentException("missing build tenant key");
+            }
+            if (AppEdition.role() == Role.PLATFORM
+                && !java.util.Arrays.asList(1, 2).contains(AppEdition.requiredPlatformLevel())) {
+                throw new IllegalArgumentException("invalid platform edition level");
+            }
+            boolean sameEndpoint = normalized.equals(session.baseUrl());
+            boolean sameTenant = AppEdition.role() == Role.USER
+                ? tenantKey.equals(session.appKey())
+                : tenantKey.equals(session.platformKey());
+            if (session.isAuthenticated() && (!sameEndpoint || !sameTenant)) {
+                session.clearAuthentication();
+            }
+            session.configureConnection(
+                BuildConfig.DEFAULT_API_BASE_URL,
+                BuildConfig.DEFAULT_APP_KEY,
+                BuildConfig.DEFAULT_PLATFORM_KEY
+            );
+            return true;
+        } catch (IllegalArgumentException exception) {
+            session.clearAuthentication();
+            return false;
+        }
+    }
+
+    private void validateExistingSession(SessionManager session) {
+        setLoading(true);
+        request = AppAccess.from(this).repository().get(
+            selectedRole.mePath(),
+            selectedRole == Role.ADMIN
+                ? Collections.singletonMap("app_key", BuildConfig.DEFAULT_APP_KEY.trim())
+                : Collections.emptyMap(),
+            result -> {
+                if (binding == null) return;
+                setLoading(false);
+                if (result.isSuccessful() && liveIdentityMatches(session, result.dataObject())) {
+                    openMain();
+                    return;
+                }
+                boolean rejected = result.isAuthenticationFailure() || result.httpCode() == 403 || result.isSuccessful();
+                if (rejected) session.clearAuthentication();
+                String message = rejected
+                    ? "登录状态已失效或与当前安装版本不匹配，请重新登录"
+                    : "暂时无法实时验证登录状态，请检查网络后重试";
+                Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
+            }
+        );
+    }
+
+    private boolean liveIdentityMatches(SessionManager session, JsonObject data) {
+        JsonObject actor = Jsons.object(data, selectedRole.wireName());
+        if (Jsons.longValue(actor, "id") != session.actorId()) return false;
+        if (selectedRole == Role.USER) {
+            // AuthService also matches the live token against X-App-Key for every user request.
+            return BuildConfig.DEFAULT_APP_KEY.trim().equals(session.appKey());
+        }
+        if (selectedRole == Role.ADMIN && !booleanValue(data, "app_identity_verified")) return false;
+        if (selectedRole == Role.PLATFORM) {
+            int liveLevel = Jsons.intValue(actor, "level", 0);
+            return liveLevel == AppEdition.requiredPlatformLevel()
+                && liveLevel == session.actorLevel()
+                && BuildConfig.DEFAULT_PLATFORM_KEY.trim().equals(Jsons.string(actor, "platform_key"));
+        }
+        return BuildConfig.DEFAULT_PLATFORM_KEY.trim().equals(Jsons.string(actor, "platform_key"));
     }
 
     private void updateRole(Role role) {
         selectedRole = role;
-        binding.serverLayout.setVisibility(role == Role.USER ? View.GONE : View.VISIBLE);
-        binding.platformKeyLayout.setVisibility(role == Role.USER ? View.GONE : View.VISIBLE);
+        // Connection and tenant identity are provisioned by the installed edition. Keep the
+        // populated inputs in the view binding for the existing authentication pipeline, but do
+        // not expose or allow editing them on any login screen.
+        binding.serverLayout.setVisibility(View.GONE);
+        binding.platformKeyLayout.setVisibility(View.GONE);
         binding.appKeyLayout.setVisibility(View.GONE);
         binding.registerButton.setVisibility(AppEdition.allowsSelfRegistration() ? View.VISIBLE : View.GONE);
         boolean userEdition = role == Role.USER;
         binding.forgotPasswordButton.setVisibility(userEdition ? View.VISIBLE : View.GONE);
         binding.cardLoginButton.setVisibility(userEdition ? View.VISIBLE : View.GONE);
         binding.cardAutoLoginButton.setVisibility(
-            userEdition && AppAccess.from(this).session().hasCardBinding(text(binding.appKeyInput.getText()))
+            userEdition && AppAccess.from(this).session().hasCardBinding(BuildConfig.DEFAULT_APP_KEY)
                 ? View.VISIBLE : View.GONE
         );
         String account = text(binding.accountInput.getText());
@@ -90,28 +185,28 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
     }
 
     private void login() {
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
         clearErrors();
-        String server = text(binding.serverInput.getText());
-        String platformKey = text(binding.platformKeyInput.getText());
-        String appKey = text(binding.appKeyInput.getText());
+        String server = BuildConfig.DEFAULT_API_BASE_URL;
+        String platformKey = BuildConfig.DEFAULT_PLATFORM_KEY;
+        String appKey = BuildConfig.DEFAULT_APP_KEY;
         String account = text(binding.accountInput.getText());
         String password = binding.passwordInput.getText() == null ? "" : binding.passwordInput.getText().toString();
         try {
             EndpointPolicy.normalize(server);
         } catch (IllegalArgumentException exception) {
-            if (selectedRole == Role.USER) {
-                Snackbar.make(binding.getRoot(), "当前服务暂不可用，请稍后重试", Snackbar.LENGTH_LONG).show();
-            } else {
-                binding.serverLayout.setError(exception.getMessage());
-            }
+            showConnectionConfigurationError();
             return;
         }
         if (selectedRole != Role.USER && platformKey.isEmpty()) {
-            binding.platformKeyLayout.setError("平台标识不能为空");
+            showConnectionConfigurationError();
             return;
         }
         if (selectedRole == Role.USER && appKey.isEmpty()) {
-            Snackbar.make(binding.getRoot(), "当前应用配置无效，请安装最新版本", Snackbar.LENGTH_LONG).show();
+            showConnectionConfigurationError();
             return;
         }
         if (account.isEmpty()) {
@@ -142,6 +237,10 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
     }
 
     private void showCardLoginDialog() {
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
         TextInputLayout layout = new TextInputLayout(this);
         layout.setHint("登录卡密");
         layout.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
@@ -185,16 +284,20 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
     }
 
     private void cardLogin(String cardCode, boolean automatic) {
-        String server = text(binding.serverInput.getText());
-        String appKey = text(binding.appKeyInput.getText());
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
+        String server = BuildConfig.DEFAULT_API_BASE_URL;
+        String appKey = BuildConfig.DEFAULT_APP_KEY;
         try {
             EndpointPolicy.normalize(server);
         } catch (IllegalArgumentException exception) {
-            Snackbar.make(binding.getRoot(), "当前服务暂不可用，请稍后重试", Snackbar.LENGTH_LONG).show();
+            showConnectionConfigurationError();
             return;
         }
         if (appKey.isEmpty()) {
-            Snackbar.make(binding.getRoot(), "当前应用配置无效，请安装最新版本", Snackbar.LENGTH_LONG).show();
+            showConnectionConfigurationError();
             return;
         }
         SessionManager session = AppAccess.from(this).session();
@@ -223,11 +326,15 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
     }
 
     private void register() {
+        if (!buildIdentityValid) {
+            showConnectionConfigurationError();
+            return;
+        }
         Intent intent = new Intent(this, RegisterActivity.class);
         intent.putExtra(RegisterActivity.EXTRA_ROLE, selectedRole.wireName());
-        intent.putExtra(RegisterActivity.EXTRA_BASE_URL, text(binding.serverInput.getText()));
-        intent.putExtra(RegisterActivity.EXTRA_PLATFORM_KEY, text(binding.platformKeyInput.getText()));
-        intent.putExtra(RegisterActivity.EXTRA_APP_KEY, text(binding.appKeyInput.getText()));
+        intent.putExtra(RegisterActivity.EXTRA_BASE_URL, BuildConfig.DEFAULT_API_BASE_URL);
+        intent.putExtra(RegisterActivity.EXTRA_PLATFORM_KEY, BuildConfig.DEFAULT_PLATFORM_KEY);
+        intent.putExtra(RegisterActivity.EXTRA_APP_KEY, BuildConfig.DEFAULT_APP_KEY);
         startActivity(intent);
     }
 
@@ -239,14 +346,34 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
         binding.passwordLayout.setError(null);
     }
 
+    private void showConnectionConfigurationError() {
+        Snackbar.make(
+            binding.getRoot(),
+            R.string.login_connection_config_error,
+            Snackbar.LENGTH_LONG
+        ).show();
+    }
+
+    private void setAuthenticationEntryEnabled(boolean enabled) {
+        binding.accountInput.setEnabled(enabled);
+        binding.passwordInput.setEnabled(enabled);
+        binding.loginButton.setEnabled(enabled);
+        binding.cardLoginButton.setEnabled(enabled);
+        binding.cardAutoLoginButton.setEnabled(enabled);
+        binding.registerButton.setEnabled(enabled);
+        binding.forgotPasswordButton.setEnabled(enabled);
+        binding.roleToggle.setEnabled(enabled);
+    }
+
     private void setLoading(boolean loading) {
+        boolean enabled = !loading && buildIdentityValid;
         binding.progress.setVisibility(loading ? View.VISIBLE : View.INVISIBLE);
-        binding.loginButton.setEnabled(!loading);
-        binding.cardLoginButton.setEnabled(!loading);
-        binding.cardAutoLoginButton.setEnabled(!loading);
-        binding.registerButton.setEnabled(!loading);
-        binding.forgotPasswordButton.setEnabled(!loading);
-        if (binding.roleToggle.getVisibility() == View.VISIBLE) binding.roleToggle.setEnabled(!loading);
+        binding.loginButton.setEnabled(enabled);
+        binding.cardLoginButton.setEnabled(enabled);
+        binding.cardAutoLoginButton.setEnabled(enabled);
+        binding.registerButton.setEnabled(enabled);
+        binding.forgotPasswordButton.setEnabled(enabled);
+        if (binding.roleToggle.getVisibility() == View.VISIBLE) binding.roleToggle.setEnabled(enabled);
     }
 
     private void openMain() {
@@ -268,6 +395,12 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
 
     private static String text(CharSequence value) {
         return value == null ? "" : value.toString().trim();
+    }
+
+    private static boolean booleanValue(JsonObject object, String key) {
+        if (object == null || !object.has(key) || object.get(key).isJsonNull()) return false;
+        try { return object.get(key).getAsBoolean(); }
+        catch (RuntimeException ignored) { return false; }
     }
 
     @Override

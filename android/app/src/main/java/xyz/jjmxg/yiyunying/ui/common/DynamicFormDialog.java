@@ -5,18 +5,19 @@ import android.content.res.ColorStateList;
 import android.text.InputType;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
 import androidx.appcompat.app.AlertDialog;
-import androidx.core.content.ContextCompat;
 import androidx.core.widget.TextViewCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+import com.google.android.material.textfield.MaterialAutoCompleteTextView;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
@@ -101,10 +102,13 @@ public final class DynamicFormDialog {
         ActionIconResolver.apply(positive, action.title(), 0);
         if (ActionIconResolver.destructive(action.title())) {
             positive.setBackgroundTintList(ColorStateList.valueOf(
-                ContextCompat.getColor(positive.getContext(), R.color.error)));
-            positive.setTextColor(ContextCompat.getColor(positive.getContext(), R.color.white));
+                ThemeColors.resolve(positive.getContext(),
+                    android.R.attr.colorError, R.color.error)));
+            int onError = ThemeColors.resolve(positive.getContext(),
+                com.google.android.material.R.attr.colorOnError, R.color.on_error);
+            positive.setTextColor(onError);
             TextViewCompat.setCompoundDrawableTintList(positive, ColorStateList.valueOf(
-                ContextCompat.getColor(positive.getContext(), R.color.white)));
+                onError));
         }
     }
 
@@ -131,6 +135,7 @@ public final class DynamicFormDialog {
             toggle.setChecked("1".equals(initial) || "true".equalsIgnoreCase(initial) || "是".equals(initial));
             return toggle;
         }
+        if (field.type() == FieldType.SELECT) return new ChoiceInput(context, field, initial);
         TextInputLayout layout = new TextInputLayout(context, null, com.google.android.material.R.attr.textInputOutlinedStyle);
         layout.setHint(field.label() + (field.required() ? " *" : ""));
         TextInputEditText input = new TextInputEditText(layout.getContext());
@@ -152,6 +157,22 @@ public final class DynamicFormDialog {
             View control = entry.getValue();
             if (control instanceof MaterialSwitch) {
                 body.addProperty(field.key(), ((MaterialSwitch) control).isChecked());
+                continue;
+            }
+            if (control instanceof ChoiceInput) {
+                ChoiceInput choice = (ChoiceInput) control;
+                String value = choice.value();
+                choice.clearError();
+                if (value.isEmpty()) {
+                    if (field.required()) choice.showError(field.label() + "不能为空或选择无效");
+                    if (field.required()) throw new IllegalArgumentException(field.label() + "不能为空");
+                    if (!choice.isEmpty()) {
+                        choice.showError(field.label() + "请选择列表中的项目");
+                        throw new IllegalArgumentException(field.label() + "选择无效");
+                    }
+                    continue;
+                }
+                body.addProperty(field.key(), value);
                 continue;
             }
             if (control instanceof AttachmentJsonInput) {
@@ -229,5 +250,46 @@ public final class DynamicFormDialog {
 
     private static int dp(Context context, int value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
+    }
+
+    /** Keeps selectable Chinese labels and protocol values separate at the UI boundary. */
+    private static final class ChoiceInput extends LinearLayout {
+        private final FieldSpec field;
+        private final TextInputLayout layout;
+        private final MaterialAutoCompleteTextView input;
+
+        ChoiceInput(Context context, FieldSpec field, String initialValue) {
+            super(context);
+            this.field = field;
+            setOrientation(VERTICAL);
+            layout = new TextInputLayout(context, null, com.google.android.material.R.attr.textInputOutlinedExposedDropdownMenuStyle);
+            layout.setHint(field.label() + (field.required() ? " *" : ""));
+            input = new MaterialAutoCompleteTextView(layout.getContext());
+            input.setInputType(InputType.TYPE_NULL);
+            input.setKeyListener(null);
+            input.setFocusable(false);
+            input.setClickable(true);
+            String[] labels = new String[field.options().size()];
+            for (int index = 0; index < labels.length; index++) labels[index] = field.options().get(index).label();
+            input.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_list_item_1, labels));
+            FieldSpec.Option initial = field.optionForValue(initialValue);
+            if (initial != null) input.setText(initial.label(), false);
+            else if (initialValue != null && !initialValue.trim().isEmpty()) input.setText(initialValue.trim(), false);
+            input.setOnClickListener(view -> input.showDropDown());
+            layout.addView(input, new LinearLayout.LayoutParams(-1, -2));
+            addView(layout, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        String value() {
+            FieldSpec.Option option = field.optionForValue(input.getText() == null ? "" : input.getText().toString());
+            return option == null ? "" : option.value();
+        }
+
+        boolean isEmpty() {
+            return input.getText() == null || input.getText().toString().trim().isEmpty();
+        }
+
+        void clearError() { layout.setError(null); }
+        void showError(String value) { layout.setError(value); }
     }
 }

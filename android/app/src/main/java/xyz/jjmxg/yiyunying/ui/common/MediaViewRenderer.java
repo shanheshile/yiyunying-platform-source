@@ -217,6 +217,7 @@ public final class MediaViewRenderer {
         int[] current = {0};
         boolean[] dragging = {false};
         boolean[] animating = {false};
+        boolean[] gestureBlocked = {false};
         float[] down = new float[2];
         int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         renderCommentStackLayers(context, stage, media, current[0], stageWidth, stageHeight,
@@ -231,13 +232,19 @@ public final class MediaViewRenderer {
         stage.setOnTouchListener((view, event) -> {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
-                if (animating[0]) return true;
+                gestureBlocked[0] = animating[0];
+                if (gestureBlocked[0]) return true;
                 down[0] = event.getX();
                 down[1] = event.getY();
                 dragging[0] = false;
                 stage.animate().cancel();
-                stage.setTranslationX(0f);
                 if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            if (gestureBlocked[0]) {
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    gestureBlocked[0] = false;
+                }
                 return true;
             }
             float deltaX = event.getX() - down[0];
@@ -249,8 +256,17 @@ public final class MediaViewRenderer {
                 }
                 if (dragging[0]) {
                     if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
-                    float maximum = dp(context, 52);
-                    stage.setTranslationX(Math.max(-maximum, Math.min(maximum, deltaX * 0.48f)));
+                    int target = Math.max(0, Math.min(media.size() - 1,
+                        current[0] + (deltaX < 0f ? 1 : -1)));
+                    float maximum = dp(context, 88);
+                    float carried = Math.max(-maximum, Math.min(maximum, deltaX));
+                    MediaStackTransitionPolicy.Transition transition =
+                        MediaStackTransitionPolicy.transition(media.size(), current[0], target, 3,
+                            offsetX, offsetY);
+                    MediaStackAnimator.applyDrag(stage, transition,
+                        MediaStackDragPolicy.progress(deltaX, dp(context, 72)), carried,
+                        itemIndex -> commentStackCard(context, media.get(itemIndex),
+                            stageWidth, stageHeight, -1));
                 } else if (Math.abs(deltaY) > touchSlop && view.getParent() != null) {
                     view.getParent().requestDisallowInterceptTouchEvent(false);
                 }
@@ -258,8 +274,7 @@ public final class MediaViewRenderer {
             }
             if (action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) return true;
             if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
-            if (!dragging[0] || action == MotionEvent.ACTION_CANCEL) {
-                stage.animate().translationX(0f).setDuration(100L).start();
+            if (!dragging[0]) {
                 if (action == MotionEvent.ACTION_UP
                     && Math.abs(deltaX) <= touchSlop && Math.abs(deltaY) <= touchSlop) {
                     view.performClick();
@@ -269,27 +284,28 @@ public final class MediaViewRenderer {
             boolean next = deltaX < 0;
             int target = Math.max(0, Math.min(media.size() - 1,
                 current[0] + (next ? 1 : -1)));
-            if (Math.abs(deltaX) < dp(context, 28)) target = current[0];
-            if (target == current[0]) {
-                stage.animate().translationX(next ? -dp(context, 9) : dp(context, 9))
-                    .setDuration(65L)
-                    .withEndAction(() -> stage.animate().translationX(0f).setDuration(85L).start())
-                    .start();
-                return true;
-            }
             int from = current[0];
-            int finalTarget = target;
-            float carriedTranslation = stage.getTranslationX();
-            stage.setTranslationX(0f);
-            animating[0] = true;
-            MediaStackTransitionPolicy.Transition transition =
-                MediaStackTransitionPolicy.transition(media.size(), from, finalTarget, 3,
+            boolean commit = action == MotionEvent.ACTION_UP && target != from
+                && Math.abs(deltaX) >= dp(context, 28);
+            int finalTarget = commit ? target : from;
+            float maximum = dp(context, 88);
+            float carried = Math.max(-maximum, Math.min(maximum, deltaX));
+            MediaStackTransitionPolicy.Transition dragged =
+                MediaStackTransitionPolicy.transition(media.size(), from, target, 3,
                     offsetX, offsetY);
-            MediaStackAnimator.animate(stage, transition, carriedTranslation, 220L,
+            float dragProgress = MediaStackDragPolicy.progress(deltaX, dp(context, 72));
+            MediaStackAnimator.applyDrag(stage, dragged, dragProgress, carried,
+                itemIndex -> commentStackCard(context, media.get(itemIndex),
+                    stageWidth, stageHeight, -1));
+            MediaStackTransitionPolicy.Transition settle = commit ? dragged
+                : MediaStackTransitionPolicy.transition(media.size(), target, from, 3,
+                    offsetX, offsetY);
+            animating[0] = true;
+            MediaStackAnimator.animate(stage, settle, 0f, commit ? 210L : 140L,
                 itemIndex -> commentStackCard(context, media.get(itemIndex),
                     stageWidth, stageHeight, -1),
                 () -> {
-                    current[0] = finalTarget;
+                    if (commit) current[0] = finalTarget;
                     renderCommentStackLayers(context, stage, media, current[0],
                         stageWidth, stageHeight, offsetX, offsetY);
                     updateCommentStackDescription(root, position, current[0], media.size(), videos);

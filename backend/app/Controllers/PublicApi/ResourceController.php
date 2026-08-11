@@ -111,6 +111,7 @@ final class ResourceController
         $appKey = trim((string) ($request->header('x-app-key') ?? $request->input('app_key', '')));
         $app = AppService::byKey($appKey);
         AppService::requireFeature((int) $app['id'], 'resources');
+        SubmissionInspectionService::requireCatalogMigrationReady((int) $app['id']);
         $request->setAttribute('admin_id', (int) $app['admin_id']);
         $request->setAttribute('app_id', (int) $app['id']);
         return $app;

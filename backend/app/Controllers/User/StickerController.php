@@ -95,43 +95,23 @@ final class StickerController
     {
         $user = self::user($request);
         $pack = self::pack($user, (int) $params['pack_id']);
-        $uploadId = max(0, (int) $request->input('upload_id', 0));
-        $upload = null;
-        if ($uploadId > 0) {
-            $upload = Database::one(
-                'SELECT * FROM uploads WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1',
-                [$uploadId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
-            );
-            if ($upload === null) throw new HttpException('上传图片不存在或无权使用', 404, 404);
-            if (!str_starts_with(strtolower((string) $upload['mime_type']), 'image/')) {
-                throw new HttpException('表情包只能使用图片文件', 0, 422);
-            }
-        }
-        $url = trim((string) ($upload['file_url'] ?? $request->input('image_url', '')));
-        if ($url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) throw new HttpException('请上传图片或填写正确的图片地址', 0, 422);
-        $id = Database::transaction(static function () use ($user, $pack, $request, $uploadId, $url): int {
-            $id = Database::insert(
-                'INSERT INTO stickers
-                 (admin_id, app_id, pack_id, user_id, upload_id, name, image_url, thumbnail_url,
-                  width, height, sort_order, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-                [
-                    (int) $user['admin_id'], (int) $user['app_id'], (int) $pack['id'], (int) $user['id'],
-                    $uploadId > 0 ? $uploadId : null, mb_substr(trim((string) $request->input('name', '')), 0, 100),
-                    mb_substr($url, 0, 1000), mb_substr(trim((string) $request->input('thumbnail_url', '')), 0, 1000),
-                    max(0, (int) $request->input('width', 0)), max(0, (int) $request->input('height', 0)),
-                    (int) $request->input('sort_order', 0),
-                ]
-            );
+        $item = $request->all();
+        $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
+        $created = Database::transaction(static function () use ($user, $pack, $item, $uploadId): array {
+            $lockedUploads = self::lockStickerUploads($user, $uploadId > 0 ? [$uploadId] : []);
+            $payload = self::stickerPayload($item, $lockedUploads);
+            $created = self::insertSticker($user, $pack, $payload);
             Database::execute(
                 'UPDATE sticker_packs SET sticker_count = sticker_count + 1,
-                 cover_url = IF(cover_url = ?, ?, cover_url), updated_at = NOW() WHERE id = ?',
-                ['', mb_substr($url, 0, 1000), (int) $pack['id']]
+                  cover_url = IF(cover_url = ?, ?, cover_url), updated_at = NOW() WHERE id = ?',
+                ['', $payload['url'], (int) $pack['id']]
             );
-            return $id;
+            return $created;
         });
-        LogService::userOperation($request, $user, 'sticker', 'create', $id, ['pack_id' => (int) $pack['id']]);
-        return Response::success(['sticker_id' => $id, 'image_url' => $url], '表情已添加', 201);
+        LogService::userOperation(
+            $request, $user, 'sticker', 'create', (int) $created['sticker_id'], ['pack_id' => (int) $pack['id']]
+        );
+        return Response::success($created, '表情已添加', 201);
     }
 
     public static function deleteSticker(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -157,12 +137,19 @@ final class StickerController
         if (!is_array($items) || $items === [] || count($items) > 100) {
             throw new HttpException('items 必须是 1-100 项的表情数组', 0, 422);
         }
-        $result = Database::transaction(static function () use ($user, $pack, $items): array {
+        $items = array_values($items);
+        $uploadIds = [];
+        foreach ($items as $index => $item) {
+            if (!is_array($item)) throw new HttpException('第 ' . ($index + 1) . ' 项表情格式无效', 0, 422);
+            $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
+            if ($uploadId > 0) $uploadIds[$uploadId] = true;
+        }
+        $result = Database::transaction(static function () use ($user, $pack, $items, $uploadIds): array {
             $created = [];
             $skipped = [];
-            foreach (array_values($items) as $index => $item) {
-                if (!is_array($item)) throw new HttpException('第 ' . ($index + 1) . ' 项表情格式无效', 0, 422);
-                $payload = self::stickerPayload($user, $item);
+            $lockedUploads = self::lockStickerUploads($user, array_keys($uploadIds));
+            foreach ($items as $index => $item) {
+                $payload = self::stickerPayload($item, $lockedUploads);
                 $existing = Database::one('SELECT id FROM stickers WHERE pack_id = ? AND image_url = ?', [(int) $pack['id'], $payload['url']]);
                 if ($existing !== null) {
                     $skipped[] = ['index' => $index, 'reason' => '相同表情已存在', 'sticker_id' => (int) $existing['id']];
@@ -207,8 +194,7 @@ final class StickerController
 
     private static function user(Request $request): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], 'messages');
+        $user = AuthService::user($request, 'messages');
         AuthService::ensureNotBanned($user, ['all', 'message', 'upload']);
         return $user;
     }
@@ -223,17 +209,47 @@ final class StickerController
         return $pack;
     }
 
-    private static function stickerPayload(array $user, array $item): array
+    /** @return array<int, array> */
+    private static function lockStickerUploads(array $user, array $uploadIds): array
+    {
+        $uploadIds = array_values(array_unique(array_filter(
+            array_map('intval', $uploadIds),
+            static fn(int $uploadId): bool => $uploadId > 0
+        )));
+        sort($uploadIds, SORT_NUMERIC);
+        if ($uploadIds === []) return [];
+        $placeholders = implode(',', array_fill(0, count($uploadIds), '?'));
+        $rows = Database::all(
+            "SELECT * FROM uploads WHERE id IN ({$placeholders})
+             AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1
+             ORDER BY id FOR UPDATE",
+            array_merge($uploadIds, [
+                (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
+            ])
+        );
+        if (count($rows) !== count($uploadIds)) {
+            throw new HttpException('上传图片已失效、被删除或不属于当前账号，请重新上传', 0, 409);
+        }
+        $locked = [];
+        foreach ($rows as $upload) {
+            if (!str_starts_with(strtolower((string) ($upload['mime_type'] ?? '')), 'image/')) {
+                throw new HttpException('表情包只能使用图片文件', 0, 422);
+            }
+            $url = trim((string) ($upload['file_url'] ?? ''));
+            if ($url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) {
+                throw new HttpException('上传图片地址无效，请重新上传', 0, 409);
+            }
+            $locked[(int) $upload['id']] = $upload;
+        }
+        return $locked;
+    }
+
+    private static function stickerPayload(array $item, array $lockedUploads): array
     {
         $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
-        $upload = null;
-        if ($uploadId > 0) {
-            $upload = Database::one(
-                'SELECT * FROM uploads WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1',
-                [$uploadId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
-            );
-            if ($upload === null) throw new HttpException('上传图片不存在或无权使用', 404, 404);
-            if (!str_starts_with(strtolower((string) $upload['mime_type']), 'image/')) throw new HttpException('表情包只能使用图片文件', 0, 422);
+        $upload = $uploadId > 0 ? ($lockedUploads[$uploadId] ?? null) : null;
+        if ($uploadId > 0 && $upload === null) {
+            throw new HttpException('上传图片未在当前保存事务中锁定，请重新上传', 0, 409);
         }
         $url = trim((string) ($upload['file_url'] ?? ($item['image_url'] ?? '')));
         if ($url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) throw new HttpException('请上传图片或填写正确的图片地址', 0, 422);

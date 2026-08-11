@@ -11,6 +11,7 @@ use Yiyunying\Core\Response;
 use Yiyunying\Core\Validator;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
+use Yiyunying\Services\CatalogDownloadService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\NotificationService;
@@ -54,8 +55,36 @@ final class ResourceController
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
-        $where = ['r.app_id = ?', 'r.audit_status = ?', 'r.status = 1', 'r.deleted_at IS NULL'];
-        $query = [(int) $user['app_id'], 'approved'];
+        $mine = $request->input('mine') === null
+            ? false
+            : Validator::boolean($request->input('mine'), 'mine');
+        $purchasedOnly = $request->input('purchased') === null
+            ? false
+            : Validator::boolean($request->input('purchased'), 'purchased');
+        if ($mine && $purchasedOnly) throw new HttpException('mine 与 purchased 不能同时启用', 0, 422);
+        $where = ['r.app_id = ?'];
+        $query = [(int) $user['app_id']];
+        if ($purchasedOnly) {
+            $where[] = 'EXISTS(SELECT 1 FROM resource_purchases rp WHERE rp.resource_id = r.id AND rp.buyer_user_id = ?)';
+            $query[] = (int) $user['id'];
+        } elseif ($mine) {
+            $where[] = 'r.deleted_at IS NULL';
+            $where[] = 'r.user_id = ?';
+            $query[] = (int) $user['id'];
+            $auditStatus = trim((string) $request->input('audit_status', ''));
+            if ($auditStatus !== '') {
+                if (!in_array($auditStatus, ['pending', 'approved', 'rejected', 'on_hold'], true)) {
+                    throw new HttpException('audit_status 格式错误', 0, 422);
+                }
+                $where[] = 'r.audit_status = ?';
+                $query[] = $auditStatus;
+            }
+        } else {
+            $where[] = 'r.deleted_at IS NULL';
+            $where[] = 'r.audit_status = ?';
+            $where[] = 'r.status = 1';
+            $query[] = 'approved';
+        }
         $resourceType = trim((string) $request->input('resource_type', ''));
         if ($resourceType !== '') {
             $where[] = 'r.resource_type = ?';
@@ -75,7 +104,8 @@ final class ResourceController
         $items = Database::all(
             "SELECT r.id, r.resource_type, r.category_id, r.user_id, r.title, r.description,
                     r.cover_url, r.size_bytes, r.file_sha256, r.risk_level,
-                    r.risk_reason, r.metadata_json, r.audit_status, r.price_integral,
+                    r.risk_reason, r.metadata_json, r.audit_status, r.audit_reason, r.audited_at,
+                    r.status, r.deleted_at, r.price_integral,
                     r.is_top, r.is_recommended, r.view_count, r.download_count, r.created_at,
                     c.name AS category_name, p.nickname,
                     (SELECT AVG(score) FROM resource_ratings rr WHERE rr.resource_id = r.id) AS rating
@@ -88,6 +118,11 @@ final class ResourceController
         foreach ($items as &$item) {
             $item['price_balance'] = (int) $item['price_integral'];
             unset($item['price_integral']);
+            $item['is_owner'] = (int) ($item['user_id'] ?? 0) === (int) $user['id'];
+            $item['purchased'] = $purchasedOnly;
+            $item['interaction_enabled'] = $item['deleted_at'] === null
+                && (string) $item['audit_status'] === 'approved'
+                && (int) $item['status'] === 1;
             $item = SubmissionInspectionService::present($item);
         }
         unset($item);
@@ -98,28 +133,40 @@ final class ResourceController
     public static function showResource(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request, 'resources');
-        $resource = self::resource((int) $user['app_id'], (int) $params['resource_id']);
-        Database::execute('UPDATE resources SET view_count = view_count + 1 WHERE id = ?', [(int) $resource['id']]);
-        $purchased = (int) $resource['price_integral'] === 0
-            || (int) ($resource['user_id'] ?? 0) === (int) $user['id']
-            || Database::one('SELECT id FROM resource_purchases WHERE resource_id = ? AND buyer_user_id = ?', [(int) $resource['id'], (int) $user['id']]) !== null;
-        if (!$purchased) {
-            unset($resource['download_url']);
+        $resource = self::resourceForViewer($user, (int) $params['resource_id']);
+        $deleted = $resource['deleted_at'] !== null;
+        $interactive = !$deleted
+            && (string) $resource['audit_status'] === 'approved'
+            && (int) $resource['status'] === 1;
+        if ($interactive) {
+            Database::execute('UPDATE resources SET view_count = view_count + 1 WHERE id = ?', [(int) $resource['id']]);
         }
+        $purchased = ($interactive && (int) $resource['price_integral'] === 0)
+            || (!$deleted && (int) ($resource['user_id'] ?? 0) === (int) $user['id'])
+            || Database::one(
+                'SELECT id FROM resource_purchases WHERE resource_id = ? AND buyer_user_id = ?',
+                [(int) $resource['id'], (int) $user['id']]
+            ) !== null;
+        unset($resource['download_url']);
+        $downloadUrl = CatalogDownloadService::userUrl('resource', $resource, $user, $purchased);
         $resource['purchased'] = $purchased;
-        $resource['liked'] = Database::one('SELECT id FROM resource_reactions WHERE resource_id = ? AND user_id = ? AND reaction_type = ?', [(int) $resource['id'], (int) $user['id'], 'like']) !== null;
-        $resource['favorited'] = Database::one('SELECT id FROM resource_reactions WHERE resource_id = ? AND user_id = ? AND reaction_type = ?', [(int) $resource['id'], (int) $user['id'], 'favorite']) !== null;
-        $resource['comments'] = Database::all(
+        $resource['interaction_enabled'] = $interactive;
+        $resource['download_enabled'] = $downloadUrl !== '';
+        $resource['is_owner'] = (int) ($resource['user_id'] ?? 0) === (int) $user['id'];
+        $resource['liked'] = $interactive && Database::one('SELECT id FROM resource_reactions WHERE resource_id = ? AND user_id = ? AND reaction_type = ?', [(int) $resource['id'], (int) $user['id'], 'like']) !== null;
+        $resource['favorited'] = $interactive && Database::one('SELECT id FROM resource_reactions WHERE resource_id = ? AND user_id = ? AND reaction_type = ?', [(int) $resource['id'], (int) $user['id'], 'favorite']) !== null;
+        $resource['comments'] = $interactive ? Database::all(
             'SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, p.nickname, p.avatar
              FROM resource_comments c LEFT JOIN user_profiles p ON p.user_id = c.user_id
              WHERE c.resource_id = ? AND c.status = 1 ORDER BY c.id ASC LIMIT 100',
             [(int) $resource['id']]
-        );
+        ) : [];
         $resource = MessageMediaService::hydrate([$resource], 'resource', (int) $user['app_id'])[0];
         $resource['comments'] = MessageMediaService::hydrate($resource['comments'], 'resource_comment', (int) $user['app_id']);
         $resource['price_balance'] = (int) $resource['price_integral'];
         unset($resource['price_integral']);
         $resource = SubmissionInspectionService::present($resource);
+        if ($downloadUrl !== '') $resource['download_url'] = $downloadUrl;
         return Response::success(['resource' => $resource]);
     }
 
@@ -149,7 +196,7 @@ final class ResourceController
         $mediaData = $data;
         $mediaData['content'] = (string) $data['description'];
         $payload = MessageMediaService::userPayload($user, $mediaData);
-        $id = Database::transaction(static function () use (
+        $id = SubmissionInspectionService::catalogWriteTransaction((int) $user['app_id'], static function () use (
             $user,
             $data,
             $payload,
@@ -159,6 +206,24 @@ final class ResourceController
             $category,
             $inspection
         ): int {
+            SubmissionInspectionService::lockCatalogUploadReference(
+                (int) $inspection['source_upload_id'],
+                (int) $user['admin_id'],
+                (int) $user['app_id'],
+                (int) $user['id'],
+                SubmissionInspectionService::catalogScene($resourceType),
+                (string) $inspection['file_sha256']
+            );
+            if ((int) ($inspection['cover_upload_id'] ?? 0) > 0) {
+                SubmissionInspectionService::lockCatalogCoverReference(
+                    (int) $inspection['cover_upload_id'],
+                    (int) $user['admin_id'],
+                    (int) $user['app_id'],
+                    (int) $user['id'],
+                    SubmissionInspectionService::catalogCoverScene($resourceType),
+                    (string) ($inspection['cover_sha256'] ?? '')
+                );
+            }
             $id = Database::insert(
                 'INSERT INTO resources
                  (admin_id, app_id, resource_type, category_id, user_id, title, description,
@@ -173,7 +238,7 @@ final class ResourceController
                     $inspection['cover_url'], $inspection['source_url'], (int) $inspection['size_bytes'],
                     $inspection['file_sha256'], $inspection['risk_level'], $inspection['risk_reason'],
                     $inspection['source_upload_id'], $inspection['cover_upload_id'],
-                    $inspection['metadata_json'], max(0, (int) ($data['price_balance'] ?? 0)),
+                    $inspection['metadata_json'], SubmissionInspectionService::catalogPrice($data['price_balance'] ?? 0),
                     $audit, $status,
                 ]
             );
@@ -195,8 +260,26 @@ final class ResourceController
     public static function buy(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request, 'resources');
+        AuthService::ensureNotBanned($user, ['all', 'resource', 'payment', 'commerce']);
         $resourceId = (int) $params['resource_id'];
-        $result = Database::transaction(static function () use ($user, $resourceId): array {
+        $expectedPrice = Validator::integer(
+            $request->input('expected_price_balance'), 'expected_price_balance', 0,
+            SubmissionInspectionService::MAX_CATALOG_PRICE_BALANCE
+        );
+        $expectedUploadId = Validator::integer(
+            $request->input('expected_source_upload_id'), 'expected_source_upload_id', 1, PHP_INT_MAX
+        );
+        $ready = Database::one(
+            'SELECT * FROM resources WHERE id = ? AND admin_id = ? AND app_id = ?
+             AND audit_status = ? AND status = 1 AND deleted_at IS NULL',
+            [$resourceId, (int) $user['admin_id'], (int) $user['app_id'], 'approved']
+        );
+        if ($ready === null) throw new HttpException('资源不存在或不可购买', 404, 404);
+        CatalogDownloadService::assertReady('resource', $ready);
+        $readyUploadId = (int) ($ready['source_upload_id'] ?? 0);
+        $result = SubmissionInspectionService::catalogWriteTransaction((int) $user['app_id'], static function () use (
+            $user, $resourceId, $readyUploadId, $expectedPrice, $expectedUploadId
+        ): array {
             $resource = Database::one(
                 'SELECT * FROM resources WHERE id = ? AND admin_id = ? AND app_id = ?
                  AND audit_status = ? AND status = 1 AND deleted_at IS NULL FOR UPDATE',
@@ -204,6 +287,13 @@ final class ResourceController
             );
             if ($resource === null) {
                 throw new HttpException('资源不存在或不可购买', 404, 404);
+            }
+            if ((int) ($resource['source_upload_id'] ?? 0) !== $readyUploadId) {
+                throw new HttpException('资源文件已变化，请刷新后重试', 0, 409);
+            }
+            if ((int) ($resource['source_upload_id'] ?? 0) !== $expectedUploadId
+                || max(0, (int) ($resource['price_integral'] ?? 0)) !== $expectedPrice) {
+                throw new HttpException('资源文件或价格已变化，请刷新详情并重新确认', 0, 409);
             }
             if ((int) ($resource['user_id'] ?? 0) === (int) $user['id']) {
                 return ['resource' => $resource, 'already_owned' => true];
@@ -213,7 +303,10 @@ final class ResourceController
             }
             $price = (int) $resource['price_integral'];
             if ($price > 0) {
-                $asset = WalletService::requireActivityEnabled((int) $user['app_id']);
+                if (!(bool) AppService::setting((int) $user['app_id'], 'balance_activity_enabled', true)) {
+                    throw new HttpException('当前应用已关闭余额消费和互动活动', 403, 403);
+                }
+                $asset = 'balance';
                 WalletService::adjust($user, $asset, -$price, 'resource_buy', 'resource', $resourceId, '余额购买资源');
                 if ($resource['user_id'] !== null) {
                     WalletService::adjust([
@@ -225,14 +318,13 @@ final class ResourceController
             }
             Database::execute(
                 'INSERT INTO resource_purchases
-                 (admin_id, app_id, resource_id, buyer_user_id, seller_user_id, price_integral, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                 (admin_id, app_id, resource_id, buyer_user_id, seller_user_id, price_integral, asset_type, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], $resourceId, (int) $user['id'],
-                    $resource['user_id'] === null ? null : (int) $resource['user_id'], $price,
+                    $resource['user_id'] === null ? null : (int) $resource['user_id'], $price, 'balance',
                 ]
             );
-            Database::execute('UPDATE resources SET download_count = download_count + 1 WHERE id = ?', [$resourceId]);
             return ['resource' => $resource, 'already_owned' => false];
         });
         if (!$result['already_owned'] && (int) ($result['resource']['user_id'] ?? 0) > 0
@@ -259,10 +351,20 @@ final class ResourceController
         LogService::userOperation($request, $user, 'resource', 'buy', $resourceId);
         return Response::success([
             'resource_id' => $resourceId,
-            'download_url' => $result['resource']['download_url'],
+            'download_url' => CatalogDownloadService::userUrl(
+                'resource', $result['resource'], $user, true
+            ),
             'already_owned' => $result['already_owned'],
             'cost_balance' => $result['already_owned'] ? 0 : (int) $result['resource']['price_integral'],
         ], $result['already_owned'] ? '资源已经拥有' : '资源购买成功');
+    }
+
+    public static function downloadResource(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = self::user($request, 'resources');
+        return CatalogDownloadService::downloadForUser(
+            $request, $user, 'resource', (int) $params['resource_id']
+        );
     }
 
     public static function comment(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -272,25 +374,41 @@ final class ResourceController
         $resource = self::resource((int) $user['app_id'], (int) $params['resource_id']);
         $payload = MessageMediaService::userPayload($user, $request->all());
         if (mb_strlen((string) $payload['content']) > 2000) throw new HttpException('评论正文不能超过 2000 个字符', 0, 422);
-        $id = Database::transaction(static function () use ($user, $resource, $request, $payload): int {
+        $parentId = Validator::integer($request->input('parent_id', 0), 'parent_id', 0, PHP_INT_MAX);
+        $result = SubmissionInspectionService::catalogWriteTransaction((int) $user['app_id'], static function () use ($user, $resource, $parentId, $payload): array {
+            $parentUserId = 0;
+            if ($parentId > 0) {
+                $parent = Database::one(
+                    'SELECT id, user_id FROM resource_comments
+                     WHERE id = ? AND resource_id = ? AND admin_id = ? AND app_id = ? AND status = 1
+                     FOR UPDATE',
+                    [
+                        $parentId,
+                        (int) $resource['id'],
+                        (int) $user['admin_id'],
+                        (int) $user['app_id'],
+                    ]
+                );
+                if ($parent === null) {
+                    throw new HttpException('回复目标不存在、已删除或不属于当前资源', 0, 422);
+                }
+                $parentUserId = (int) $parent['user_id'];
+            }
             $id = Database::insert(
                 'INSERT INTO resource_comments
                  (admin_id, app_id, resource_id, user_id, parent_id, content, status, created_at)
                  VALUES (?, ?, ?, ?, ?, ?, 1, NOW())',
                 [
                     (int) $user['admin_id'], (int) $user['app_id'], (int) $resource['id'], (int) $user['id'],
-                    (int) $request->input('parent_id', 0) ?: null, (string) $payload['content'],
+                    $parentId > 0 ? $parentId : null, (string) $payload['content'],
                 ]
             );
             MessageMediaService::save('resource_comment', $id, $payload);
-            return $id;
+            return ['id' => $id, 'parent_user_id' => $parentUserId];
         });
+        $id = (int) $result['id'];
         $receiverId = (int) ($resource['user_id'] ?? 0);
-        $parentId = (int) $request->input('parent_id', 0);
-        if ($parentId > 0) {
-            $parent = Database::one('SELECT user_id FROM resource_comments WHERE id = ? AND resource_id = ? AND status = 1', [$parentId, (int) $resource['id']]);
-            if ($parent !== null) $receiverId = (int) $parent['user_id'];
-        }
+        if ($parentId > 0) $receiverId = (int) $result['parent_user_id'];
         if ($receiverId > 0 && $receiverId !== (int) $user['id']) {
             $receiver = NotificationService::user((int) $user['admin_id'], (int) $user['app_id'], $receiverId);
             if ($receiver !== null) NotificationService::send(
@@ -306,6 +424,7 @@ final class ResourceController
     public static function rating(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request, 'resources');
+        AuthService::ensureNotBanned($user, ['all', 'resource']);
         $resource = self::resource((int) $user['app_id'], (int) $params['resource_id']);
         $score = Validator::integer($request->input('score'), 'score', 1, 5);
         Database::execute(
@@ -327,6 +446,7 @@ final class ResourceController
     public static function resourceReaction(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request, 'resources');
+        AuthService::ensureNotBanned($user, ['all', 'resource']);
         $resource = self::resource((int) $user['app_id'], (int) $params['resource_id']);
         $type = trim((string) $request->input('reaction_type', 'like'));
         $active = self::toggleReaction('resource_reactions', 'resource_id', (int) $resource['id'], (int) $user['id'], $type);
@@ -389,7 +509,7 @@ final class ResourceController
         if (!(bool) AppService::setting((int) $user['app_id'], 'store_user_submit_enabled', true)) {
             throw new HttpException('当前应用未开放应用投稿', 403, 403);
         }
-        AuthService::ensureNotBanned($user, ['all', 'resource']);
+        AuthService::ensureNotBanned($user, ['all', 'resource', 'store']);
         $data = $request->all();
         Validator::required($data, ['name', 'package_name', 'version_name']);
         $category = SubmissionInspectionService::resolveStoreCategory(
@@ -416,7 +536,7 @@ final class ResourceController
         $media = $data;
         $media['content'] = (string) ($data['description'] ?? '');
         $payload = MessageMediaService::userPayload($user, $media);
-        $id = Database::transaction(static function () use (
+        $id = SubmissionInspectionService::catalogWriteTransaction((int) $user['app_id'], static function () use (
             $user,
             $data,
             $payload,
@@ -427,6 +547,24 @@ final class ResourceController
             $category,
             $inspection
         ): int {
+            SubmissionInspectionService::lockCatalogUploadReference(
+                (int) $inspection['source_upload_id'],
+                (int) $user['admin_id'],
+                (int) $user['app_id'],
+                (int) $user['id'],
+                'store_app_package',
+                (string) $inspection['file_sha256']
+            );
+            if ((int) ($inspection['cover_upload_id'] ?? 0) > 0) {
+                SubmissionInspectionService::lockCatalogCoverReference(
+                    (int) $inspection['cover_upload_id'],
+                    (int) $user['admin_id'],
+                    (int) $user['app_id'],
+                    (int) $user['id'],
+                    'store_app_icon',
+                    (string) ($inspection['cover_sha256'] ?? '')
+                );
+            }
             $id = Database::insert(
                 'INSERT INTO store_apps
                  (admin_id, app_id, category_id, user_id, name, package_name, version_name, version_code,
@@ -442,7 +580,7 @@ final class ResourceController
                     (string) $payload['content'], $inspection['metadata_json'],
                     $inspection['file_sha256'], $inspection['risk_level'], $inspection['risk_reason'],
                     $inspection['source_upload_id'], $inspection['cover_upload_id'],
-                    $audit, '', max(0, (int) ($data['price_balance'] ?? 0)), $status,
+                    $audit, '', SubmissionInspectionService::catalogPrice($data['price_balance'] ?? 0), $status,
                 ]
             );
             MessageMediaService::save('store_app', $id, $payload);
@@ -468,8 +606,36 @@ final class ResourceController
         $page = $request->page();
         $limit = $request->limit();
         $offset = ($page - 1) * $limit;
-        $where = ['s.app_id = ?', 's.audit_status = ?', 's.status = 1', 's.deleted_at IS NULL'];
-        $query = [(int) $user['app_id'], 'approved'];
+        $mine = $request->input('mine') === null
+            ? false
+            : Validator::boolean($request->input('mine'), 'mine');
+        $purchasedOnly = $request->input('purchased') === null
+            ? false
+            : Validator::boolean($request->input('purchased'), 'purchased');
+        if ($mine && $purchasedOnly) throw new HttpException('mine 与 purchased 不能同时启用', 0, 422);
+        $where = ['s.app_id = ?'];
+        $query = [(int) $user['app_id']];
+        if ($purchasedOnly) {
+            $where[] = 'EXISTS(SELECT 1 FROM store_app_purchases sap WHERE sap.store_app_id = s.id AND sap.buyer_user_id = ?)';
+            $query[] = (int) $user['id'];
+        } elseif ($mine) {
+            $where[] = 's.deleted_at IS NULL';
+            $where[] = 's.user_id = ?';
+            $query[] = (int) $user['id'];
+            $auditStatus = trim((string) $request->input('audit_status', ''));
+            if ($auditStatus !== '') {
+                if (!in_array($auditStatus, ['pending', 'approved', 'rejected', 'on_hold'], true)) {
+                    throw new HttpException('audit_status 格式错误', 0, 422);
+                }
+                $where[] = 's.audit_status = ?';
+                $query[] = $auditStatus;
+            }
+        } else {
+            $where[] = 's.deleted_at IS NULL';
+            $where[] = 's.audit_status = ?';
+            $where[] = 's.status = 1';
+            $query[] = 'approved';
+        }
         if ($request->input('category_id') !== null && $request->input('category_id') !== '') {
             $where[] = 's.category_id = ?';
             $query[] = (int) $request->input('category_id');
@@ -484,7 +650,8 @@ final class ResourceController
         $items = Database::all(
             "SELECT s.id, s.category_id, s.name, s.package_name, s.version_name, s.version_code,
                     s.icon_url, s.size_bytes, s.description, s.metadata_json, s.file_sha256,
-                    s.risk_level, s.risk_reason, s.audit_status, s.price_integral, s.download_count,
+                    s.user_id, s.risk_level, s.risk_reason, s.audit_status, s.audit_reason,
+                    s.audited_at, s.status, s.deleted_at, s.price_integral, s.download_count,
                     c.name AS category_name
              FROM store_apps s LEFT JOIN store_categories c ON c.id = s.category_id
              WHERE {$whereSql} ORDER BY s.id DESC LIMIT {$limit} OFFSET {$offset}",
@@ -494,6 +661,11 @@ final class ResourceController
         foreach ($items as &$item) {
             $item['price_balance'] = (int) ($item['price_integral'] ?? 0);
             unset($item['price_integral']);
+            $item['is_owner'] = (int) ($item['user_id'] ?? 0) === (int) $user['id'];
+            $item['purchased'] = $purchasedOnly;
+            $item['interaction_enabled'] = $item['deleted_at'] === null
+                && (string) $item['audit_status'] === 'approved'
+                && (int) $item['status'] === 1;
             $item = SubmissionInspectionService::present($item);
         }
         unset($item);
@@ -505,31 +677,152 @@ final class ResourceController
         $user = self::user($request, 'store');
         $app = Database::one(
             'SELECT * FROM store_apps
-             WHERE id = ? AND app_id = ? AND audit_status = ? AND status = 1 AND deleted_at IS NULL',
-            [(int) $params['store_app_id'], (int) $user['app_id'], 'approved']
+             WHERE id = ? AND app_id = ?
+               AND ((deleted_at IS NULL AND ((audit_status = ? AND status = 1) OR user_id = ?))
+                 OR EXISTS(SELECT 1 FROM store_app_purchases sap
+                    WHERE sap.store_app_id = store_apps.id AND sap.buyer_user_id = ?))',
+            [
+                (int) $params['store_app_id'], (int) $user['app_id'], 'approved',
+                (int) $user['id'], (int) $user['id'],
+            ]
         );
         if ($app === null) {
             throw new HttpException('商店应用不存在', 404, 404);
         }
-        $canDownload = (int) ($app['price_integral'] ?? 0) === 0
-            || (int) ($app['user_id'] ?? 0) === (int) $user['id'];
-        if (!$canDownload) {
-            unset($app['apk_url']);
-        }
-        $app['can_download'] = $canDownload;
+        $deleted = $app['deleted_at'] !== null;
+        $interactive = !$deleted
+            && (string) $app['audit_status'] === 'approved'
+            && (int) $app['status'] === 1;
+        $purchased = ($interactive && (int) ($app['price_integral'] ?? 0) === 0)
+            || (!$deleted && (int) ($app['user_id'] ?? 0) === (int) $user['id'])
+            || Database::one(
+                'SELECT id FROM store_app_purchases WHERE store_app_id = ? AND buyer_user_id = ?',
+                [(int) $app['id'], (int) $user['id']]
+            ) !== null;
+        unset($app['apk_url']);
+        $downloadUrl = CatalogDownloadService::userUrl('store_app', $app, $user, $purchased);
+        $app['purchased'] = $purchased;
+        $app['can_download'] = $downloadUrl !== '';
+        $app['download_enabled'] = $downloadUrl !== '';
+        $app['interaction_enabled'] = $interactive;
+        $app['is_owner'] = (int) ($app['user_id'] ?? 0) === (int) $user['id'];
         $app['price_balance'] = (int) ($app['price_integral'] ?? 0);
         unset($app['price_integral']);
         $app['images'] = Database::all('SELECT image_url, sort_order FROM store_app_images WHERE store_app_id = ? ORDER BY sort_order', [(int) $app['id']]);
         $app = MessageMediaService::hydrate([$app], 'store_app', (int) $user['app_id'])[0];
-        $app['liked'] = Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'like']) !== null;
-        $app['favorited'] = Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'favorite']) !== null;
+        $app['liked'] = $interactive && Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'like']) !== null;
+        $app['favorited'] = $interactive && Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'favorite']) !== null;
         $app = SubmissionInspectionService::present($app);
+        if ($downloadUrl !== '') $app['apk_url'] = $downloadUrl;
         return Response::success(['store_app' => $app]);
+    }
+
+    public static function buyStoreApp(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = self::user($request, 'store');
+        AuthService::ensureNotBanned($user, ['all', 'store', 'shop', 'payment', 'commerce']);
+        $storeAppId = (int) $params['store_app_id'];
+        $expectedPrice = Validator::integer(
+            $request->input('expected_price_balance'), 'expected_price_balance', 0,
+            SubmissionInspectionService::MAX_CATALOG_PRICE_BALANCE
+        );
+        $expectedUploadId = Validator::integer(
+            $request->input('expected_source_upload_id'), 'expected_source_upload_id', 1, PHP_INT_MAX
+        );
+        $expectedVersionCode = Validator::integer(
+            $request->input('expected_version_code'), 'expected_version_code', 1, PHP_INT_MAX
+        );
+        $ready = Database::one(
+            'SELECT * FROM store_apps WHERE id = ? AND admin_id = ? AND app_id = ?
+             AND audit_status = ? AND status = 1 AND deleted_at IS NULL',
+            [$storeAppId, (int) $user['admin_id'], (int) $user['app_id'], 'approved']
+        );
+        if ($ready === null) throw new HttpException('商店应用不存在或不可购买', 404, 404);
+        CatalogDownloadService::assertReady('store_app', $ready);
+        $readyUploadId = (int) ($ready['source_upload_id'] ?? 0);
+        $result = SubmissionInspectionService::catalogWriteTransaction((int) $user['app_id'], static function () use (
+            $user, $storeAppId, $readyUploadId, $expectedPrice, $expectedUploadId, $expectedVersionCode
+        ): array {
+            $item = Database::one(
+                'SELECT * FROM store_apps WHERE id = ? AND admin_id = ? AND app_id = ?
+                 AND audit_status = ? AND status = 1 AND deleted_at IS NULL FOR UPDATE',
+                [$storeAppId, (int) $user['admin_id'], (int) $user['app_id'], 'approved']
+            );
+            if ($item === null) throw new HttpException('商店应用不存在或不可购买', 404, 404);
+            if ((int) ($item['source_upload_id'] ?? 0) !== $readyUploadId) {
+                throw new HttpException('应用安装包已变化，请刷新后重试', 0, 409);
+            }
+            if ((int) ($item['source_upload_id'] ?? 0) !== $expectedUploadId
+                || max(0, (int) ($item['price_integral'] ?? 0)) !== $expectedPrice
+                || max(1, (int) ($item['version_code'] ?? 0)) !== $expectedVersionCode) {
+                throw new HttpException('应用版本、安装包或价格已变化，请刷新详情并重新确认', 0, 409);
+            }
+            if ((int) ($item['user_id'] ?? 0) === (int) $user['id']) {
+                return ['item' => $item, 'already_owned' => true];
+            }
+            if (Database::one(
+                'SELECT id FROM store_app_purchases WHERE store_app_id = ? AND buyer_user_id = ?',
+                [$storeAppId, (int) $user['id']]
+            ) !== null) return ['item' => $item, 'already_owned' => true];
+            $price = max(0, (int) ($item['price_integral'] ?? 0));
+            if ($price > 0) {
+                if (!(bool) AppService::setting((int) $user['app_id'], 'balance_activity_enabled', true)) {
+                    throw new HttpException('当前应用已关闭余额消费和互动活动', 403, 403);
+                }
+                WalletService::adjust($user, 'balance', -$price, 'store_app_buy', 'store_app', $storeAppId, '余额购买应用');
+                if ((int) ($item['user_id'] ?? 0) > 0) {
+                    WalletService::adjust([
+                        'id' => (int) $item['user_id'],
+                        'admin_id' => (int) $user['admin_id'],
+                        'app_id' => (int) $user['app_id'],
+                    ], 'balance', $price, 'store_app_sale', 'store_app', $storeAppId, '应用销售收入');
+                }
+            }
+            Database::execute(
+                'INSERT INTO store_app_purchases
+                 (admin_id, app_id, store_app_id, buyer_user_id, seller_user_id,
+                  price_balance, asset_type, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
+                [
+                    (int) $user['admin_id'], (int) $user['app_id'], $storeAppId, (int) $user['id'],
+                    (int) ($item['user_id'] ?? 0) > 0 ? (int) $item['user_id'] : null,
+                    $price, 'balance',
+                ]
+            );
+            return ['item' => $item, 'already_owned' => false];
+        });
+        if (!$result['already_owned'] && (int) ($result['item']['user_id'] ?? 0) > 0
+            && (int) $result['item']['user_id'] !== (int) $user['id']) {
+            $seller = NotificationService::user(
+                (int) $user['admin_id'], (int) $user['app_id'], (int) $result['item']['user_id']
+            );
+            if ($seller !== null) NotificationService::send(
+                $seller, 'store_app_sale', '应用被购买',
+                '《' . (string) $result['item']['name'] . '》产生了一笔新购买',
+                ['store_app_id' => $storeAppId, 'buyer_user_id' => (int) $user['id']]
+            );
+        }
+        LogService::userOperation($request, $user, 'store_app', 'buy', $storeAppId);
+        return Response::success([
+            'store_app_id' => $storeAppId,
+            'apk_url' => CatalogDownloadService::userUrl('store_app', $result['item'], $user, true),
+            'already_owned' => (bool) $result['already_owned'],
+            'cost_balance' => $result['already_owned'] ? 0 : (int) $result['item']['price_integral'],
+        ], $result['already_owned'] ? '应用已经拥有' : '应用购买成功');
+    }
+
+    public static function downloadStoreApp(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $user = self::user($request, 'store');
+        return CatalogDownloadService::downloadForUser(
+            $request, $user, 'store_app', (int) $params['store_app_id']
+        );
     }
 
     public static function storeReaction(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $user = self::user($request, 'store');
+        AuthService::ensureNotBanned($user, ['all', 'resource', 'store']);
         $storeAppId = (int) $params['store_app_id'];
         if (Database::one(
             'SELECT id FROM store_apps
@@ -565,8 +858,8 @@ final class ResourceController
 
     private static function user(Request $request, string $feature): array
     {
-        $user = AuthService::user($request);
-        AppService::requireFeature((int) $user['app_id'], $feature);
+        $user = AuthService::user($request, $feature);
+        SubmissionInspectionService::requireCatalogMigrationReady((int) $user['app_id']);
         return $user;
     }
 
@@ -582,6 +875,22 @@ final class ResourceController
         if ($resource === null) {
             throw new HttpException('资源不存在', 404, 404);
         }
+        return $resource;
+    }
+
+    private static function resourceForViewer(array $user, int $resourceId): array
+    {
+        $resource = Database::one(
+            'SELECT r.*, c.name AS category_name, p.nickname
+             FROM resources r INNER JOIN resource_categories c ON c.id = r.category_id
+             LEFT JOIN user_profiles p ON p.user_id = r.user_id
+             WHERE r.id = ? AND r.app_id = ?
+               AND ((r.deleted_at IS NULL AND ((r.audit_status = ? AND r.status = 1) OR r.user_id = ?))
+                 OR EXISTS(SELECT 1 FROM resource_purchases rp
+                    WHERE rp.resource_id = r.id AND rp.buyer_user_id = ?))',
+            [$resourceId, (int) $user['app_id'], 'approved', (int) $user['id'], (int) $user['id']]
+        );
+        if ($resource === null) throw new HttpException('资源不存在', 404, 404);
         return $resource;
     }
 

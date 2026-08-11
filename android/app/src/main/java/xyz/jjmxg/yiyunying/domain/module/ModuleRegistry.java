@@ -10,6 +10,55 @@ import java.util.Map;
 import xyz.jjmxg.yiyunying.domain.Role;
 
 public final class ModuleRegistry {
+    private static final FieldSpec.Option[] TARGET_TYPES = options(
+        "global", "全局", "level", "按等级", "platform", "授权平台", "admin", "管理员", "app", "应用", "user", "用户"
+    );
+    private static final FieldSpec.Option[] UPDATE_TARGET_TYPES = options(
+        "global", "全局", "level", "按等级", "platform", "授权平台", "admin", "管理员", "app", "应用"
+    );
+    private static final FieldSpec.Option[] EFFECTS = options(
+        "allow", "允许", "deny", "禁止", "config", "配置"
+    );
+    private static final FieldSpec.Option[] REACTION_TYPES = options(
+        "like", "点赞", "favorite", "收藏"
+    );
+    private static final FieldSpec.Option[] ACTIVITY_TYPES = options(
+        "red_packet", "红包", "lottery", "抽奖", "bounty", "悬赏"
+    );
+    private static final FieldSpec.Option[] FUNDING_MODES = options(
+        "balance", "余额", "issued", "平台发放"
+    );
+    private static final FieldSpec.Option[] PACKET_MODES = options(
+        "equal", "等额分配", "random", "随机分配"
+    );
+    private static final FieldSpec.Option[] EDITION_CODES = options(
+        "all", "全部客户端", "platform_owner", "一级平台端", "authorized_platform", "授权平台端", "admin", "管理端", "user", "用户端"
+    );
+    private static final FieldSpec.Option[] SCOPE_TYPES = options(
+        "global", "全局", "platform", "平台", "admin", "管理员", "app", "应用"
+    );
+    private static final FieldSpec.Option[] POPUP_FREQUENCIES = options(
+        "once", "仅首次显示", "daily", "每天一次", "login", "每次登录", "always", "始终显示", "none", "不弹窗"
+    );
+    private static final FieldSpec.Option[] AUDIENCE_TYPES = options(
+        "all", "全部用户", "vip", "仅会员", "normal", "仅普通用户", "user_ids", "指定用户", "levels", "指定等级", "tags", "指定标签"
+    );
+    private static final FieldSpec.Option[] CHANNEL_TYPES = options(
+        "private", "私聊", "group", "群聊", "service", "客服会话"
+    );
+    private static final FieldSpec.Option[] ROOM_KINDS = options(
+        "group", "群聊", "chat_room", "聊天室"
+    );
+    private static final FieldSpec.Option[] JOIN_MODES = options(
+        "open", "自由加入", "approval", "申请审核", "invite", "仅邀请"
+    );
+    private static final FieldSpec.Option[] CARD_TYPES = options(
+        "mixed", "混合卡", "direct", "直充卡", "login", "登录卡"
+    );
+    private static final FieldSpec.Option[] RESULT_VISIBILITIES = options(
+        "always", "始终公开", "after_vote", "投票后可见", "after_end", "结束后可见", "creator_only", "仅创建者可见"
+    );
+
     private final Map<Role, List<ModuleSpec>> modules = new EnumMap<>(Role.class);
     private final Map<String, ModuleSpec> byId = new LinkedHashMap<>();
 
@@ -71,7 +120,8 @@ public final class ModuleRegistry {
             .secondary("membership_level", "membership_status", "membership_expired_at", "status")
             .create(action("创建管理员", "POST", "/api/platform/admins",
                 req("account", "账号"), pwd("password", "初始密码"), field("nickname", "昵称"),
-                field("email", "邮箱"), integer("membership_days", "会员天数"),
+                req("app_key", "首个应用 API 唯一 ID"), field("app_name", "首个应用名称"),
+                field("email", "邮箱"), integer("vip_days", "会员天数"),
                 integer("app_quota", "应用额度"), integer("remote_document_quota", "远程文档额度"),
                 integer("balance", "余额")))
             .action(itemAction("编辑资料", "PUT", "/api/platform/admins/{admin_id}",
@@ -127,12 +177,12 @@ public final class ModuleRegistry {
             .path("/api/platform/governance-rules").paged().searchable("feature_code")
             .primary("feature_code", "target_type", "id").secondary("effect", "target_id", "target_level", "forced", "status")
             .create(action("新建治理规则", "POST", "/api/platform/governance-rules",
-                req("feature_code", "功能编码"), req("target_type", "目标 global/level/platform/admin/app/user"),
-                integer("target_id", "目标 ID"), integer("target_level", "目标等级"), req("effect", "效果 allow/deny/config"),
+                req("feature_code", "功能编码"), choice("target_type", "目标范围", true, TARGET_TYPES),
+                integer("target_id", "目标 ID"), integer("target_level", "目标等级"), choice("effect", "规则效果", true, EFFECTS),
                 json("value", "规则详细配置"), bool("forced", "强制锁定"), integer("priority", "优先级"),
                 date("starts_at", "开始时间"), date("ends_at", "结束时间"), field("remark", "备注")))
             .action(itemAction("编辑", "PUT", "/api/platform/governance-rules/{rule_id}",
-                field("effect", "效果"), json("value", "规则详细配置"), bool("forced", "强制锁定"),
+                choice("effect", "规则效果", false, EFFECTS), json("value", "规则详细配置"), bool("forced", "强制锁定"),
                 integer("priority", "优先级"), bool("status", "启用"), field("remark", "备注")))
             .action(confirmItem("删除", "DELETE", "/api/platform/governance-rules/{rule_id}", true)).build());
         result.add(ModuleSpec.builder("platform_community", "同级交流", role).group("治理")
@@ -142,16 +192,16 @@ public final class ModuleRegistry {
                 integer("target_level", "可见等级"), integer("scope_platform_id", "指定平台 ID"),
                 req("title", "标题"), multilineRequired("content", "内容"), json("attachments", "附件列表")))
             .action(itemAction("评论", "POST", "/api/platform/community/posts/{post_id}/comments", multilineRequired("content", "评论")))
-            .action(itemAction("点赞", "POST", "/api/platform/community/posts/{post_id}/reactions", field("reaction_type", "like/favorite").withDefault("like")))
+            .action(itemAction("点赞", "POST", "/api/platform/community/posts/{post_id}/reactions", choice("reaction_type", "互动类型", false, REACTION_TYPES).withDefault("like")))
             .action(confirmItem("删除", "DELETE", "/api/platform/community/posts/{post_id}", true)).build());
         result.add(ModuleSpec.builder("hierarchy_activities", "层级活动", role).group("互动")
             .path("/api/platform/activities").paged().searchable("keyword")
             .primary("title", "activity_type", "id")
             .secondary("owner", "total_balance", "remaining_balance", "remaining_slots", "status")
             .create(action("发布层级活动", "POST", "/api/platform/activities",
-                req("activity_type", "类型 red_packet/lottery/bounty"), field("funding_mode", "资金 balance/issued").withDefault("balance"),
+                choice("activity_type", "活动类型", true, ACTIVITY_TYPES), choice("funding_mode", "资金来源", false, FUNDING_MODES).withDefault("balance"),
                 req("title", "活动标题"), multiline("description", "活动说明"),
-                integer("total_balance", "红包总余额"), integer("total_count", "红包份数"), field("packet_mode", "红包 equal/random").withDefault("random"),
+                integer("total_balance", "红包总余额"), integer("total_count", "红包份数"), choice("packet_mode", "红包分配方式", false, PACKET_MODES).withDefault("random"),
                 integer("reward_balance", "悬赏余额"), json("prizes", "抽奖奖项"),
                 bool("audience_sync", "可见与参与同步").withDefault("true"),
                 json("targets", "同步目标").withDefault("[{\"type\":\"level\",\"level\":3}]"),
@@ -167,15 +217,15 @@ public final class ModuleRegistry {
             .path("/api/platform/software-updates").paged().primary("version_name", "edition_code", "id")
             .secondary("version_code", "target_type", "target_level", "force_update", "status")
             .create(action("发布更新", "POST", "/api/platform/software-updates",
-                req("edition_code", "软件包 all/platform_owner/authorized_platform/admin/user"),
-                req("target_type", "目标 global/level/platform/admin/app"), integer("target_id", "目标 ID"),
+                choice("edition_code", "适用软件包", true, EDITION_CODES),
+                choice("target_type", "发布目标", true, UPDATE_TARGET_TYPES), integer("target_id", "目标 ID"),
                 integer("target_level", "目标等级"), req("version_name", "版本名"), integerRequired("version_code", "版本号"),
                 integer("min_supported_version_code", "最低可用版本"), req("download_url", "下载地址"),
                 req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
                 req("sha256", "安装包 SHA-256（64 位）"),
                 multilineRequired("release_notes", "更新说明"), bool("force_update", "强制更新"), integer("priority", "优先级")))
             .action(itemAction("编辑更新", "PUT", "/api/platform/software-updates/{policy_id}",
-                req("edition_code", "适用软件包"), req("target_type", "发布范围"), integer("target_id", "指定对象 ID"),
+                choice("edition_code", "适用软件包", true, EDITION_CODES), choice("target_type", "发布范围", true, UPDATE_TARGET_TYPES), integer("target_id", "指定对象 ID"),
                 integer("target_level", "适用等级"), req("version_name", "版本名称"), integerRequired("version_code", "版本号"),
                 integer("min_supported_version_code", "最低支持版本"), req("download_url", "安装包地址"),
                 req("package_name", "Android 包名"), integerRequired("size_bytes", "安装包字节数"),
@@ -186,11 +236,11 @@ public final class ModuleRegistry {
             .path("/api/platform/maintenances").paged().primary("title", "edition_code", "id")
             .secondary("target_type", "target_level", "forced", "starts_at", "ends_at", "status")
             .create(action("发布维护", "POST", "/api/platform/maintenances",
-                req("edition_code", "软件包"), req("target_type", "目标类型"), integer("target_id", "目标 ID"),
+                choice("edition_code", "适用软件包", true, EDITION_CODES), choice("target_type", "目标类型", true, UPDATE_TARGET_TYPES), integer("target_id", "目标 ID"),
                 integer("target_level", "目标等级"), req("title", "维护标题"), multilineRequired("message", "维护说明"),
                 bool("forced", "强制维护"), json("allowlist", "IP 白名单"), date("starts_at", "开始时间"), date("ends_at", "结束时间")))
             .action(itemAction("编辑维护", "PUT", "/api/platform/maintenances/{policy_id}",
-                req("edition_code", "适用软件包"), req("target_type", "维护范围"), integer("target_id", "指定对象 ID"),
+                choice("edition_code", "适用软件包", true, EDITION_CODES), choice("target_type", "维护范围", true, UPDATE_TARGET_TYPES), integer("target_id", "指定对象 ID"),
                 integer("target_level", "适用等级"), req("title", "维护标题"), multilineRequired("message", "维护内容"),
                 bool("forced", "是否强制维护"), json("allowlist", "免维护 IP 列表"), date("starts_at", "开始时间"), date("ends_at", "结束时间")))
             .action(confirmItem("删除", "DELETE", "/api/platform/maintenances/{policy_id}", true)).build());
@@ -206,7 +256,7 @@ public final class ModuleRegistry {
             .create(action("创建投票", "POST", "/api/platform/polls", integer("target_level", "可见等级"), integer("app_id", "指定 App ID"),
                 req("title", "标题"), multiline("description", "描述"), json("category_ids", "分类 ID 数组"), json("options", "选项数组"),
                 bool("multiple_choice", "多选"), integer("min_select", "最少选择"), integer("max_select", "最多选择"),
-                bool("allow_change", "允许改票"), field("result_visibility", "结果可见规则"), date("ends_at", "结束时间")))
+                bool("allow_change", "允许改票"), choice("result_visibility", "结果可见规则", false, RESULT_VISIBILITIES), date("ends_at", "结束时间")))
             .action(confirmItem("关闭", "POST", "/api/platform/polls/{poll_id}/close", false))
             .action(confirmItem("删除", "DELETE", "/api/platform/polls/{poll_id}", true)).build());
 
@@ -233,7 +283,7 @@ public final class ModuleRegistry {
         result.add(simple("data_console", "数据总控", role, "审计", "/api/platform/data-console/tables",
             new String[]{"table_name", "id"}, new String[]{"record_estimate", "column_count", "writable", "updated_at"}));
         FieldSpec[] platformAiKnowledgeFields = new FieldSpec[]{
-            field("scope_type", "作用范围（global/platform/admin/app）").withDefault("platform"),
+            choice("scope_type", "作用范围", false, SCOPE_TYPES).withDefault("platform"),
             integer("platform_id", "授权平台 ID"), integer("admin_id", "管理员 ID"), integer("app_id", "应用 ID"),
             req("title", "知识标题"), multilineRequired("content", "知识正文"),
             field("keywords", "关键词（逗号分隔）"), field("source_url", "来源链接"),
@@ -257,17 +307,19 @@ public final class ModuleRegistry {
 
         result.add(ModuleSpec.builder("apps", "应用管理", role).group("应用")
             .path("/api/admin/apps").paged().searchable("keyword")
-            .primary("name", "app_key", "id").secondary("version", "status", "user_count", "created_at")
+            .primary("name", "app_key", "id").secondary("app_type", "version", "status", "user_count", "created_at")
             .create(action("创建应用", "POST", "/api/admin/apps",
-                req("name", "应用名称"), req("app_key", "应用标识"), field("description", "应用描述"),
-                field("version", "版本号"), field("logo", "图标地址")))
+                req("name", "应用名称"), field("description", "应用描述"), field("logo", "图标地址")))
             .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}",
-                field("name", "应用名称"), field("description", "应用描述"), field("version", "版本号"), field("logo", "图标地址")))
+                field("name", "应用名称"), field("description", "应用描述"),
+                field("version", "版本号"), field("logo", "图标地址")))
             .action(confirmItem("启用", "POST", "/api/admin/apps/{app_id}/enable", false))
             .action(confirmItem("停用", "POST", "/api/admin/apps/{app_id}/disable", false))
             .action(confirmItem("重置密钥", "POST", "/api/admin/apps/{app_id}/secret/reset", false))
             .action(confirmItem("删除", "DELETE", "/api/admin/apps/{app_id}", true))
             .build());
+        result.add(special("statistics", "数据统计", role, "应用", ScreenType.DASHBOARD,
+            "/api/admin/apps/{app_id}/statistics").toBuilder().requiresApp().build());
         result.add(special("app_settings", "应用规则", role, "应用", ScreenType.SETTINGS, "/api/admin/apps/{app_id}/settings").toBuilder().requiresApp().build());
         result.add(ModuleSpec.builder("domains", "应用域名", role).group("应用").requiresApp()
             .path("/api/admin/apps/{app_id}/domains").dataKey("items")
@@ -317,7 +369,7 @@ public final class ModuleRegistry {
                 json("blocked_send_to_user_ids", "禁止转给的用户编号"),
                 json("blocked_receive_from_user_ids", "禁止接收的用户编号")))
             .action(itemAction("查看通信审计", "GET", "/api/admin/apps/{app_id}/users/{user_id}/communications",
-                req("channel_type", "通信类型（private/group/service）"), integerRequired("channel_id", "会话或群聊编号")))
+                choice("channel_type", "通信类型", true, CHANNEL_TYPES), integerRequired("channel_id", "会话或群聊编号")))
             .action(itemAction("重置密码", "PUT", "/api/admin/apps/{app_id}/users/{user_id}/password", pwd("new_password", "新密码")))
             .action(confirmItem("封禁", "POST", "/api/admin/apps/{app_id}/users/{user_id}/ban", false))
             .action(confirmItem("解封", "POST", "/api/admin/apps/{app_id}/users/{user_id}/unban", false))
@@ -340,8 +392,8 @@ public final class ModuleRegistry {
         result.add(crudModule("notices", "公告", role, "内容", "/api/admin/apps/{app_id}/notices", "notice_id", true,
             new FieldSpec[]{req("title", "标题"), multilineRequired("content", "内容"), field("type", "类型"),
                 bool("display_enabled", "显示公告"), bool("is_popup", "弹窗显示"),
-                field("popup_frequency", "弹窗频率 once/daily/login/always/none"),
-                field("audience_type", "展示对象 all/vip/normal/user_ids/levels/tags"), json("audience", "对象值数组"),
+                choice("popup_frequency", "弹窗频率", false, POPUP_FREQUENCIES),
+                choice("audience_type", "展示对象", false, AUDIENCE_TYPES), json("audience", "对象值数组"),
                 date("start_at", "开始时间"), date("end_at", "结束时间")},
             new String[]{"title", "type", "id"}, new String[]{"display_enabled", "is_popup", "popup_frequency", "audience_type", "status"}));
         result.add(ModuleSpec.builder("versions", "版本发布", role).group("内容").requiresApp()
@@ -379,29 +431,68 @@ public final class ModuleRegistry {
                 req("config_key", "配置键"), multiline("config_value", "配置值"), field("value_type", "类型"),
                 field("description", "说明"), integer("status", "状态"))).build());
 
-        result.add(crudModule("resource_categories", "资源分类", role, "社区", "/api/admin/apps/{app_id}/resource-categories", "category_id", true,
-            new FieldSpec[]{req("name", "分类名称"), field("description", "描述"), integer("sort_order", "排序")},
-            new String[]{"name", "id"}, new String[]{"sort_order", "status"}));
+        result.add(ModuleSpec.builder("resource_categories", "源码分类", role).group("社区").requiresApp()
+            .path("/api/admin/apps/{app_id}/resource-categories").dataKey("items")
+            .primary("name", "id").secondary("description", "sort_order", "status")
+            .create(action("新增源码分类", "POST", "/api/admin/apps/{app_id}/resource-categories",
+                req("name", "分类名称"), multiline("description", "分类说明"), integer("sort_order", "显示顺序"))
+                .fixed("resource_type", "source_market"))
+            .action(itemAction("编辑分类", "PUT", "/api/admin/apps/{app_id}/resource-categories/{category_id}",
+                field("name", "分类名称"), multiline("description", "分类说明"), integer("sort_order", "显示顺序"),
+                integer("status", "启用状态（1 启用，0 停用）")))
+            .action(confirmItem("删除分类", "DELETE", "/api/admin/apps/{app_id}/resource-categories/{category_id}", true)).build());
         result.add(ModuleSpec.builder("resources", "资源审核", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/resources").paged().searchable("keyword")
-            .primary("title", "id").secondary("user_account", "audit_status", "price_balance", "created_at")
-            .action(itemAction("审核", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}/audit", req("audit_status", "审核状态"), field("audit_remark", "审核意见")))
-            .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}",
-                integer("category_id", "分类编号"), field("title", "标题"), multiline("description", "描述"),
-                field("cover_url", "封面地址"), field("download_url", "下载地址"), integer("price_balance", "余额价格"),
-                bool("is_top", "置顶"), bool("is_recommended", "推荐"), integer("status", "状态")))
-            .action(confirmItem("删除", "DELETE", "/api/admin/apps/{app_id}/resources/{resource_id}", true)).build());
-        result.add(ModuleSpec.builder("store_apps", "应用商店", role).group("社区").requiresApp()
+            .primary("title", "id").secondary("account", "audit_status_label", "audit_reason", "reviewer_name", "audited_at", "price_balance", "created_at")
+            .action(itemAction("查看审核详情", "GET", "/api/admin/apps/{app_id}/resources/{resource_id}"))
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}/audit",
+                multilineRequired("reason", "不通过原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}/audit",
+                multilineRequired("reason", "暂定原因与后续要求（必填）")).fixed("audit_status", "on_hold"))
+             .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}",
+                 integer("category_id", "分类编号"), field("title", "标题"), multiline("description", "描述"),
+                 field("cover_url", "封面地址"), field("download_url", "下载地址"), integer("price_balance", "余额价格"),
+                 bool("is_top", "置顶"), bool("is_recommended", "推荐"), integer("status", "状态")))
+             .action(confirmItem("删除", "DELETE", "/api/admin/apps/{app_id}/resources/{resource_id}", true)).build());
+        result.add(ModuleSpec.builder("resource_comments", "资源评论管理", role).group("社区").requiresApp()
+            .path("/api/admin/apps/{app_id}/resource-comments").paged().searchable("keyword")
+            .primary("content", "id")
+            .secondary("nickname", "account", "resource_title", "parent_content", "status_label", "reply_count", "created_at")
+            .action(itemAction("查看评论详情", "GET", "/api/admin/apps/{app_id}/resource-comments/{comment_id}"))
+            .action(itemAction("隐藏评论", "PUT", "/api/admin/apps/{app_id}/resource-comments/{comment_id}/hide",
+                multiline("reason", "隐藏原因（可选）")).confirm(false))
+            .action(itemAction("恢复评论", "PUT", "/api/admin/apps/{app_id}/resource-comments/{comment_id}/restore",
+                multiline("reason", "恢复说明（可选）")).confirm(false))
+            .action(itemAction("删除评论", "DELETE", "/api/admin/apps/{app_id}/resource-comments/{comment_id}",
+                multiline("reason", "删除原因（可选）")).confirm(true)).build());
+        result.add(ModuleSpec.builder("store_apps", "应用商店审核", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/store-apps").paged().searchable("keyword")
-            .primary("name", "version_name", "id").secondary("download_count", "price_balance", "status")
+            .primary("name", "version_name", "id").secondary("package_name", "account", "audit_status_label", "audit_reason", "reviewer_name", "audited_at", "download_count", "price_balance")
             .create(action("上架应用", "POST", "/api/admin/apps/{app_id}/store-apps",
                 req("name", "应用名称"), req("package_name", "应用包名"), field("description", "描述"), req("version_name", "版本"), req("apk_url", "安装包地址"),
-                integer("price_balance", "余额价格"), json("images", "截图列表"))).build());
+                integer("price_balance", "余额价格"), json("images", "截图列表")))
+            .action(itemAction("查看审核详情", "GET", "/api/admin/apps/{app_id}/store-apps/{store_app_id}"))
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
+                multilineRequired("reason", "不通过原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
+                multilineRequired("reason", "暂定原因与后续要求（必填）")).fixed("audit_status", "on_hold"))
+            .action(itemAction("编辑应用", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}",
+                integer("category_id", "分类编号"), field("name", "应用名称"), multiline("description", "应用介绍"),
+                field("version_name", "版本名称"), integer("version_code", "版本代码"), field("icon_url", "图标地址"),
+                field("apk_url", "安装包地址"), integer("price_balance", "余额价格"), integer("status", "状态")))
+            .action(confirmItem("删除应用", "DELETE", "/api/admin/apps/{app_id}/store-apps/{store_app_id}", true)).build());
         result.add(ModuleSpec.builder("store_categories", "商店分类", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/store-categories").dataKey("items")
             .primary("name", "id").secondary("sort_order", "status")
             .create(action("新增商店分类", "POST", "/api/admin/apps/{app_id}/store-categories",
-                req("name", "分类名"), field("description", "描述"), integer("sort_order", "排序"))).build());
+                req("name", "分类名"), field("icon", "图标"), integer("sort_order", "排序")))
+            .action(itemAction("编辑分类", "PUT", "/api/admin/apps/{app_id}/store-categories/{category_id}",
+                field("name", "分类名"), field("icon", "图标"), integer("sort_order", "排序"), integer("status", "状态")))
+            .action(confirmItem("删除分类", "DELETE", "/api/admin/apps/{app_id}/store-categories/{category_id}", true)).build());
         result.add(ModuleSpec.builder("forum_plates", "论坛板块", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-plates").dataKey("items").primary("name", "id").secondary("icon", "sort_order", "status")
             .create(action("新建板块", "POST", "/api/admin/apps/{app_id}/forum-plates", req("name", "板块名"), field("description", "描述"), integer("sort_order", "排序")))
@@ -443,10 +534,12 @@ public final class ModuleRegistry {
         result.add(ModuleSpec.builder("forum_posts", "论坛帖子审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-posts").paged().searchable("keyword").primary("title", "id")
             .secondary("account", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "is_top", "is_essence", "is_locked", "created_at")
-            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
-                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
-            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
                 multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
             .action(itemAction("编辑帖子", "PUT", "/api/admin/apps/{app_id}/forum-posts/{post_id}",
                 field("title", "帖子标题"), multiline("content", "帖子内容"), integer("plate_id", "板块编号"),
                 integer("category_id", "二级分类编号，0 表示清除"), json("tags", "标签数组"), integer("status", "状态 1正常/0停用")))
@@ -457,28 +550,56 @@ public final class ModuleRegistry {
         result.add(ModuleSpec.builder("forum_comments", "论坛评论审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/forum-comments").paged().searchable("keyword")
             .primary("content", "nickname", "id").secondary("post_title", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "created_at")
-            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
-                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
-            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
                 multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/forum-comments/{comment_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
             .action(confirmItem("删除评论", "DELETE", "/api/admin/apps/{app_id}/forum-comments/{comment_id}", true)).build());
         result.add(ModuleSpec.builder("moments", "动态审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/moments").paged().searchable("keyword")
             .primary("content", "display_name", "id")
-            .secondary("audit_status_name", "audit_reason", "reviewer_name", "audited_at", "pending_comment_count", "created_at")
-            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
-                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
-            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
+            .secondary("audit_status_name", "audit_reason", "reviewer_name", "audited_at", "pending_comment_count", "on_hold_comment_count", "created_at")
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
                 multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/moments/{moment_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
             .build());
         result.add(ModuleSpec.builder("moment_comments", "动态评论审核", role).group("审核").requiresApp()
             .path("/api/admin/apps/{app_id}/moment-comments").paged().searchable("keyword")
             .primary("content", "display_name", "id")
             .secondary("moment_excerpt", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "created_at")
-            .action(itemAction("通过审核", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
-                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
-            .action(itemAction("拒绝审核", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
                 multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/moment-comments/{comment_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
+            .build());
+        result.add(ModuleSpec.builder("short_videos", "短视频审核", role).group("审核").requiresApp()
+            .path("/api/admin/apps/{app_id}/short-videos").paged().searchable("keyword")
+            .primary("content", "display_name", "id")
+            .secondary("audit_status_name", "audit_reason", "reviewer_name", "audited_at", "pending_comment_count", "on_hold_comment_count", "created_at")
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/short-videos/{moment_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/short-videos/{moment_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/short-videos/{moment_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
+            .build());
+        result.add(ModuleSpec.builder("short_video_comments", "短视频评论审核", role).group("审核").requiresApp()
+            .path("/api/admin/apps/{app_id}/short-video-comments").paged().searchable("keyword")
+            .primary("content", "display_name", "id")
+            .secondary("moment_excerpt", "audit_status_name", "audit_reason", "reviewer_name", "audited_at", "created_at")
+            .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/short-video-comments/{comment_id}/audit")
+                .fixed("audit_status", "approved"))
+            .action(itemAction("不通过", "PUT", "/api/admin/apps/{app_id}/short-video-comments/{comment_id}/audit",
+                multilineRequired("reason", "拒绝原因（必填）")).fixed("audit_status", "rejected"))
+            .action(itemAction("暂定", "PUT", "/api/admin/apps/{app_id}/short-video-comments/{comment_id}/audit",
+                multiline("reason", "暂定说明（可选）")).fixed("audit_status", "on_hold"))
             .build());
         result.add(ModuleSpec.builder("reports", "举报处理", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/reports").paged().primary("reason", "report_tag_name", "id")
@@ -490,20 +611,26 @@ public final class ModuleRegistry {
             new String[]{"name", "id"}, new String[]{"description", "sort_order", "status"}));
         result.add(ModuleSpec.builder("admin_community", "管理员交流", role).group("社区")
             .path("/api/admin/community/posts").paged().searchable("keyword")
-            .primary("title", "author_name", "id").secondary("like_count", "comment_count", "created_at")
-            .create(action("发布交流帖", "POST", "/api/admin/community/posts", req("title", "标题"), multilineRequired("content", "内容"), json("attachments", "附件数组")))
+            .primary("title", "author_name", "id").secondary("category_name", "is_top", "like_count", "favorite_count", "comment_count", "created_at")
+            .create(action("发布交流帖", "POST", "/api/admin/community/posts",
+                field("category_code", "分类 general/technology/help/share/communication").withDefault("general"),
+                req("title", "标题"), multilineRequired("content", "内容"), json("attachments", "附件数组")))
             .action(itemAction("评论", "POST", "/api/admin/community/posts/{post_id}/comments", multilineRequired("content", "评论")))
             .action(itemAction("点赞或取消点赞", "POST", "/api/admin/community/posts/{post_id}/reactions").fixed("reaction_type", "like"))
             .action(itemAction("收藏或取消收藏", "POST", "/api/admin/community/posts/{post_id}/reactions").fixed("reaction_type", "favorite"))
+            .action(itemAction("置顶", "POST", "/api/admin/community/posts/{post_id}/pin").fixed("pinned", "true"))
+            .action(itemAction("取消置顶", "POST", "/api/admin/community/posts/{post_id}/pin").fixed("pinned", "false"))
+            .action(itemAction("举报", "POST", "/api/admin/community/posts/{post_id}/reports",
+                multilineRequired("reason", "举报原因")))
             .action(confirmItem("删除", "DELETE", "/api/admin/community/posts/{post_id}", true)).build());
         result.add(ModuleSpec.builder("hierarchy_activities", "层级活动", role).group("社区")
             .path("/api/admin/activities").paged().searchable("keyword")
             .primary("title", "activity_type", "id")
             .secondary("total_balance", "remaining_balance", "remaining_slots", "status")
             .create(action("发布层级活动", "POST", "/api/admin/activities",
-                req("activity_type", "类型 red_packet/lottery/bounty"), field("funding_mode", "资金方式").withDefault("balance"),
+                choice("activity_type", "活动类型", true, ACTIVITY_TYPES), choice("funding_mode", "资金方式", false, FUNDING_MODES).withDefault("balance"),
                 req("title", "活动标题"), multiline("description", "活动说明"),
-                integer("total_balance", "红包总余额"), integer("total_count", "红包份数"), field("packet_mode", "红包 equal/random").withDefault("random"),
+                integer("total_balance", "红包总余额"), integer("total_count", "红包份数"), choice("packet_mode", "红包分配方式", false, PACKET_MODES).withDefault("random"),
                 integer("reward_balance", "悬赏余额"), json("prizes", "抽奖奖项"),
                 bool("audience_sync", "可见与参与同步").withDefault("true"),
                 json("targets", "同步目标").withDefault("[{\"type\":\"level\",\"level\":4}]"),
@@ -527,15 +654,17 @@ public final class ModuleRegistry {
             .create(action("创建投票", "POST", "/api/admin/polls", integer("target_level", "等级 3 或 4"), integer("app_id", "4 级 App ID"),
                 req("title", "标题"), multiline("description", "描述"), json("category_ids", "分类 ID 数组"), json("options", "选项数组"),
                 bool("multiple_choice", "多选"), integer("min_select", "最少选择"), integer("max_select", "最多选择"),
-                bool("allow_change", "允许改票"), field("result_visibility", "结果可见规则"), date("ends_at", "结束时间")))
+                bool("allow_change", "允许改票"), choice("result_visibility", "结果可见规则", false, RESULT_VISIBILITIES), date("ends_at", "结束时间")))
             .action(confirmItem("关闭", "POST", "/api/admin/polls/{poll_id}/close", false))
             .action(confirmItem("删除", "DELETE", "/api/admin/polls/{poll_id}", true)).build());
         result.add(ModuleSpec.builder("bounties", "悬赏管理", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/bounties").paged().searchable("keyword")
             .primary("title", "creator_nickname", "id")
             .secondary("category_name", "audit_status_name", "audit_reason", "reward_balance", "attachment_count", "submission_count", "status", "deadline_at", "created_at")
-            .action(itemAction("审核悬赏", "PUT", "/api/admin/apps/{app_id}/bounties/{bounty_id}/audit",
-                req("audit_status", "审核结果 approved/rejected"), multiline("reason", "未通过原因，可留空")))
+            .action(itemAction("通过悬赏", "PUT", "/api/admin/apps/{app_id}/bounties/{bounty_id}/audit",
+                multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
+            .action(itemAction("不通过悬赏", "PUT", "/api/admin/apps/{app_id}/bounties/{bounty_id}/audit",
+                multilineRequired("reason", "不通过原因（必填）")).fixed("audit_status", "rejected"))
             .action(itemAction("编辑悬赏", "PUT", "/api/admin/apps/{app_id}/bounties/{bounty_id}",
                 integer("category_id", "悬赏分类编号"), field("title", "悬赏标题"), multiline("description", "悬赏说明"), date("deadline_at", "截止时间")))
             .action(confirmItem("下架并退款", "POST", "/api/admin/apps/{app_id}/bounties/{bounty_id}/cancel", false))
@@ -572,23 +701,19 @@ public final class ModuleRegistry {
             .path("/api/admin/apps/{app_id}/chat-rooms").paged().searchable("keyword")
             .primary("name", "id").secondary("room_kind", "join_mode", "member_count", "message_count", "status")
             .create(action("创建群聊或聊天室", "POST", "/api/admin/apps/{app_id}/chat-rooms",
-                field("room_kind", "类型 group/chat_room").withDefault("group"),
+                choice("room_kind", "会话类型", false, ROOM_KINDS).withDefault("group"),
                 req("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
-                field("join_mode", "加入模式 open/approval/invite").withDefault("open"), integer("max_members", "人数上限").withDefault("500"),
+                choice("join_mode", "加入模式", false, JOIN_MODES).withDefault("open"), integer("max_members", "人数上限").withDefault("500"),
                 bool("allow_member_invite", "允许成员邀请").withDefault("true"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告")))
-            .action(itemAction("编辑会话资料", "PUT", "/api/admin/apps/{app_id}/chat-rooms/{room_id}",
-                field("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
-                field("join_mode", "加入模式 open/approval/invite"), integer("max_members", "人数上限"),
-                bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告"), bool("status", "启用")))
-            .action(itemAction("添加成员", "POST", "/api/admin/apps/{app_id}/chat-rooms/{room_id}/members",
-                integerRequired("user_id", "用户 ID"), field("role", "角色 owner/admin/member").withDefault("member")))
+            .action(ActionSpec.builder("上传群聊或聊天室头像", "UPLOAD_IMAGE",
+                "/api/admin/apps/{app_id}/chat-rooms/{room_id}/avatar").item().build())
             .action(confirmItem("解散会话", "DELETE", "/api/admin/apps/{app_id}/chat-rooms/{room_id}", true)).build());
 
         result.add(ModuleSpec.builder("card_batches", "卡密批次", role).group("资产").requiresApp()
             .path("/api/admin/apps/{app_id}/card-batches").paged().primary("name", "batch_no", "id")
             .secondary("card_type", "total_count", "used_count", "status")
             .create(action("生成卡密", "POST", "/api/admin/apps/{app_id}/card-batches",
-                req("name", "批次名"), req("card_type", "卡密类型 mixed/direct/login"), integerRequired("total_count", "生成数量"),
+                req("name", "批次名"), choice("card_type", "卡密类型", true, CARD_TYPES), integerRequired("total_count", "生成数量"),
                 json("value_json", "发放内容，如余额、会员天数、文档额度"), integer("max_use", "每张最大使用次数"),
                 date("expired_at", "统一到期时间"), field("prefix", "卡密前缀")))
             .action(itemAction("编辑批次", "PUT", "/api/admin/apps/{app_id}/card-batches/{batch_id}", field("name", "批次名"), integer("status", "状态"))).build());
@@ -620,6 +745,17 @@ public final class ModuleRegistry {
         result.add(crudModule("shop_goods", "商城商品", role, "资产", "/api/admin/apps/{app_id}/shop-goods", "goods_id", true,
             new FieldSpec[]{req("name", "商品名"), field("description", "描述"), integer("price_balance", "余额价格"), decimal("price_money", "现金价格"), integer("stock", "库存")},
             new String[]{"name", "id"}, new String[]{"price_balance", "price_money", "stock", "status"}));
+        result.add(ModuleSpec.builder("shop_goods_comments", "商品评论管理", role).group("资产").requiresApp()
+            .path("/api/admin/apps/{app_id}/shop-goods-comments").paged().searchable("keyword")
+            .primary("content", "id")
+            .secondary("nickname", "account", "goods_name", "parent_content", "score_label", "status_label", "reply_count", "created_at")
+            .action(itemAction("查看评论详情", "GET", "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}"))
+            .action(itemAction("隐藏评论", "PUT", "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/hide",
+                multiline("reason", "隐藏原因（可选）")).confirm(false))
+            .action(itemAction("恢复评论", "PUT", "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}/restore",
+                multiline("reason", "恢复说明（可选）")).confirm(false))
+            .action(itemAction("删除评论", "DELETE", "/api/admin/apps/{app_id}/shop-goods-comments/{comment_id}",
+                multiline("reason", "删除原因（可选）")).confirm(true)).build());
         result.add(simplePagedApp("red_packets", "红包记录", role, "资产", "/api/admin/apps/{app_id}/red-packets",
             new String[]{"title", "packet_no", "id"}, new String[]{"total_amount", "total_count", "claimed_count", "status"}));
         result.add(ModuleSpec.builder("lottery", "抽奖奖品", role).group("资产").requiresApp()
@@ -699,7 +835,8 @@ public final class ModuleRegistry {
             .secondary("category_name", "price_balance", "rating", "download_count")
             .create(action("投稿资源", "POST", "/api/user/resources",
                 req("title", "标题"), multilineRequired("description", "描述"), integerRequired("category_id", "分类 ID"),
-                req("download_url", "下载地址"), integer("price_balance", "余额价格")))
+                req("download_url", "下载地址"), integer("price_balance", "余额价格"))
+                .fixed("resource_type", "source_market"))
             .action(itemAction("购买", "POST", "/api/user/resources/{resource_id}/buy").confirm(false).idempotent())
             .action(itemAction("评论", "POST", "/api/user/resources/{resource_id}/comments", multilineRequired("content", "评论")))
             .action(itemAction("评分", "POST", "/api/user/resources/{resource_id}/rating", integerRequired("score", "评分 1-5")))
@@ -767,7 +904,7 @@ public final class ModuleRegistry {
             .create(action("创建投票", "POST", "/api/user/polls", req("title", "标题"), multiline("description", "描述"),
                 json("category_ids", "分类 ID 数组"), json("options", "选项数组"), bool("multiple_choice", "多选"),
                 integer("min_select", "最少选择"), integer("max_select", "最多选择"), bool("allow_change", "允许改票"),
-                field("result_visibility", "结果可见 always/after_vote/after_end/creator_only"), date("ends_at", "结束时间")))
+                choice("result_visibility", "结果可见规则", false, RESULT_VISIBILITIES), date("ends_at", "结束时间")))
             .action(itemAction("提交投票", "POST", "/api/user/polls/{poll_id}/vote", json("option_ids", "选项 ID 数组")))
             .action(confirmItem("关闭", "POST", "/api/user/polls/{poll_id}/close", false))
             .action(confirmItem("删除", "DELETE", "/api/user/polls/{poll_id}", true)).build());
@@ -795,14 +932,14 @@ public final class ModuleRegistry {
             .path("/api/user/chat-rooms").paged().searchable("keyword").primary("name", "id")
             .secondary("room_kind", "current_role", "join_mode", "member_count", "unread_count")
             .create(action("创建群聊或聊天室", "POST", "/api/user/chat-rooms",
-                field("room_kind", "类型 group/chat_room").withDefault("group"),
+                choice("room_kind", "会话类型", false, ROOM_KINDS).withDefault("group"),
                 req("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
-                field("join_mode", "加入模式 open/approval/invite").withDefault("approval"), integer("max_members", "人数上限").withDefault("500"),
+                choice("join_mode", "加入模式", false, JOIN_MODES).withDefault("approval"), integer("max_members", "人数上限").withDefault("500"),
                 bool("allow_member_invite", "允许成员邀请").withDefault("true"), multiline("announcement", "会话公告")))
             .action(itemAction("申请或加入", "POST", "/api/user/chat-rooms/{room_id}/join", field("message", "申请说明")))
             .action(itemAction("编辑会话资料", "PUT", "/api/user/chat-rooms/{room_id}",
                 field("name", "会话名称"), field("icon", "图标地址"), multiline("description", "会话介绍"),
-                field("join_mode", "加入模式 open/approval/invite"), integer("max_members", "人数上限"),
+                choice("join_mode", "加入模式", false, JOIN_MODES), integer("max_members", "人数上限"),
                 bool("allow_member_invite", "允许成员邀请"), bool("mute_all", "全员禁言"), multiline("announcement", "会话公告")))
             .action(itemAction("邀请成员", "POST", "/api/user/chat-rooms/{room_id}/invitations",
                 integerRequired("user_id", "用户 ID"), field("message", "邀请说明"), date("expired_at", "到期时间")))
@@ -926,6 +1063,17 @@ public final class ModuleRegistry {
 
     private static FieldSpec field(String key, String label) { return FieldSpec.of(key, label); }
     private static FieldSpec req(String key, String label) { return FieldSpec.required(key, label); }
+    private static FieldSpec choice(String key, String label, boolean required, FieldSpec.Option... options) {
+        return FieldSpec.select(key, label, required, options);
+    }
+    private static FieldSpec.Option[] options(String... pairs) {
+        if (pairs.length % 2 != 0) throw new IllegalArgumentException("选择项必须成对提供内部值和中文名称");
+        FieldSpec.Option[] result = new FieldSpec.Option[pairs.length / 2];
+        for (int index = 0; index < pairs.length; index += 2) {
+            result[index / 2] = FieldSpec.option(pairs[index], pairs[index + 1]);
+        }
+        return result;
+    }
     private static FieldSpec pwd(String key, String label) { return FieldSpec.typed(key, label, FieldType.PASSWORD, true); }
     private static FieldSpec integer(String key, String label) { return FieldSpec.typed(key, label, FieldType.INTEGER, false); }
     private static FieldSpec integerRequired(String key, String label) { return FieldSpec.typed(key, label, FieldType.INTEGER, true); }

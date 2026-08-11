@@ -333,7 +333,7 @@ public final class RecordDetailDialog {
     private static void appendEmpty(Context context, LinearLayout parent, int depth) {
         TextView empty = new TextView(context);
         empty.setText("暂无内容");
-        empty.setTextColor(context.getColor(R.color.outline));
+        empty.setTextColor(context.getColor(R.color.on_surface_variant));
         empty.setTypeface(Typeface.DEFAULT, Typeface.ITALIC);
         empty.setPadding(depth * dp(context, 10), dp(context, 6), 0, dp(context, 6));
         parent.addView(empty, new LinearLayout.LayoutParams(-1, -2));

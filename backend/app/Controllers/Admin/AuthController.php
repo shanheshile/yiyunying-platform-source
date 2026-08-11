@@ -24,6 +24,7 @@ final class AuthController
     public static function register(Request $request): \Yiyunying\Core\ApiResponse
     {
         $data = $request->all();
+        Validator::required($data, ['platform_key']);
         $platform = PlatformService::byKey((string) ($data['platform_key'] ?? ''));
         $account = trim((string) ($data['account'] ?? ''));
         $request->setAttribute('platform_id', (int) $platform['id']);
@@ -42,13 +43,16 @@ final class AuthController
                 'nickname' => $platform['nickname'],
             ],
             'registration_gift' => $admin['registration_gift'],
+            'initial_app' => $admin['initial_app'],
+            'app_secret' => $admin['initial_app_secret'],
+            'secret_notice' => '首个应用 app_secret 只在注册成功时返回一次，请立即保存到服务端。',
         ], 'admin 注册成功', 201);
     }
 
     public static function login(Request $request): \Yiyunying\Core\ApiResponse
     {
         $data = $request->all();
-        Validator::required($data, ['account', 'password']);
+        Validator::required($data, ['platform_key', 'app_key', 'account', 'password']);
         $platform = PlatformService::byKey((string) ($data['platform_key'] ?? ''));
         $account = Validator::string($data['account'], 'account', 3, 64);
         $password = (string) $data['password'];
@@ -69,6 +73,16 @@ final class AuthController
             self::writeLoginLog((int) $platform['id'], (int) $admin['id'], $account, $request, false, $exception->getMessage());
             PlatformService::increment((int) $platform['id'], 'admin_login_failed');
             throw $exception;
+        }
+        $loginApp = Database::one(
+            'SELECT id, app_key FROM apps
+             WHERE admin_id = ? AND app_key = ? AND status = 1 AND deleted_at IS NULL LIMIT 1',
+            [(int) $admin['id'], trim((string) $data['app_key'])]
+        );
+        if ($loginApp === null) {
+            self::writeLoginLog((int) $platform['id'], (int) $admin['id'], $account, $request, false, '应用 API 唯一 ID 与管理员账号不匹配');
+            PlatformService::increment((int) $platform['id'], 'admin_login_failed');
+            throw new HttpException('平台标识、应用 API 唯一 ID、账号或密码错误', 401, 401);
         }
 
         if (Password::needsRehash((string) $admin['password_hash'])) {
@@ -112,6 +126,7 @@ final class AuthController
             'token_type' => 'Bearer',
             'access_token' => $plainToken,
             'expires_at' => $expiredAt,
+            'app_key' => (string) $loginApp['app_key'],
             'admin' => self::publicAdmin($admin),
             'access' => $accessState,
         ], $accessState['mode'] === 'full' ? '登录成功' : '登录成功，当前仅可续费或查看权益');
@@ -128,7 +143,22 @@ final class AuthController
     public static function me(Request $request): \Yiyunying\Core\ApiResponse
     {
         $admin = AuthService::admin($request);
-        return Response::success(['admin' => self::publicAdmin($admin)]);
+        $appKey = trim((string) $request->input('app_key', ''));
+        $appIdentityVerified = false;
+        if ($appKey !== '') {
+            $appIdentityVerified = Database::one(
+                'SELECT id FROM apps
+                 WHERE admin_id = ? AND app_key = ? AND status = 1 AND deleted_at IS NULL LIMIT 1',
+                [(int) $admin['id'], $appKey]
+            ) !== null;
+            if (!$appIdentityVerified) {
+                throw new HttpException('当前安装版本的应用 API 唯一 ID 与管理员账号不匹配', 403, 403);
+            }
+        }
+        return Response::success([
+            'admin' => self::publicAdmin($admin),
+            'app_identity_verified' => $appIdentityVerified,
+        ]);
     }
 
     public static function permissions(Request $request): \Yiyunying\Core\ApiResponse
@@ -217,6 +247,61 @@ final class AuthController
             [(int) $admin['id']]
         );
         return Response::success(Pagination::data($items, $total, $page, $limit));
+    }
+
+    public static function sessions(Request $request): \Yiyunying\Core\ApiResponse
+    {
+        $admin = AuthService::admin($request);
+        $currentHash = Token::hash((string) ($request->bearerToken() ?? ''));
+        $items = Database::all(
+            'SELECT id, token_type, device, ip, user_agent, expired_at, revoked_at, last_used_at, created_at
+             FROM admin_tokens WHERE admin_id = ? ORDER BY id DESC LIMIT 100',
+            [(int) $admin['id']]
+        );
+        $hashes = Database::all('SELECT id, token_hash FROM admin_tokens WHERE admin_id = ? ORDER BY id DESC LIMIT 100', [(int) $admin['id']]);
+        $hashById = [];
+        foreach ($hashes as $hash) $hashById[(int) $hash['id']] = (string) $hash['token_hash'];
+        foreach ($items as &$item) {
+            $item['id'] = (int) $item['id'];
+            $item['is_current'] = isset($hashById[$item['id']]) && hash_equals($hashById[$item['id']], $currentHash);
+            $item['active'] = $item['revoked_at'] === null && strtotime((string) $item['expired_at']) > time();
+        }
+        unset($item);
+        return Response::success(['items' => $items]);
+    }
+
+    public static function revokeSession(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $admin = AuthService::admin($request);
+        $sessionId = (int) $params['session_id'];
+        $row = Database::one('SELECT id, token_hash, revoked_at FROM admin_tokens WHERE id = ? AND admin_id = ?', [$sessionId, (int) $admin['id']]);
+        if ($row === null) throw new HttpException('设备会话不存在', 404, 404);
+        Database::execute('UPDATE admin_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE id = ? AND admin_id = ?', [$sessionId, (int) $admin['id']]);
+        $currentHash = Token::hash((string) ($request->bearerToken() ?? ''));
+        $currentRevoked = hash_equals((string) $row['token_hash'], $currentHash);
+        LogService::adminOperation($request, (int) $admin['id'], null, 'security_session', 'revoke', $sessionId);
+        return Response::success(['current_session_revoked' => $currentRevoked], $currentRevoked ? '当前设备已退出' : '设备会话已撤销');
+    }
+
+    public static function deleteAccount(Request $request): \Yiyunying\Core\ApiResponse
+    {
+        $admin = AuthService::admin($request);
+        $data = $request->all();
+        Validator::required($data, ['password', 'confirm']);
+        if ((string) $data['confirm'] !== '注销账号') throw new HttpException('请输入“注销账号”确认', 0, 422);
+        if (!Password::verify((string) $data['password'], (string) $admin['password_hash'])) {
+            throw new HttpException('登录密码错误', 0, 422);
+        }
+        Database::transaction(static function () use ($admin): void {
+            Database::execute('UPDATE admins SET status = -1, updated_at = NOW() WHERE id = ?', [(int) $admin['id']]);
+            Database::execute(
+                'UPDATE apps SET status = -1, disabled_reason = ?, deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW() WHERE admin_id = ?',
+                ['管理员账号已注销', (int) $admin['id']]
+            );
+            Database::execute('UPDATE admin_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE admin_id = ?', [(int) $admin['id']]);
+        });
+        LogService::adminOperation($request, (int) $admin['id'], null, 'admin', 'self_deactivate', (int) $admin['id']);
+        return Response::success(['deactivated' => true], '账号已注销，历史数据按审计要求保留');
     }
 
     private static function publicAdmin(array $admin): array

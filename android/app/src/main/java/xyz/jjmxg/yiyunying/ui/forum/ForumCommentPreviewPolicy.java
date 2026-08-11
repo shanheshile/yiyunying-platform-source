@@ -16,7 +16,9 @@ final class ForumCommentPreviewPolicy {
 
     static String toggleLabel(boolean expanded, int replyCount) {
         if (replyCount <= 0) return "";
-        return expanded ? "收起回复" : "查看全部 " + replyCount + " 条回复";
+        if (expanded) return "返回全部评论";
+        int hidden = Math.max(1, replyCount - PREVIEW_LIMIT);
+        return "更多 " + hidden + " 条回复";
     }
 
 }

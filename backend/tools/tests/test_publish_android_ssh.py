@@ -1,7 +1,20 @@
 import importlib.util
 from pathlib import Path
 import sys
+import types
 import unittest
+
+
+try:
+    import paramiko  # noqa: F401
+except ModuleNotFoundError:
+    paramiko_stub = types.ModuleType("paramiko")
+
+    class SSHClient:
+        pass
+
+    paramiko_stub.SSHClient = SSHClient
+    sys.modules["paramiko"] = paramiko_stub
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "publish-android-ssh.py"

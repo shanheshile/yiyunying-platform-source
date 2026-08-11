@@ -8,6 +8,10 @@ use Yiyunying\Core\HttpException;
 
 final class AppService
 {
+    private const INTERNAL_SETTING_KEYS = [
+        'catalog_private_migration_ready' => true,
+    ];
+
     public static function byKey(string $appKey, bool $requireEnabled = true): array
     {
         $sql = 'SELECT * FROM apps WHERE app_key = ? AND deleted_at IS NULL';
@@ -46,6 +50,9 @@ final class AppService
         );
         $settings = [];
         foreach ($rows as $row) {
+            if (isset(self::INTERNAL_SETTING_KEYS[(string) $row['setting_key']])) {
+                continue;
+            }
             $value = self::decodeValue($row['setting_value'], $row['value_type']);
             if ($row['setting_key'] === 'economy_primary_asset' && $value === 'integral') $value = 'activity_credit';
             $settings[$row['setting_key']] = $value;
@@ -150,6 +157,9 @@ final class AppService
 
     public static function validateSettings(int $appId, array $settings): array
     {
+        if (array_key_exists('catalog_private_migration_ready', $settings)) {
+            throw new HttpException('catalog_private_migration_ready 只能由受控迁移工具更新', 0, 422);
+        }
         $merged = array_merge(self::settings($appId), $settings);
         if (($settings['economy_primary_asset'] ?? null) === 'activity_credit') {
             $settings['economy_primary_asset'] = 'integral';
@@ -308,6 +318,8 @@ final class AppService
             'forum_comment_audit' => false,
             'resource_user_submit_enabled' => true,
             'resource_submit_audit' => true,
+            'store_user_submit_enabled' => true,
+            'store_submit_audit' => true,
             'upload_max_bytes' => 104857600,
             'upload_image_max_bytes' => 104857600,
             'upload_video_max_bytes' => 1073741824,
@@ -380,12 +392,35 @@ final class AppService
             'balance_activity_enabled' => true,
         ]);
 
+        // The first app of a fresh installation is safe because catalog files
+        // are private from creation. During an upgrade, inherit the closed
+        // gate until every existing app has been explicitly activated.
+        $gateState = Database::one(
+            "SELECT COUNT(*) AS total,
+                    MIN(CASE WHEN s.setting_value IN ('1', 'true') AND s.value_type = 'bool' THEN 1 ELSE 0 END) AS all_ready
+             FROM app_settings s INNER JOIN apps a ON a.id = s.app_id
+             WHERE s.setting_key = 'catalog_private_migration_ready'
+               AND s.app_id <> ? AND a.deleted_at IS NULL",
+            [$appId]
+        );
+        $catalogReady = (int) ($gateState['total'] ?? 0) === 0
+            || (int) ($gateState['all_ready'] ?? 0) === 1;
+        Database::execute(
+            "INSERT INTO app_settings
+             (admin_id, app_id, setting_key, setting_value, value_type, created_at, updated_at)
+             VALUES (?, ?, 'catalog_private_migration_ready', ?, 'bool', NOW(), NOW())
+             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), value_type = 'bool', updated_at = NOW()",
+            [$adminId, $appId, $catalogReady ? '1' : '0']
+        );
+
         foreach ([
             'user_account', 'user_profile', 'sign_invite', 'documents', 'notices',
             'resources', 'store', 'forum', 'messages', 'chat_rooms', 'service',
             'cards', 'payments', 'remote_files', 'shop', 'red_packets',
             'lottery', 'votes', 'feedback', 'bot',
             'bounties', 'level_forum', 'social', 'notifications',
+            'short_videos', 'short_video_publish', 'short_video_comments',
+            'short_video_likes', 'short_video_favorites', 'short_video_forwards',
             'withdrawals', 'chat_extensions',
             'chat_camera', 'chat_album', 'chat_contact_card', 'chat_call_record_label',
             'group_avatar_upload', 'chatroom_avatar_upload', 'forum_plate_avatar_upload',
@@ -426,6 +461,55 @@ final class AppService
                 // Exposing original media names is a data-leak risk, not a product option.
                 'enabled' => $featureCode === 'forum_media_filename_privacy' ? true : (bool) $row['enabled'],
                 'config' => is_array($config) ? $config : null,
+            ];
+        }
+        return $features;
+    }
+
+    /** Authenticated bootstrap with app, governance and personal decisions merged. */
+    public static function effectiveFeaturesForUser(array $user): array
+    {
+        $appId = (int) ($user['app_id'] ?? 0);
+        $features = self::features($appId);
+        $userCodes = RolePermissionService::userFeatureCodes();
+        $userCodeSet = array_fill_keys($userCodes, true);
+        foreach ($features as $code => $feature) {
+            if (isset($userCodeSet[$code])) {
+                continue;
+            }
+            $configured = (bool) ($feature['enabled'] ?? false);
+            $policy = GovernanceService::effectiveFeatureForApp(
+                $appId,
+                (string) $code,
+                $configured,
+                (int) ($user['id'] ?? 0)
+            );
+            $enabled = $code === 'forum_media_filename_privacy'
+                ? true
+                : (bool) ($policy['effective_enabled'] ?? false);
+            $features[$code] = [
+                'enabled' => $enabled,
+                'effective_enabled' => $enabled,
+                'locked' => (bool) ($policy['locked'] ?? false),
+                'source' => (string) ($policy['source'] ?? 'admin_app'),
+                'config' => is_array($feature['config'] ?? null)
+                    ? $feature['config']
+                    : (is_array($policy['config'] ?? null) ? $policy['config'] : null),
+            ];
+        }
+        $effective = RolePermissionService::effectiveUserFeatures($user);
+        foreach ($userCodes as $code) {
+            $state = $effective[$code];
+            $enabled = (bool) ($state['effective_enabled'] ?? false);
+            $features[$code] = [
+                'enabled' => $enabled,
+                'effective_enabled' => $enabled,
+                'configured_enabled' => (bool) ($state['configured_enabled'] ?? false),
+                'app_enabled' => (bool) ($state['app_enabled'] ?? false),
+                'user_enabled' => (bool) ($state['user_enabled'] ?? false),
+                'locked' => (bool) ($state['locked'] ?? false),
+                'source' => (string) ($state['source'] ?? 'legacy_default'),
+                'config' => is_array($state['config'] ?? null) ? $state['config'] : null,
             ];
         }
         return $features;

@@ -180,8 +180,10 @@ public final class ResourceSubmitActivity extends SystemInsetActivity {
     private void loadCategories() {
         if (categoryRequest != null) categoryRequest.cancel();
         String path = mode == MODE_APPS ? "/api/user/store-categories" : "/api/user/resource-categories";
+        LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        if (mode == MODE_SOURCE) query.put("resource_type", "source_market");
         categoryRequest = AppAccess.from(this).repository().get(
-            path, new LinkedHashMap<>(), result -> {
+            path, query, result -> {
                 categoryRequest = null;
                 if (binding == null) return;
                 categoryIds.clear();
@@ -256,16 +258,16 @@ public final class ResourceSubmitActivity extends SystemInsetActivity {
         setBusy(true, mode == MODE_APPS ? "正在上传应用安装包…" : "正在上传源码文件…");
         final int finalPrice = price;
         String fileScene = mode == MODE_APPS ? "store_app_package" : "resource_source";
-        upload(selectedFile, selectedFileInfo, fileScene, fileUrl -> {
+        upload(selectedFile, selectedFileInfo, fileScene, sourceFile -> {
             if (selectedCover == null || selectedCoverInfo == null) {
-                postSubmission(title, description, packageName, versionName, finalPrice, fileUrl, "");
+                postSubmission(title, description, packageName, versionName, finalPrice, sourceFile, null);
                 return;
             }
             setBusy(true, "正在上传展示封面…");
             String coverScene = mode == MODE_APPS ? "store_app_icon" : "resource_cover";
             upload(selectedCover, selectedCoverInfo, coverScene,
-                coverUrl -> postSubmission(title, description, packageName, versionName,
-                    finalPrice, fileUrl, coverUrl));
+                coverFile -> postSubmission(title, description, packageName, versionName,
+                    finalPrice, sourceFile, coverFile));
         });
     }
 
@@ -284,37 +286,47 @@ public final class ResourceSubmitActivity extends SystemInsetActivity {
                         ? "文件上传失败，请检查网络后重试" : result.message(), Snackbar.LENGTH_LONG).show();
                     return;
                 }
-                String fileUrl = Jsons.string(result.dataObject(), "file_url");
-                if (fileUrl.isEmpty()) {
+                long uploadId = Jsons.longValue(result.dataObject(), "upload_id");
+                if (uploadId <= 0L) {
                     setBusy(false, "");
-                    Snackbar.make(binding.getRoot(), "服务器未返回可用文件地址，请重试", Snackbar.LENGTH_LONG).show();
+                    Snackbar.make(binding.getRoot(), "服务器未返回受控上传记录，请重试", Snackbar.LENGTH_LONG).show();
                     return;
                 }
-                callback.onUploaded(fileUrl);
+                callback.onUploaded(new UploadedFile(
+                    uploadId, Jsons.string(result.dataObject(), "file_url")));
             });
     }
 
     private void postSubmission(String title, String description, String packageName,
-                                String versionName, int price, String fileUrl, String coverUrl) {
+                                String versionName, int price, UploadedFile sourceFile,
+                                UploadedFile coverFile) {
         setBusy(true, auditRequired ? "正在提交审核…" : "正在发布资源…");
         JsonObject body = new JsonObject();
         body.addProperty("category_id", selectedCategoryId);
         body.addProperty("description", description);
         body.addProperty("price_balance", price);
+        body.addProperty("source_upload_id", sourceFile.uploadId);
+        if (coverFile != null && coverFile.uploadId > 0L) {
+            body.addProperty("cover_upload_id", coverFile.uploadId);
+        }
         String path;
         if (mode == MODE_APPS) {
             body.addProperty("name", title);
             body.addProperty("package_name", packageName);
             body.addProperty("version_name", versionName);
             body.addProperty("version_code", Math.max(1, intValue(binding.versionCodeInput.getText(), 1)));
-            body.addProperty("apk_url", fileUrl);
-            body.addProperty("icon_url", coverUrl);
+            if (coverFile != null && !coverFile.fileUrl.isEmpty()) {
+                body.addProperty("icon_url", coverFile.fileUrl);
+                body.addProperty("icon_upload_id", coverFile.uploadId);
+            }
             body.addProperty("size_bytes", Math.max(0L, selectedFileInfo == null ? 0L : selectedFileInfo.size));
             path = "/api/user/store-apps";
         } else {
             body.addProperty("title", title);
-            body.addProperty("download_url", fileUrl);
-            body.addProperty("cover_url", coverUrl);
+            body.addProperty("resource_type", "source_market");
+            if (coverFile != null && !coverFile.fileUrl.isEmpty()) {
+                body.addProperty("cover_url", coverFile.fileUrl);
+            }
             path = "/api/user/resources";
         }
         submitRequest = AppAccess.from(this).repository().post(path, body, result -> {
@@ -570,7 +582,16 @@ public final class ResourceSubmitActivity extends SystemInsetActivity {
         super.onDestroy();
     }
 
-    private interface UploadCallback { void onUploaded(String fileUrl); }
+    private interface UploadCallback { void onUploaded(UploadedFile file); }
+
+    private static final class UploadedFile {
+        final long uploadId;
+        final String fileUrl;
+        UploadedFile(long uploadId, String fileUrl) {
+            this.uploadId = uploadId;
+            this.fileUrl = fileUrl == null ? "" : fileUrl;
+        }
+    }
 
     private static final class FileInfo {
         final String name;

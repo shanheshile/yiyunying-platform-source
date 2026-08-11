@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="forum_publish_container">#D7E9FF</color>
+    <color name="on_forum_publish_container">#10385F</color>
+    <color name="forum_category_container">#E0F3EF</color>
+    <color name="on_forum_category_container">#143E39</color>
+    <color name="forum_category_selected_container">#AEE5DB</color>
+    <color name="on_forum_category_selected_container">#083B34</color>
+    <color name="forum_unlock_container">#F3E7FA</color>
+    <color name="on_forum_unlock_container">#482159</color>
+</resources>

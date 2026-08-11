@@ -3,7 +3,7 @@ param([string]$BaseUrl = 'http://127.0.0.1:8788')
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
 $script:Checks = 0
-$operatorId = 0
+    $operatorId = 0
 $rootHeaders = @{}
 
 function Invoke-Api {
@@ -57,12 +57,13 @@ try {
 
     $admin = Invoke-Api POST '/api/platform/admins' $operatorHeaders @{
         account = "layer3_$suffix"; password = '123456'; nickname = 'Hierarchy Test Admin'
-        vip_days = 30; app_quota = 1; remote_document_quota = 3; balance = 20
+        app_key = "hierarchy_bootstrap_$suffix"; app_name = 'Hierarchy Bootstrap App'
+        vip_days = 30; app_quota = 2; remote_document_quota = 3; balance = 20
     }
     $adminId = [int]$admin.admin.id
     Assert-True ([int]$admin.admin.balance -eq 20) 'level 3 receives configured balance'
 
-    $adminLogin = Invoke-Api POST '/api/admin/login' @{} @{ platform_key = $operatorKey; account = "layer3_$suffix"; password = '123456' }
+    $adminLogin = Invoke-Api POST '/api/admin/login' @{} @{ platform_key = $operatorKey; app_key = "hierarchy_bootstrap_$suffix"; account = "layer3_$suffix"; password = '123456' }
     $adminHeaders = @{ Authorization = "Bearer $($adminLogin.access_token)" }
     $app = Invoke-Api POST '/api/admin/apps' $adminHeaders @{
         name = 'Hierarchy Test App'; app_key = "hierarchy_$suffix"; description = 'temporary smoke app'
@@ -106,7 +107,7 @@ try {
     $separateCancel = Invoke-Api POST "/api/platform/activities/$separateId/cancel" $operatorHeaders @{}
     Assert-True ([int]$separateCancel.refunded_balance -eq 1) 'separate audience activity refunds unused escrow'
 
-    $directAdminLogin = Invoke-Api POST '/api/admin/login' @{} @{ platform_key = 'yiyunying-root'; account = 'admin'; password = '123456' }
+    $directAdminLogin = Invoke-Api POST '/api/admin/login' @{} @{ platform_key = 'yiyunying-root'; app_key = 'yiyunying-demo'; account = 'admin'; password = '123456' }
     $directAdminHeaders = @{ Authorization = "Bearer $($directAdminLogin.access_token)" }
     Assert-HttpFailure GET "/api/admin/activities/$redId" $directAdminHeaders 404
 

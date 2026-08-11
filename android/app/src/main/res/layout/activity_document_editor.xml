@@ -89,7 +89,7 @@
                 android:contentDescription="收藏这篇笔记"
                 android:visibility="gone"
                 app:icon="@drawable/ic_favorite"
-                app:iconTint="@color/primary" />
+                app:iconTint="?attr/colorPrimary" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/shareButton"
                 style="@style/Widget.Material3.Button.OutlinedButton"
@@ -100,7 +100,7 @@
                 android:contentDescription="创建文档分享码"
                 android:visibility="gone"
                 app:icon="@drawable/ic_forward"
-                app:iconTint="@color/primary" />
+                app:iconTint="?attr/colorPrimary" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/deleteButton"
                 style="@style/Widget.Material3.Button.TextButton"

@@ -15,9 +15,11 @@ use Yiyunying\Services\AuthService;
 use Yiyunying\Services\GovernanceService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\SettingDescriptorService;
+use Yiyunying\Services\SubmissionInspectionService;
 
 final class AppController
 {
+    private const APP_TYPES = ['general', 'community', 'business', 'tool'];
     public static function index(Request $request): \Yiyunying\Core\ApiResponse
     {
         $admin = AuthService::admin($request);
@@ -66,24 +68,26 @@ final class AppController
         $name = Validator::string($data['name'], 'name', 2, 100);
         $description = mb_substr(trim((string) ($data['description'] ?? '')), 0, 1000);
         $logo = mb_substr(trim((string) ($data['logo'] ?? '')), 0, 500);
+        $appType = trim((string) ($data['app_type'] ?? 'general'));
+        if (!in_array($appType, self::APP_TYPES, true)) throw new HttpException('app_type 不支持', 0, 422);
         $appKey = self::uniqueAppKey();
         $appSecret = rtrim(strtr(base64_encode(random_bytes(36)), '+/', '-_'), '=');
 
-        $appId = Database::transaction(static function () use ($admin, $name, $description, $logo, $appKey, $appSecret): int {
+        $app = SubmissionInspectionService::catalogSchemaTransaction(static function () use ($request, $admin, $name, $description, $logo, $appType, $appKey, $appSecret): array {
             AdminAccessService::requireAppQuota($admin, true);
-            $id = Database::insert(
+            $appId = Database::insert(
                 'INSERT INTO apps
-                 (admin_id, app_key, app_secret_hash, name, logo, description, status, version, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())',
-                [(int) $admin['id'], $appKey, hash('sha256', $appSecret), $name, $logo, $description, '1.0.0']
+                 (admin_id, app_key, app_secret_hash, name, app_type, logo, description, status, version, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())',
+                [(int) $admin['id'], $appKey, hash('sha256', $appSecret), $name, $appType, $logo, $description, '1.0.0']
             );
-            AppService::seedDefaults((int) $admin['id'], $id);
-            return $id;
+            AppService::seedDefaults((int) $admin['id'], $appId);
+            SubmissionInspectionService::seedResourceCategories((int) $admin['id'], $appId, 'source_market');
+            $created = AppService::owned((int) $admin['id'], $appId);
+            unset($created['app_secret_hash']);
+            LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', 'create', $appId, null, $created);
+            return $created;
         });
-
-        $app = AppService::owned((int) $admin['id'], $appId);
-        unset($app['app_secret_hash']);
-        LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', 'create', $appId, null, $app);
         return Response::success([
             'app' => $app,
             'app_secret' => $appSecret,
@@ -112,11 +116,14 @@ final class AppController
         $fields = [];
         $values = [];
 
-        foreach (['name' => 100, 'logo' => 500, 'description' => 1000, 'version' => 40] as $field => $max) {
+        foreach (['name' => 100, 'app_type' => 30, 'logo' => 500, 'description' => 1000, 'version' => 40] as $field => $max) {
             if (array_key_exists($field, $data)) {
                 $value = trim((string) $data[$field]);
                 if ($field === 'name' && mb_strlen($value) < 2) {
                     throw new HttpException('name 至少 2 个字符', 0, 422);
+                }
+                if ($field === 'app_type' && !in_array($value, self::APP_TYPES, true)) {
+                    throw new HttpException('app_type 不支持', 0, 422);
                 }
                 $fields[] = "{$field} = ?";
                 $values[] = mb_substr($value, 0, $max);
@@ -230,17 +237,44 @@ final class AppController
     {
         $admin = AuthService::admin($request);
         $appId = (int) $params['app_id'];
-        AppService::owned((int) $admin['id'], $appId);
         $secret = rtrim(strtr(base64_encode(random_bytes(36)), '+/', '-_'), '=');
-        Database::execute(
-            'UPDATE apps SET app_secret_hash = ?, updated_at = NOW() WHERE id = ? AND admin_id = ?',
-            [hash('sha256', $secret), $appId, (int) $admin['id']]
-        );
-        LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', 'secret_reset', $appId);
+        Database::transaction(static function () use ($request, $admin, $appId, $secret): void {
+            $locked = Database::one(
+                'SELECT id FROM apps
+                 WHERE id = ? AND admin_id = ? AND deleted_at IS NULL FOR UPDATE',
+                [$appId, (int) $admin['id']]
+            );
+            if ($locked === null) throw new HttpException('应用不存在', 404, 404);
+            Database::execute(
+                'UPDATE apps SET app_secret_hash = ?, updated_at = NOW() WHERE id = ? AND admin_id = ?',
+                [hash('sha256', $secret), $appId, (int) $admin['id']]
+            );
+            LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', 'secret_reset', $appId);
+        });
         return Response::success([
             'app_secret' => $secret,
             'secret_notice' => '新 app_secret 只返回一次，请保存在服务端。',
         ], '应用密钥已重置');
+    }
+
+    public static function verifyKey(Request $request, array $params): \Yiyunying\Core\ApiResponse
+    {
+        $admin = AuthService::admin($request);
+        $app = AppService::owned((int) $admin['id'], (int) $params['app_id']);
+        $provided = trim((string) $request->input('app_key', ''));
+        if ($provided === '' || !hash_equals((string) $app['app_key'], $provided)) {
+            throw new HttpException('应用唯一 KEY 校验失败', 403, 403);
+        }
+        return Response::success([
+            'token_valid' => true,
+            'login_status' => 'online',
+            'account' => (string) $admin['account'],
+            'app_id' => (int) $app['id'],
+            'app_name' => (string) $app['name'],
+            'app_key_valid' => true,
+            'api_unique_id' => (string) $app['app_key'],
+            'verified_at' => date('Y-m-d H:i:s'),
+        ], '账号、实时 Token 与应用唯一 KEY 校验通过');
     }
 
     public static function features(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -290,26 +324,56 @@ final class AppController
             }
             $items = $normalized;
         }
+        $preparedItems = [];
+        $seenCodes = [];
         foreach ($items as $item) {
             if (!is_array($item) || trim((string) ($item['feature_code'] ?? '')) === '') {
                 throw new HttpException('每个功能项必须包含 feature_code', 0, 422);
             }
+            $featureCode = trim((string) $item['feature_code']);
+            if (preg_match('/^[a-z][a-z0-9_.-]{1,63}$/', $featureCode) !== 1) {
+                throw new HttpException('feature_code 格式错误：' . $featureCode, 0, 422);
+            }
+            if (isset($seenCodes[$featureCode])) {
+                throw new HttpException('功能开关不能重复提交：' . $featureCode, 0, 422);
+            }
+            $seenCodes[$featureCode] = true;
             $enabled = Validator::boolean($item['enabled'] ?? true, 'enabled');
             $configProvided = array_key_exists('config', $item) || array_key_exists('config_json', $item);
             $config = array_key_exists('config', $item) ? $item['config'] : ($item['config_json'] ?? null);
-            if (is_string($config) && $config !== '') {
-                $config = json_decode($config, true);
+            if (is_string($config)) {
+                if (trim($config) === '') {
+                    $config = null;
+                } else {
+                    $decoded = json_decode($config, true);
+                    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+                        throw new HttpException('功能配置必须是有效 JSON 对象或数组：' . $featureCode, 0, 422);
+                    }
+                    $config = $decoded;
+                }
+            } elseif ($config !== null && !is_array($config)) {
+                throw new HttpException('功能配置必须是对象、数组或 null：' . $featureCode, 0, 422);
             }
-            GovernanceService::assertFeatureMutable($appId, trim((string) $item['feature_code']));
-            AppService::saveFeature(
-                (int) $admin['id'],
-                $appId,
-                trim((string) $item['feature_code']),
-                $enabled,
-                is_array($config) ? $config : null,
-                $configProvided
-            );
+            GovernanceService::assertFeatureMutable($appId, $featureCode);
+            $preparedItems[] = [
+                'feature_code' => $featureCode,
+                'enabled' => $enabled,
+                'config' => $config,
+                'config_provided' => $configProvided,
+            ];
         }
+        Database::transaction(static function () use ($admin, $appId, $preparedItems): void {
+            foreach ($preparedItems as $item) {
+                AppService::saveFeature(
+                    (int) $admin['id'],
+                    $appId,
+                    (string) $item['feature_code'],
+                    (bool) $item['enabled'],
+                    is_array($item['config']) ? $item['config'] : null,
+                    (bool) $item['config_provided']
+                );
+            }
+        });
         $after = AppService::features($appId);
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'app_feature', 'save', $appId, null, $after);
         return Response::success([
@@ -386,4 +450,5 @@ final class AppController
         }
         throw new \RuntimeException('无法生成唯一 app_key');
     }
+
 }

@@ -72,11 +72,17 @@ public final class ContentReportDialog {
 
         RadioGroup choices = new RadioGroup(context);
         choices.setOrientation(LinearLayout.VERTICAL);
+        int onSurface = ThemeColors.resolve(context,
+            com.google.android.material.R.attr.colorOnSurface, R.color.on_surface);
+        int onSurfaceVariant = ThemeColors.resolve(context,
+            com.google.android.material.R.attr.colorOnSurfaceVariant,
+            R.color.on_surface_variant);
         for (int index = 0; index < REASONS.length; index++) {
             RadioButton choice = new RadioButton(context);
             choice.setId(View.generateViewId());
             choice.setTag(REASONS[index]);
             choice.setText(REASONS[index]);
+            choice.setTextColor(onSurface);
             choice.setTextSize(14);
             choice.setMinHeight(dp(context, 42));
             choice.setGravity(Gravity.CENTER_VERTICAL);
@@ -87,6 +93,8 @@ public final class ContentReportDialog {
 
         EditText detail = new EditText(context);
         detail.setHint("补充说明（选填，最多 200 字）");
+        detail.setTextColor(onSurface);
+        detail.setHintTextColor(onSurfaceVariant);
         detail.setTextSize(14);
         detail.setMinLines(2);
         detail.setMaxLines(4);

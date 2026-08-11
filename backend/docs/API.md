@@ -1,6 +1,6 @@
 # 易运盈后台 API 快速指南
 
-基础地址：`http://appht.jjmxg.xyz`
+基础地址：由部署者显式配置，例如 `https://api.example.com`；文档不预填生产地址。
 
 本文件用于快速接入。完整角色与参数见 [API_FULL.md](API_FULL.md)，四级规则见 [PLATFORM_GOVERNANCE.md](PLATFORM_GOVERNANCE.md)，599 条实际路由见 [ROUTES.md](ROUTES.md)，177 张表的精确结构见 [SCHEMA.md](SCHEMA.md)，简云能力取长补短的原生映射见 [JIANYUN_CAPABILITY_MAPPING.md](JIANYUN_CAPABILITY_MAPPING.md)，论坛付费分节与热度规则见 [FORUM_EXPERIENCE.md](FORUM_EXPERIENCE.md)。浏览器可直接打开 `/api-docs.html` 查看并检索全部接口。
 
@@ -13,7 +13,8 @@ Authorization: Bearer <platform_token>
 Content-Type: application/json
 ```
 
-1 级 `root/123456` 管理自己的完整数据树。2 级由 1 级授权，只能管理自己的 3 级 admin 及其应用和 user。
+1 级平台所有者管理自己的完整数据树。2 级由 1 级授权，只能管理自己的 3 级 admin 及其应用和 user。
+全新安装不提供默认账号或密码，启用身份必须按部署文档显式注入。
 
 ### 管理员
 
@@ -89,7 +90,7 @@ POST /api/platform/login
 ```
 
 ```json
-{"account":"root","password":"123456"}
+{"platform_key":"<当前平台 KEY>","account":"<当前平台账号>","password":"change-me-before-use"}
 ```
 
 ### 1. 管理员登录
@@ -100,8 +101,10 @@ POST /api/admin/login
 
 ```json
 {
-  "account": "admin",
-  "password": "123456",
+  "platform_key": "<当前平台 KEY>",
+  "app_key": "<当前应用 APP KEY>",
+  "account": "<当前管理员账号>",
+  "password": "change-me-before-use",
   "device": "admin-web"
 }
 ```
@@ -156,7 +159,7 @@ POST /api/user/register
 {
   "app_key": "yy_xxxxxxxxxxxxxxxxxxxx",
   "account": "user001",
-  "password": "123456",
+  "password": "change-me-before-use",
   "nickname": "用户001"
 }
 ```

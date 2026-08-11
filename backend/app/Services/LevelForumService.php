@@ -11,6 +11,7 @@ use Yiyunying\Core\Validator;
 
 final class LevelForumService
 {
+    private const CATEGORIES = ['general', 'technology', 'help', 'share', 'communication'];
     public static function platformActor(array $platform): array
     {
         return [
@@ -63,6 +64,12 @@ final class LevelForumService
             $where[] = 'p.target_level = ?';
             $query[] = (int) $request->input('target_level');
         }
+        $category = trim((string) $request->input('category_code', ''));
+        if ($category !== '') {
+            if (!in_array($category, self::CATEGORIES, true)) throw new HttpException('交流分类不支持', 0, 422);
+            $where[] = 'p.category_code = ?';
+            $query[] = $category;
+        }
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM level_forum_posts p WHERE {$whereSql}", $query)['total'] ?? 0);
         $items = Database::all(
@@ -73,12 +80,15 @@ final class LevelForumService
              ORDER BY p.is_top DESC, p.id DESC LIMIT {$limit} OFFSET {$offset}",
             array_merge([(string) $actor['type'], (int) $actor['id'], (string) $actor['type'], (int) $actor['id']], $query)
         );
+        foreach ($items as &$item) $item['category_name'] = self::categoryName((string) ($item['category_code'] ?? 'general'));
+        unset($item);
         return Pagination::data($items, $total, $page, $limit);
     }
 
     public static function show(array $actor, int $postId): array
     {
         $post = self::visiblePost($actor, $postId);
+        $post['category_name'] = self::categoryName((string) ($post['category_code'] ?? 'general'));
         $post['attachments'] = json_decode((string) ($post['attachments_json'] ?? ''), true) ?: [];
         unset($post['attachments_json']);
         $post['comments'] = Database::all(
@@ -123,14 +133,16 @@ final class LevelForumService
         }
         $title = Validator::string($data['title'] ?? '', 'title', 1, 200);
         $content = Validator::string($data['content'] ?? '', 'content', 1, 50000);
+        $category = trim((string) ($data['category_code'] ?? 'general'));
+        if (!in_array($category, self::CATEGORIES, true)) throw new HttpException('交流分类不支持', 0, 422);
         return Database::insert(
             'INSERT INTO level_forum_posts
              (root_platform_id, scope_platform_id, app_id, target_level, author_type, author_id, author_name,
-              title, content, attachments_json, is_top, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, NOW(), NOW())',
+              category_code, title, content, attachments_json, is_top, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, NOW(), NOW())',
             [
                 (int) $actor['root_platform_id'], $scopePlatformId, $appId, $targetLevel,
-                (string) $actor['type'], (int) $actor['id'], (string) $actor['name'], $title, $content,
+                (string) $actor['type'], (int) $actor['id'], (string) $actor['name'], $category, $title, $content,
                 json_encode((array) ($data['attachments'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             ]
         );
@@ -179,6 +191,35 @@ final class LevelForumService
         });
     }
 
+    public static function pin(array $actor, int $postId, $pinned): bool
+    {
+        $post = self::visiblePost($actor, $postId, true);
+        if ((string) $actor['type'] !== 'admin' || (int) $actor['level'] !== 3
+            || (int) ($post['scope_platform_id'] ?? 0) !== (int) $actor['scope_platform_id']) {
+            throw new HttpException('无权置顶该交流帖子', 403, 403);
+        }
+        $value = self::boolValue($pinned);
+        Database::execute('UPDATE level_forum_posts SET is_top = ?, updated_at = NOW() WHERE id = ?', [$value ? 1 : 0, $postId]);
+        return $value;
+    }
+
+    public static function report(array $actor, int $postId, array $data): int
+    {
+        self::visiblePost($actor, $postId);
+        $reason = Validator::string($data['reason'] ?? '', 'reason', 2, 500);
+        $existing = Database::one(
+            'SELECT id FROM level_forum_reports WHERE post_id = ? AND reporter_type = ? AND reporter_id = ? AND status IN (?, ?) LIMIT 1',
+            [$postId, (string) $actor['type'], (int) $actor['id'], 'pending', 'processing']
+        );
+        if ($existing !== null) return (int) $existing['id'];
+        return Database::insert(
+            'INSERT INTO level_forum_reports
+             (post_id, reporter_type, reporter_id, reason, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, NOW(), NOW())',
+            [$postId, (string) $actor['type'], (int) $actor['id'], $reason, 'pending']
+        );
+    }
+
     public static function delete(array $actor, int $postId): void
     {
         $post = self::visiblePost($actor, $postId, true);
@@ -214,5 +255,13 @@ final class LevelForumService
     {
         if (is_bool($value)) return $value;
         return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private static function categoryName(string $code): string
+    {
+        return [
+            'general' => '综合类', 'technology' => '技术类', 'help' => '求助类',
+            'share' => '分享类', 'communication' => '交流类',
+        ][$code] ?? '综合类';
     }
 }

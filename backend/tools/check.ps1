@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
 $required = @(
+    'config\release-identity.json',
     'bootstrap.php',
     'config\app.php',
     'database\install.sql',
@@ -65,6 +66,9 @@ $required = @(
     'database\migrations\upgrade_20260810_forum_content_unlocks.sql',
     'database\migrations\upgrade_20260810_forum_data_consistency.sql',
     'database\migrations\upgrade_20260811_content_moderation_closure.sql',
+    'database\migrations\upgrade_20260811_short_video_controls.sql',
+    'database\migrations\upgrade_20260811_resource_store_review_closure.sql',
+    'database\migrations\upgrade_20260811_management_shell_restructure.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -78,6 +82,7 @@ $required = @(
     'docs\FORUM_EXPERIENCE.md',
     'docs\COMMUNICATION_TAKEOVER.md',
     'docs\CONTENT_MODERATION.md',
+    'docs\RESOURCE_STORE_REVIEW.md',
     'docs\REQUIREMENT_VERIFICATION_20260721.md',
     'tools\smoke-maximum.ps1',
     'tools\smoke-platform.ps1',
@@ -97,6 +102,7 @@ $required = @(
     'tools\smoke-voice-calls.ps1',
     'tools\exchange-concurrency-worker.php',
     'tools\check-role-permissions.php',
+    'tools\test-user-feature-enforcement-contract.php',
     'tools\test-red-packet-amount.php',
     'tools\test-red-packet-rules.php',
     'tools\check-commerce-refund-policy.php',
@@ -111,8 +117,32 @@ $required = @(
     'tools\test-forum-data-consistency.php',
     'tools\test-purchased-content-immutability.php',
     'tools\test-content-moderation-contract.php',
+    'tools\test-short-video-contract.php',
+    'tools\test-resource-store-review-contract.php',
+    'tools\test-management-shell-contract.php',
+    'tools\test-login-build-identity-contract.php',
+    'tools\test-bootstrap-credential-safety-contract.php',
+    'tools\audit-default-credentials.php',
+    'tools\test-default-credential-audit-contract.php',
+    'tools\test-purchase-history-foreign-key-contract.php',
+    'tools\test-catalog-private-migration-contract.php',
+    'tools\test-upload-library-reference-guards.php',
+    'tools\test-upload-reference-write-toctou-contract.php',
+    'tools\test-wallet-amount-regression.php',
+    'tools\test-public-upload-svg-safety.php',
+    'tools\test-resource-comment-management-contract.php',
+    'tools\test-shop-goods-comment-management-contract.php',
     'tools\test-message-presentation.php',
     'tools\test-update-package-metadata-contract.php',
+    'tools\deploy-ssh.py',
+    'tools\publish-android-ssh.py',
+    'tools\verify-production-release-ssh.py',
+    'tools\requirements-release.txt',
+    'tools\test-deploy-ssh-safety.py',
+    'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_release_evidence_chain.py',
+    'tools\migrate-catalog-private-files.php',
+    'tools\verify-catalog-migration-report.php',
     'tools\generate-requirement-verification.php',
     'tools\generate-reference.php',
     'tools\generate-api-html.php',
@@ -188,6 +218,43 @@ foreach ($file in $powerShellFiles) {
     }
 }
 
+$python = Get-Command python -ErrorAction SilentlyContinue
+if ($null -eq $python) {
+    throw 'Python is required for deployment and release safety checks.'
+}
+$pythonFiles = @(
+    'tools\deploy-ssh.py',
+    'tools\publish-android-ssh.py',
+    'tools\verify-production-release-ssh.py',
+    'tools\test-deploy-ssh-safety.py',
+    'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_release_evidence_chain.py'
+)
+& $python.Source -W error -m py_compile @($pythonFiles | ForEach-Object { Join-Path $root $_ })
+if ($LASTEXITCODE -ne 0) {
+    throw 'Python deployment/release tooling compilation failed.'
+}
+foreach ($testFile in @(
+    'tools\test-deploy-ssh-safety.py',
+    'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_release_evidence_chain.py'
+)) {
+    $testPath = Join-Path $root $testFile
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $pythonOutput = & $python.Source $testPath 2>&1
+        $pythonExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($pythonExitCode -ne 0) {
+        throw "Python release safety checks failed: $testFile`n$pythonOutput"
+    }
+}
+Write-Host 'Python deployment/release safety checks: passed'
+
 $php = Get-Command php -ErrorAction SilentlyContinue
 if ($null -ne $php) {
     $env:YIYUN_BACKEND_ROOT = $root
@@ -220,6 +287,11 @@ exit($invalid === [] ? 0 : 1);
         throw "Role permission checks failed.`n$permissionOutput"
     }
     Write-Host "Role permission checks: passed"
+    $userFeatureOutput = & $php.Source (Join-Path $root 'tools\test-user-feature-enforcement-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "User feature enforcement contract failed.`n$userFeatureOutput"
+    }
+    Write-Host "User feature enforcement contract: passed"
     $redPacketOutput = & $php.Source (Join-Path $root 'tools\test-red-packet-amount.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Red packet amount checks failed.`n$redPacketOutput"
@@ -290,6 +362,76 @@ exit($invalid === [] ? 0 : 1);
         throw "Content moderation contract checks failed.`n$contentModerationOutput"
     }
     Write-Host "Content moderation contract checks: passed"
+    $shortVideoOutput = & $php.Source (Join-Path $root 'tools\test-short-video-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Short-video contract checks failed.`n$shortVideoOutput"
+    }
+    Write-Host "Short-video contract checks: passed"
+    $resourceStoreReviewOutput = & $php.Source (Join-Path $root 'tools\test-resource-store-review-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Resource/store review contract checks failed.`n$resourceStoreReviewOutput"
+    }
+    Write-Host "Resource/store review contract checks: passed"
+    $managementShellOutput = & $php.Source (Join-Path $root 'tools\test-management-shell-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Management-shell contract checks failed.`n$managementShellOutput"
+    }
+    Write-Host "Management-shell contract checks: passed"
+    $loginBuildIdentityOutput = & $php.Source (Join-Path $root 'tools\test-login-build-identity-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Login build identity contract checks failed.`n$loginBuildIdentityOutput"
+    }
+    Write-Host "Login build identity contract checks: passed"
+    $bootstrapCredentialOutput = & $php.Source (Join-Path $root 'tools\test-bootstrap-credential-safety-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bootstrap credential safety contract failed.`n$bootstrapCredentialOutput"
+    }
+    Write-Host "Bootstrap credential safety contract: passed"
+    $defaultCredentialAuditOutput = & $php.Source (Join-Path $root 'tools\test-default-credential-audit-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Default credential audit static contract failed.`n$defaultCredentialAuditOutput"
+    }
+    Write-Host "Default credential audit static contract: passed"
+    $purchaseHistoryOutput = & $php.Source (Join-Path $root 'tools\test-purchase-history-foreign-key-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Purchase-history foreign-key contract checks failed.`n$purchaseHistoryOutput"
+    }
+    Write-Host "Purchase-history foreign-key contract checks: passed"
+    $catalogMigrationOutput = & $php.Source (Join-Path $root 'tools\test-catalog-private-migration-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Catalog private migration contract checks failed.`n$catalogMigrationOutput"
+    }
+    Write-Host "Catalog private migration contract checks: passed"
+    $uploadReferenceOutput = & $php.Source (Join-Path $root 'tools\test-upload-library-reference-guards.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Upload-library reference guard checks failed.`n$uploadReferenceOutput"
+    }
+    Write-Host "Upload-library reference guard checks: passed"
+    $uploadWriteReferenceOutput = & $php.Source (Join-Path $root 'tools\test-upload-reference-write-toctou-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Upload-reference write TOCTOU checks failed.`n$uploadWriteReferenceOutput"
+    }
+    Write-Host "Upload-reference write TOCTOU checks: passed"
+    $walletAmountOutput = & $php.Source (Join-Path $root 'tools\test-wallet-amount-regression.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wallet amount regression checks failed.`n$walletAmountOutput"
+    }
+    Write-Host "Wallet amount regression checks: passed"
+    $publicSvgOutput = & $php.Source (Join-Path $root 'tools\test-public-upload-svg-safety.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Public upload SVG safety checks failed.`n$publicSvgOutput"
+    }
+    Write-Host "Public upload SVG safety checks: passed"
+    $resourceCommentOutput = & $php.Source (Join-Path $root 'tools\test-resource-comment-management-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Resource comment management contract checks failed.`n$resourceCommentOutput"
+    }
+    Write-Host "Resource comment management contract checks: passed"
+    $shopGoodsCommentOutput = & $php.Source (Join-Path $root 'tools\test-shop-goods-comment-management-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Shop goods comment management contract checks failed.`n$shopGoodsCommentOutput"
+    }
+    Write-Host "Shop goods comment management contract checks: passed"
     $messagePresentationOutput = & $php.Source (Join-Path $root 'tools\test-message-presentation.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Message presentation contract checks failed.`n$messagePresentationOutput"

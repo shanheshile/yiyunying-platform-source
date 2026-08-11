@@ -60,6 +60,8 @@ import xyz.jjmxg.yiyunying.data.api.RequestHandle;
 import xyz.jjmxg.yiyunying.databinding.ActivityForumPostBinding;
 import xyz.jjmxg.yiyunying.domain.Role;
 import xyz.jjmxg.yiyunying.domain.forum.ForumPrivateMediaPolicy;
+import xyz.jjmxg.yiyunying.domain.forum.ForumSortPolicy;
+import xyz.jjmxg.yiyunying.domain.forum.ForumThreadPaginationPolicy;
 import xyz.jjmxg.yiyunying.domain.forum.ForumUnlockPolicy;
 import xyz.jjmxg.yiyunying.ui.auth.LoginActivity;
 import xyz.jjmxg.yiyunying.ui.common.ImageLoader;
@@ -81,12 +83,19 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private static final String EXTRA_POST_ID = "post_id";
     private static final String EXTRA_APP_ID = "app_id";
     private static final String EXTRA_COMMENT_ID = "comment_id";
+    private static final String STATE_COMMENT_SORT = "forum_comment_sort";
+    private static final String STATE_ROOT_COMMENT_PAGE = "forum_root_comment_page";
+    private static final String STATE_RELATED_COMMENT_ROOT_ID = "forum_related_comment_root_id";
+    private static final String STATE_RELATED_COMMENT_PAGE = "forum_related_comment_page";
+    private static final String STATE_FOCUS_COMMENT_ID = "forum_focus_comment_id";
     private static final long PRIVATE_MEDIA_REFRESH_DEBOUNCE_MS = 1_500L;
 
     private ActivityForumPostBinding binding;
     private RequestHandle request;
+    private RequestHandle cachedRequest;
     private RequestHandle actionRequest;
     private RequestHandle commentRequest;
+    private RequestHandle commentListRequest;
     private RequestHandle commentUploadRequest;
     private RequestHandle mentionRequest;
     private long postId;
@@ -106,7 +115,16 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private boolean resumed;
     private final List<CommentAttachment> commentAttachments = new ArrayList<>();
     private final Set<Long> commentMentionIds = new LinkedHashSet<>();
-    private final Set<Long> expandedCommentThreads = new LinkedHashSet<>();
+    private JsonArray rootComments = new JsonArray();
+    private String commentSort = ForumSortPolicy.COMPREHENSIVE;
+    private int rootCommentPage = 1;
+    private int rootCommentTotalPages = 1;
+    private long relatedCommentRootId;
+    private int relatedCommentPage = 1;
+    private int relatedCommentTotalPages = 1;
+    private boolean focusThreadLookupStarted;
+    private boolean commentListApplied;
+    private long commentListGeneration;
     private boolean suppressMentionPicker;
     private String commentPickerType = "file";
     private CommentVoiceRecorder commentVoiceRecorder;
@@ -150,6 +168,14 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         if (appId <= 0 && role == Role.ADMIN) appId = AppAccess.from(this).session().selectedAppId();
         postId = getIntent().getLongExtra(EXTRA_POST_ID, 0);
         focusCommentId = getIntent().getLongExtra(EXTRA_COMMENT_ID, 0L);
+        if (state != null) {
+            commentSort = ForumSortPolicy.normalize(state.getString(
+                STATE_COMMENT_SORT, ForumSortPolicy.COMPREHENSIVE));
+            rootCommentPage = Math.max(1, state.getInt(STATE_ROOT_COMMENT_PAGE, 1));
+            relatedCommentRootId = Math.max(0L, state.getLong(STATE_RELATED_COMMENT_ROOT_ID, 0L));
+            relatedCommentPage = Math.max(1, state.getInt(STATE_RELATED_COMMENT_PAGE, 1));
+            focusCommentId = Math.max(0L, state.getLong(STATE_FOCUS_COMMENT_ID, focusCommentId));
+        }
         if (postId <= 0) { finish(); return; }
         binding = ActivityForumPostBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
@@ -168,9 +194,14 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         binding.commentVoiceButton.setOnClickListener(view -> toggleCommentVoiceRecording());
         binding.commentVoiceCancelButton.setOnClickListener(view -> cancelCommentVoiceRecording());
         binding.sendCommentButton.setOnClickListener(view -> sendInlineComment());
+        binding.commentSortButton.setText(ForumSortPolicy.label(commentSort));
+        binding.commentSortButton.setOnClickListener(view -> selectCommentSort());
+        binding.commentThreadModeButton.setOnClickListener(view -> showAllCommentThreads());
+        binding.commentThreadPageButton.setOnClickListener(view -> showCommentThreadPageMenu());
         configureCommentEmojiPanel();
         boolean managementView = role != Role.USER;
         binding.interactionRow.setVisibility(managementView ? View.GONE : View.VISIBLE);
+        binding.commentSortButton.setVisibility(managementView ? View.GONE : View.VISIBLE);
         binding.commentPendingScroll.setVisibility(View.GONE);
         binding.commentComposerRow.setVisibility(managementView ? View.GONE : View.VISIBLE);
         binding.commentInput.addTextChangedListener(new TextWatcher() {
@@ -190,6 +221,13 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             @Override public void afterTextChanged(Editable value) { }
         });
         load();
+        if (role == Role.USER) {
+            if (relatedCommentRootId > 0L) {
+                loadCommentThread(relatedCommentRootId, focusCommentId, relatedCommentPage);
+            } else {
+                loadCommentRoots(rootCommentPage);
+            }
+        }
     }
 
     private void load() {
@@ -199,20 +237,26 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
     private void load(boolean refreshingPrivateMedia, boolean requestedByUser) {
         if (!isUiActive()) return;
         if (request != null) request.cancel();
+        if (cachedRequest != null) cachedRequest.cancel();
         request = null;
+        cachedRequest = null;
         privateMediaRefreshInFlight = refreshingPrivateMedia;
         if (!refreshingPrivateMedia) privateMediaAutoRefreshSuppressed = false;
         long generation = ++loadGeneration;
         if (!refreshingPrivateMedia || requestedByUser) binding.progress.setVisibility(View.VISIBLE);
         String path = postPath();
         LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        if (role == Role.USER) {
+            query.put("comment_sort", ForumSortPolicy.normalize(commentSort));
+        }
         if (refreshingPrivateMedia) {
             query.put("_media_refresh", Long.toString(System.currentTimeMillis()));
         }
         if (!refreshingPrivateMedia) {
-            AppAccess.from(this).repository().getCached(path, query, cached -> {
+            cachedRequest = AppAccess.from(this).repository().getCached(path, query, cached -> {
                 if (generation != loadGeneration || networkAppliedGeneration >= generation
                     || binding == null || isFinishing() || isDestroyed() || !cached.isSuccessful()) return;
+                cachedRequest = null;
                 JsonObject cachedPost = Jsons.object(cached.dataObject(), "post");
                 if (cachedPost.size() == 0) return;
                 post = cachedPost;
@@ -295,7 +339,10 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             });
             binding.tagContainer.addView(chip);
         }
-        renderComments(Jsons.array(post, "comments"));
+        if (relatedCommentRootId <= 0L && !commentListApplied) {
+            rootComments = copyArray(Jsons.array(post, "comments"));
+            renderComments(rootComments);
+        }
         schedulePrivateMediaRefresh();
     }
 
@@ -482,14 +529,227 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         return card;
     }
 
+    private void selectCommentSort() {
+        String[] labels = ForumSortPolicy.labels();
+        new YiyunyingDialogBuilder(this)
+            .setTitle("评论排序")
+            .setSingleChoiceItems(labels, ForumSortPolicy.selectedIndex(commentSort), (dialog, which) -> {
+                commentSort = ForumSortPolicy.valueAt(which);
+                rootCommentPage = 1;
+                rootCommentTotalPages = 1;
+                binding.commentSortButton.setText(ForumSortPolicy.label(commentSort));
+                dialog.dismiss();
+                loadCommentRoots(1);
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void loadCommentRoots() {
+        loadCommentRoots(rootCommentPage);
+    }
+
+    private void loadCommentRoots(int requestedPage) {
+        if (!isUiActive() || role != Role.USER) {
+            if (role != Role.USER) renderComments(rootComments);
+            return;
+        }
+        if (commentListRequest != null) commentListRequest.cancel();
+        binding.progress.setVisibility(View.VISIBLE);
+        long generation = ++commentListGeneration;
+        LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        query.put("scope", "roots");
+        query.put("sort", ForumSortPolicy.normalize(commentSort));
+        query.put("page", Integer.toString(Math.max(1, requestedPage)));
+        query.put("limit", "100");
+        commentListRequest = AppAccess.from(this).repository().get(
+            "/api/user/forum-posts/" + postId + "/comments", query, result -> {
+                if (generation != commentListGeneration) return;
+                commentListRequest = null;
+                if (!isUiActive()) return;
+                binding.progress.setVisibility(View.INVISIBLE);
+                if (!result.isSuccessful()) {
+                    Snackbar.make(binding.getRoot(), result.message().isEmpty()
+                        ? "评论排序加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
+                    return;
+                }
+                relatedCommentRootId = 0L;
+                JsonObject pagination = Jsons.object(result.dataObject(), "pagination");
+                rootCommentTotalPages = ForumThreadPaginationPolicy.totalPages(
+                    (int) Jsons.longValue(pagination, "total_pages"));
+                rootCommentPage = ForumThreadPaginationPolicy.page(
+                    (int) Jsons.longValue(pagination, "page"), rootCommentTotalPages);
+                rootComments = copyArray(Jsons.array(result.dataObject(), "items"));
+                commentListApplied = true;
+                updateCommentModeHeader();
+                renderComments(rootComments);
+                binding.scroll.post(() -> binding.scroll.smoothScrollTo(0,
+                    Math.max(0, binding.commentsHeading.getTop() - dp(12))));
+            });
+    }
+
+    private void showCommentThread(long rootId) {
+        loadCommentThread(rootId, 0L, 1);
+    }
+
+    private void loadCommentThread(long rootId, long commentId) {
+        loadCommentThread(rootId, commentId, commentId > 0L ? 0 : relatedCommentPage);
+    }
+
+    private void loadCommentThread(long rootId, long commentId, int requestedPage) {
+        if (!isUiActive()) return;
+        if (role != Role.USER) {
+            relatedCommentRootId = rootId;
+            relatedCommentPage = 1;
+            relatedCommentTotalPages = 1;
+            updateCommentModeHeader();
+            renderComments(rootComments);
+            return;
+        }
+        if (commentListRequest != null) commentListRequest.cancel();
+        long generation = ++commentListGeneration;
+        LinkedHashMap<String, String> query = new LinkedHashMap<>();
+        query.put("scope", "thread");
+        query.put("sort", ForumSortPolicy.EARLIEST);
+        query.put("limit", "100");
+        if (requestedPage > 0) query.put("page", Integer.toString(requestedPage));
+        if (rootId > 0L) query.put("root_comment_id", Long.toString(rootId));
+        if (commentId > 0L) query.put("comment_id", Long.toString(commentId));
+        binding.progress.setVisibility(View.VISIBLE);
+        commentListRequest = AppAccess.from(this).repository().get(
+            "/api/user/forum-posts/" + postId + "/comments", query, result -> {
+                if (generation != commentListGeneration) return;
+                commentListRequest = null;
+                if (!isUiActive()) return;
+                binding.progress.setVisibility(View.INVISIBLE);
+                if (!result.isSuccessful()) {
+                    Snackbar.make(binding.getRoot(), result.message().isEmpty()
+                        ? "相关评论加载失败" : result.message(), Snackbar.LENGTH_LONG).show();
+                    return;
+                }
+                JsonArray thread = copyArray(Jsons.array(result.dataObject(), "items"));
+                if (thread.isEmpty()) {
+                    Snackbar.make(binding.getRoot(), "这组相关评论已不可见", Snackbar.LENGTH_SHORT).show();
+                    return;
+                }
+                long resolved = Jsons.longValue(result.dataObject(), "resolved_root_comment_id");
+                if (resolved <= 0L) resolved = rootIdFrom(thread, rootId);
+                relatedCommentRootId = resolved;
+                JsonObject pagination = Jsons.object(result.dataObject(), "pagination");
+                relatedCommentTotalPages = ForumThreadPaginationPolicy.totalPages(
+                    (int) Jsons.longValue(pagination, "total_pages"));
+                relatedCommentPage = ForumThreadPaginationPolicy.page(
+                    (int) Jsons.longValue(pagination, "page"), relatedCommentTotalPages);
+                focusThreadLookupStarted = true;
+                updateCommentModeHeader();
+                renderComments(thread);
+            });
+    }
+
+    private void showAllCommentThreads() {
+        relatedCommentRootId = 0L;
+        relatedCommentPage = 1;
+        relatedCommentTotalPages = 1;
+        focusCommentId = 0L;
+        updateCommentModeHeader();
+        renderComments(rootComments);
+        if (role == Role.USER) loadCommentRoots(rootCommentPage);
+    }
+
+    private void updateCommentModeHeader() {
+        boolean related = relatedCommentRootId > 0L;
+        binding.commentsHeading.setText(related ? "相关评论" : "全部评论");
+        binding.commentThreadModeButton.setVisibility(related ? View.VISIBLE : View.GONE);
+        int page = related ? relatedCommentPage : rootCommentPage;
+        int totalPages = related ? relatedCommentTotalPages : rootCommentTotalPages;
+        binding.commentThreadPageButton.setVisibility(
+            role == Role.USER && totalPages > 1 ? View.VISIBLE : View.GONE);
+        binding.commentThreadPageButton.setText(
+            ForumThreadPaginationPolicy.label(page, totalPages));
+        binding.commentThreadPageButton.setContentDescription(
+            related ? "切换相关评论页" : "切换主评论页");
+        binding.commentSortButton.setVisibility(!related && role == Role.USER ? View.VISIBLE : View.GONE);
+        binding.commentSortButton.setText(ForumSortPolicy.label(commentSort));
+    }
+
+    private void showCommentThreadPageMenu() {
+        if (!isUiActive() || role != Role.USER) return;
+        boolean related = relatedCommentRootId > 0L;
+        int page = related ? relatedCommentPage : rootCommentPage;
+        int totalPages = related ? relatedCommentTotalPages : rootCommentTotalPages;
+        if (totalPages <= 1) return;
+        List<String> labels = new ArrayList<>();
+        List<Integer> pages = new ArrayList<>();
+        if (ForumThreadPaginationPolicy.canPrevious(page)) {
+            labels.add("上一页");
+            pages.add(page - 1);
+        }
+        if (ForumThreadPaginationPolicy.canNext(page, totalPages)) {
+            labels.add("下一页");
+            pages.add(page + 1);
+        }
+        if (labels.isEmpty()) return;
+        new YiyunyingDialogBuilder(this)
+            .setTitle(ForumThreadPaginationPolicy.label(page, totalPages))
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> {
+                if (which < 0 || which >= pages.size()) return;
+                dialog.dismiss();
+                if (related) loadCommentThread(relatedCommentRootId, 0L, pages.get(which));
+                else loadCommentRoots(pages.get(which));
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private JsonArray flattenCommentPayload(JsonArray comments) {
+        JsonArray flattened = new JsonArray();
+        Set<Long> renderedIds = new LinkedHashSet<>();
+        for (JsonElement element : comments) {
+            if (!element.isJsonObject()) continue;
+            JsonObject root = element.getAsJsonObject();
+            addUniqueComment(flattened, renderedIds, root);
+            JsonArray preview = Jsons.array(root, "reply_preview");
+            if (preview.isEmpty()) preview = Jsons.array(root, "replies_preview");
+            for (JsonElement reply : preview) {
+                if (reply.isJsonObject()) addUniqueComment(flattened, renderedIds, reply.getAsJsonObject());
+            }
+        }
+        return flattened;
+    }
+
+    private void addUniqueComment(JsonArray target, Set<Long> ids, JsonObject comment) {
+        long id = Jsons.longValue(comment, "id");
+        if (id <= 0L || ids.add(id)) target.add(comment);
+    }
+
+    private JsonArray copyArray(JsonArray source) {
+        JsonArray copy = new JsonArray();
+        if (source != null) for (JsonElement value : source) copy.add(value.deepCopy());
+        return copy;
+    }
+
+    private long rootIdFrom(JsonArray comments, long fallback) {
+        for (JsonElement element : comments) {
+            if (!element.isJsonObject()) continue;
+            JsonObject comment = element.getAsJsonObject();
+            long parent = Jsons.longValue(comment, "parent_id");
+            long id = Jsons.longValue(comment, "id");
+            if (parent <= 0L && id > 0L) return id;
+            long root = Jsons.longValue(comment, "root_comment_id");
+            if (root > 0L) return root;
+        }
+        return fallback;
+    }
+
     private void renderComments(JsonArray comments) {
         binding.commentsContainer.removeAllViews();
-        binding.emptyComments.setVisibility(comments.isEmpty() ? View.VISIBLE : View.GONE);
+        JsonArray flattenedComments = flattenCommentPayload(comments);
+        binding.emptyComments.setVisibility(flattenedComments.isEmpty() ? View.VISIBLE : View.GONE);
         Map<Long, View> commentAnchors = new LinkedHashMap<>();
         Map<Long, CommentThreadView> threadContainers = new LinkedHashMap<>();
         List<JsonObject> commentItems = new ArrayList<>();
         List<ForumCommentThreadOrder.CommentRef> commentRefs = new ArrayList<>();
-        for (JsonElement element : comments) {
+        for (JsonElement element : flattenedComments) {
             if (!element.isJsonObject()) continue;
             JsonObject item = element.getAsJsonObject();
             int sourceIndex = commentItems.size();
@@ -502,22 +762,19 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             ));
         }
         Map<Integer, Long> resolvedRoots = ForumCommentThreadOrder.resolvedRootIds(commentRefs);
-        long requestedFocusId = focusCommentId;
-        for (int index = 0; index < commentItems.size(); index++) {
-            if (Jsons.longValue(commentItems.get(index), "id") == requestedFocusId) {
-                expandedCommentThreads.add(resolvedRoots.getOrDefault(index, requestedFocusId));
-                break;
-            }
-        }
         for (int orderedIndex : ForumCommentThreadOrder.orderedIndexes(commentRefs)) {
             JsonObject comment = commentItems.get(orderedIndex);
             long commentId = Jsons.longValue(comment, "id");
             long parentCommentId = Jsons.longValue(comment, "parent_id");
             long rootCommentId = resolvedRoots.getOrDefault(orderedIndex, commentId);
+            if (relatedCommentRootId > 0L && rootCommentId != relatedCommentRootId) continue;
             CommentThreadView thread = threadContainers.get(rootCommentId);
             if (thread == null) {
                 thread = new CommentThreadView(rootCommentId);
                 threadContainers.put(rootCommentId, thread);
+            }
+            if (parentCommentId <= 0L) {
+                thread.setDeclaredReplyCount((int) Jsons.longValue(comment, "reply_count"));
             }
             MaterialCardView card = new MaterialCardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -651,12 +908,18 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 thread.rootContainer.addView(card);
             }
             commentAnchors.put(commentId, card);
-            if (focusCommentId > 0L && focusCommentId == commentId) {
+            if (focusCommentId > 0L && focusCommentId == commentId
+                && (relatedCommentRootId > 0L || role != Role.USER)) {
                 focusCommentId = 0L;
                 focusCommentCard(card, "已定位到这条评论");
             }
         }
         for (CommentThreadView thread : threadContainers.values()) thread.refresh();
+        binding.emptyComments.setVisibility(threadContainers.isEmpty() ? View.VISIBLE : View.GONE);
+        if (focusCommentId > 0L && role == Role.USER && !focusThreadLookupStarted) {
+            focusThreadLookupStarted = true;
+            loadCommentThread(0L, focusCommentId);
+        }
     }
 
     private final class CommentThreadView {
@@ -668,6 +931,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         final TextView toggleText;
         final ImageView toggleIcon;
         int replyCount;
+        int declaredReplyCount;
 
         CommentThreadView(long rootId) {
             this.rootId = rootId;
@@ -720,11 +984,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(14), dp(14));
             iconParams.leftMargin = dp(3);
             toggle.addView(toggleIcon, iconParams);
-            toggle.setOnClickListener(view -> {
-                if (expandedCommentThreads.contains(rootId)) expandedCommentThreads.remove(rootId);
-                else expandedCommentThreads.add(rootId);
-                refresh();
-            });
+            toggle.setOnClickListener(view -> showCommentThread(rootId));
 
             threadBody.addView(rootContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -749,20 +1009,25 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             replyCount++;
         }
 
+        void setDeclaredReplyCount(int count) {
+            declaredReplyCount = Math.max(declaredReplyCount, Math.max(0, count));
+        }
+
         void refresh() {
-            boolean expanded = expandedCommentThreads.contains(rootId);
+            boolean expanded = relatedCommentRootId == rootId;
+            int totalReplyCount = Math.max(replyCount, declaredReplyCount);
             repliesContainer.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
             for (int index = 0; index < repliesContainer.getChildCount(); index++) {
                 repliesContainer.getChildAt(index).setVisibility(
                     ForumCommentPreviewPolicy.isReplyVisible(expanded, index)
                         ? View.VISIBLE : View.GONE);
             }
-            nestedContainer.setVisibility(replyCount > 0 ? View.VISIBLE : View.GONE);
-            toggle.setVisibility(ForumCommentPreviewPolicy.showsToggle(replyCount)
+            nestedContainer.setVisibility(totalReplyCount > 0 ? View.VISIBLE : View.GONE);
+            toggle.setVisibility(!expanded && ForumCommentPreviewPolicy.showsToggle(totalReplyCount)
                 ? View.VISIBLE : View.GONE);
-            toggleText.setText(ForumCommentPreviewPolicy.toggleLabel(expanded, replyCount));
-            toggleIcon.setRotation(expanded ? -90f : 90f);
-            toggle.setContentDescription(toggleText.getText());
+            toggleText.setText(ForumCommentPreviewPolicy.toggleLabel(false, totalReplyCount));
+            toggleIcon.setRotation(90f);
+            toggle.setContentDescription("只看这条主评论下的全部 " + totalReplyCount + " 条回复");
         }
     }
 
@@ -848,7 +1113,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             actionRequest = null;
             if (!isUiActive()) return;
             if (!result.isSuccessful()) Snackbar.make(binding.getRoot(), result.message(), Snackbar.LENGTH_LONG).show();
-            else load();
+            else refreshVisibleComments();
         });
     }
 
@@ -862,8 +1127,17 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
                 actionRequest = null;
                 if (!isUiActive()) return;
                 if (!result.isSuccessful()) Snackbar.make(binding.getRoot(), result.message(), Snackbar.LENGTH_LONG).show();
-                else load();
+                else refreshVisibleComments();
             });
+    }
+
+    private void refreshVisibleComments() {
+        if (role == Role.USER && relatedCommentRootId > 0L) {
+            loadCommentThread(relatedCommentRootId, 0L, relatedCommentPage);
+        } else {
+            load();
+            if (role == Role.USER) loadCommentRoots(rootCommentPage);
+        }
     }
 
     private void reportComment(JsonObject comment) {
@@ -1228,7 +1502,7 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             clearCommentAttachments();
             renderCommentAttachments();
             Snackbar.make(binding.getRoot(), "评论已发布", Snackbar.LENGTH_SHORT).show();
-            load();
+            refreshVisibleComments();
         });
     }
 
@@ -1384,11 +1658,24 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         super.onPause();
     }
 
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(STATE_COMMENT_SORT, ForumSortPolicy.normalize(commentSort));
+        outState.putInt(STATE_ROOT_COMMENT_PAGE, rootCommentPage);
+        outState.putLong(STATE_RELATED_COMMENT_ROOT_ID, relatedCommentRootId);
+        outState.putInt(STATE_RELATED_COMMENT_PAGE, relatedCommentPage);
+        outState.putLong(STATE_FOCUS_COMMENT_ID, focusCommentId);
+        super.onSaveInstanceState(outState);
+    }
+
     @Override protected void onDestroy() {
         privateMediaHandler.removeCallbacksAndMessages(null);
         if (request != null) request.cancel();
+        if (cachedRequest != null) cachedRequest.cancel();
+        loadGeneration++;
         if (actionRequest != null) actionRequest.cancel();
         if (commentRequest != null) commentRequest.cancel();
+        if (commentListRequest != null) commentListRequest.cancel();
+        commentListGeneration++;
         if (commentUploadRequest != null) commentUploadRequest.cancel();
         if (mentionRequest != null) mentionRequest.cancel();
         cancelCommentVoiceRecording();
