@@ -17,6 +17,7 @@ import androidx.annotation.Nullable;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.widget.PopupMenu;
+import androidx.appcompat.widget.TooltipCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 
 import xyz.jjmxg.yiyunying.R;
@@ -202,7 +203,7 @@ public final class GenericModuleFragment extends BaseFragment {
                 else auditStatusFilter = "";
                 String label = item.getTitle() == null ? "全部状态" : item.getTitle().toString();
                 binding.auditFilterButton.setContentDescription("审核状态筛选：" + label);
-                binding.auditFilterButton.setTooltipText("当前：" + label);
+                TooltipCompat.setTooltipText(binding.auditFilterButton, "当前：" + label);
                 page = 1;
                 load(true);
                 return true;

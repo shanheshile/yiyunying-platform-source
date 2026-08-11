@@ -121,9 +121,11 @@ public final class LoginConnectionIdentityUiTest {
         assertTrue(layout.contains("android:text=\"@string/card_login\""));
         assertTrue(layout.contains("android:text=\"@string/card_auto_login\""));
         assertTrue(layout.contains("android:text=\"@string/forgot_password\""));
-        assertTrue(strings.contains("<string name=\"card_login\">登录卡密</string>"));
-        assertTrue(strings.contains("<string name=\"card_auto_login\">使用本机已绑定卡密登录</string>"));
-        assertTrue(strings.contains("<string name=\"forgot_password\">找回密码</string>"));
+        assertTrue(strings.contains("<string name=\"login_connection_security_notice\" translatable=\"false\">服务器与应用身份已由当前安装版本安全配置"));
+        assertTrue(strings.contains("<string name=\"login_connection_config_error\" translatable=\"false\">安装包身份配置无效"));
+        assertTrue(strings.contains("<string name=\"card_login\" translatable=\"false\">登录卡密</string>"));
+        assertTrue(strings.contains("<string name=\"card_auto_login\" translatable=\"false\">使用本机已绑定卡密登录</string>"));
+        assertTrue(strings.contains("<string name=\"forgot_password\" translatable=\"false\">找回密码</string>"));
     }
 
     private static String text(View view) {
