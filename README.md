@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-当前本地 `2.7.15 (60)` Debug 候选已从源码提交 `49f44235af61b02bba7b6c06f5fe084685f1f2fb` 完成四包 Build；线上仍是 `2.7.14 (59)` 四端非强制 Debug 测试版。本次待提交的构建元数据与文档将构成证据提交 B，精确 B 哈希不在提交自身预写，以 Finalize 后 `release-manifest.releaseEvidenceCommit` 为权威；目标 annotated tag 只有通过 Finalize 核验才算有效发布证据，实际状态以 finalized manifest 与 Git refs 回读为准。当前尚未 Finalize、部署、推送或归档，链路仍是 Debug 签名和 HTTP，因此不是正式商用 Release。
+当前本地源码候选已统一为 `2.7.15 (60)`；线上仍是 `2.7.14 (59)` 四端非强制 Debug 测试版。`2.7.15` 尚未构建四个新 APK、部署、创建标签、推送或归档，不能把源码候选写成已发布版本。线上制品仍为 Debug 签名且链路仍使用 HTTP，HTTPS、正式 Release 签名和真机覆盖安装均未完成，因此不是正式商用 Release。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -47,9 +47,8 @@
 - 软件内拍照/录像支持变焦和录像中聚焦；拍摄完成先在当前页面固定预览，确认后进入发送，取消后留在拍摄页重拍。
 - 论坛评论只直接展示主评论，子回复提供预览、更多、回复关系、只看相关以及时间/热度/综合排序和分页；同步完善群头像、群管理、主题字体、弹窗颜色、状态栏安全区、底部弹层手势和媒体堆叠跟随动画。
 - 默认登录凭据改为禁用占位并加入审计；发布链路增加固定主机密钥、备份/回滚、四包身份、完整下载、Range/ETag、策略原子激活与生产回读门禁。
-- 2026-08-11 22:07 已完成本地 release Build：Gradle 226/226 tasks 执行，四角色各 337 项测试、合计 1,348 项均通过，四角色 Lint 与独立 APK 审计通过；`releases/2.7.15/` 已生成四个 Debug APK 和 `finalizationStatus=pending` 的 schema 4 manifest。
 
-上述内容是已构建但未 Finalize 的本地候选，不代表真实数据库迁移、真机验收或生产部署已完成。阶段说明见 [2.7.15 本地候选说明](docs/releases/2.7.15.md)。
+上述内容是本地源码候选能力，不代表真实数据库迁移、真机验收或生产部署已完成。阶段说明见 [2.7.15 本地候选说明](docs/releases/2.7.15.md)。
 
 ## 快速开始
 

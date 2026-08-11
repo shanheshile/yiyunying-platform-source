@@ -1,20 +1,16 @@
 {
-    "schemaVersion":  4,
-    "versionName":  "2.7.15",
-    "versionCode":  60,
-    "buildSourceCommit":  "49f44235af61b02bba7b6c06f5fe084685f1f2fb",
-    "releaseEvidenceCommit":  null,
-    "releaseTag":  "v2.7.15-debug",
-    "finalizationStatus":  "pending",
-    "releaseIdentitySha256":  "3d4c0403917222c3214066e1ad0d10798aaecccdce9f7e8d9c9e1d45685dd936",
+    "schemaVersion":  3,
+    "versionName":  "2.7.14",
+    "versionCode":  59,
     "releaseDate":  "2026-08-11",
-    "generatedAt":  "2026-08-11T22:07:29.9122894+08:00",
-    "downloadRootBase":  "http://appht.jjmxg.xyz/downloads",
+    "generatedAt":  "2026-08-11T04:30:14.6787749+08:00",
+    "downloadRootBase":  "/downloads",
     "releaseNotes":  [
-                         "重构管理端主页、源码示例、交流与我的四栏，并完善多应用切换和权限管制",
-                         "新增用户端短视频与快捷业务模块，完善群聊、论坛、资源、商城和审核闭环",
-                         "优化拍摄变焦与录像聚焦、拍后预览确认、主题字体按钮颜色和系统栏适配",
-                         "补齐登录身份、迁移门禁、四端发布证据和最小功能闭环测试"
+                         "支持安装包断点续传、异常恢复与校验后续装",
+                         "新增设置中的历史安装包管理、手动删除和安装后自动删除",
+                         "优化未知来源安装授权、安装结果确认和多页面下载并发",
+                         "补齐动态与评论真实审核闭环及管理员控制",
+                         "继续完善聊天、媒体、资料、弹层界面与性能修复"
                      ],
     "releases":  [
                      {
@@ -23,13 +19,13 @@
                          "shortName":  "用户端",
                          "audience":  "普通用户",
                          "description":  "聊天、动态、活动、商城与个人中心",
-                         "fileName":  "yiyunying-user-v2.7.15-debug.apk",
+                         "fileName":  "yiyunying-user-v2.7.14-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.user.debug",
-                         "versionName":  "2.7.15-user-debug",
-                         "versionCode":  60,
-                         "sizeBytes":  96707619,
-                         "size":  "92.23 MB",
-                         "sha256":  "9BBA2824B51E9F23EEE1026A74C64E43BB7A98AE2019106831FF9E2B28BAD89A",
+                         "versionName":  "2.7.14-user-debug",
+                         "versionCode":  59,
+                         "sizeBytes":  96596676,
+                         "size":  "92.12 MB",
+                         "sha256":  "B7466E8C62C28D4E226F0C6B276772B2175A6598C227A8CF9EAA52CAE236E9F3",
                          "signerSha256":  "10162EBB7147EA0823C281D9F86FEFF2A353984A41497F17E196E50614E9B76E",
                          "accent":  "blue"
                      },
@@ -39,13 +35,13 @@
                          "shortName":  "管理员",
                          "audience":  "管理员",
                          "description":  "用户、内容、订单与运营功能管理",
-                         "fileName":  "yiyunying-admin-v2.7.15-debug.apk",
+                         "fileName":  "yiyunying-admin-v2.7.14-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.admin.debug",
-                         "versionName":  "2.7.15-admin-debug",
-                         "versionCode":  60,
-                         "sizeBytes":  32306003,
-                         "size":  "30.81 MB",
-                         "sha256":  "56131E68FE90C207A54314CAA34A08B9D91EA117A5862761259535D3180C06B4",
+                         "versionName":  "2.7.14-admin-debug",
+                         "versionCode":  59,
+                         "sizeBytes":  32211464,
+                         "size":  "30.72 MB",
+                         "sha256":  "50286A7802F82DFC595D3B77DDB8DAF76E5C18B0957B94AFFF7B56C71B329ED4",
                          "signerSha256":  "10162EBB7147EA0823C281D9F86FEFF2A353984A41497F17E196E50614E9B76E",
                          "accent":  "green"
                      },
@@ -55,13 +51,13 @@
                          "shortName":  "授权平台",
                          "audience":  "授权运营方",
                          "description":  "授权应用、下级管理员与业务数据管理",
-                         "fileName":  "yiyunying-authorized-platform-v2.7.15-debug.apk",
+                         "fileName":  "yiyunying-authorized-platform-v2.7.14-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.authorized.debug",
-                         "versionName":  "2.7.15-authorized-platform-debug",
-                         "versionCode":  60,
-                         "sizeBytes":  32306007,
-                         "size":  "30.81 MB",
-                         "sha256":  "ED138B2896D97F7D58A5344AF9BB67301001E5A7E0B477A04867934DA0508147",
+                         "versionName":  "2.7.14-authorized-platform-debug",
+                         "versionCode":  59,
+                         "sizeBytes":  32211468,
+                         "size":  "30.72 MB",
+                         "sha256":  "737B533B167333DAEC9F11670E3D6CCC456560DFB83EC47FA645E574E5E9A226",
                          "signerSha256":  "10162EBB7147EA0823C281D9F86FEFF2A353984A41497F17E196E50614E9B76E",
                          "accent":  "amber"
                      },
@@ -71,13 +67,13 @@
                          "shortName":  "平台总控",
                          "audience":  "平台所有者",
                          "description":  "全平台应用、权限、财务与审计总控",
-                         "fileName":  "yiyunying-platform-owner-v2.7.15-debug.apk",
+                         "fileName":  "yiyunying-platform-owner-v2.7.14-debug.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner.debug",
-                         "versionName":  "2.7.15-platform-owner-debug",
-                         "versionCode":  60,
-                         "sizeBytes":  32306003,
-                         "size":  "30.81 MB",
-                         "sha256":  "61E8FD8BEB2C9630AF5496F23FAE2A2D1C6E7E734A17D8AFAA5398E115F525D8",
+                         "versionName":  "2.7.14-platform-owner-debug",
+                         "versionCode":  59,
+                         "sizeBytes":  32211464,
+                         "size":  "30.72 MB",
+                         "sha256":  "BD9F6024F9AA62081985FEC62260C493CC7BA6911C98E31128F406CA7B198760",
                          "signerSha256":  "10162EBB7147EA0823C281D9F86FEFF2A353984A41497F17E196E50614E9B76E",
                          "accent":  "charcoal"
                      }
@@ -85,28 +81,27 @@
     "projectAssets":  [
                           {
                               "id":  "source",
-                              "fileName":  "yiyunying-source-v2.7.15.zip",
-                              "label":  "APK 构建源码快照",
-                              "description":  "精确对应四端 APK 的 Build 源码提交，不含构建缓存、密钥与本地凭据。"
+                              "fileName":  "yiyunying-source-v2.7.14.zip",
+                              "label":  "完整源码快照",
+                              "description":  "当前发布提交的完整源码，不含构建缓存、密钥与本地凭据。"
                           },
                           {
                               "id":  "history",
-                              "fileName":  "yiyunying-git-history-v2.7.15.bundle",
-                              "label":  "主线 Git 历史",
-                              "description":  "可离线恢复 main 全部可达历史与本次最终注释标签；不包含未发布本地分支和 reflog。"
+                              "fileName":  "yiyunying-git-history-v2.7.14.bundle",
+                              "label":  "完整 Git 历史",
+                              "description":  "可离线克隆和恢复全部分支、标签与提交历史的 Git Bundle。"
                           },
                           {
                               "id":  "delivery",
-                              "fileName":  "yiyunying-project-delivery-v2.7.15.zip",
+                              "fileName":  "yiyunying-project-delivery-v2.7.14.zip",
                               "label":  "项目交接总包",
-                              "description":  "包含 Build 源码、最终主线 Git 历史、版本说明、架构与证据提交交接文档。"
+                              "description":  "源码、Git 历史、版本说明、架构与新任务交接文档的完整交付包。"
                           },
                           {
                               "id":  "manifest",
                               "fileName":  "project-assets-manifest.json",
                               "label":  "项目文件校验清单",
-                              "description":  "列出项目下载文件体积、SHA-256、Build 源码提交、证据提交和最终注释标签。"
+                              "description":  "列出项目下载文件的体积、SHA-256、版本和对应 Git 提交。"
                           }
-                      ],
-    "pendingManifestSha256":  "489b9ee2138d8215b5b640f9a5b76b6511313cee3f00f6542cc337c57de1e788"
+                      ]
 }
