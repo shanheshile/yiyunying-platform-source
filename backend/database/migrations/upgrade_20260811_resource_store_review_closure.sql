@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS store_app_purchases (
 -- MySQL SET NULL would otherwise try to null the non-null app/admin tenant keys.
 -- Locate constraints by their identifying column instead of assuming a name,
 -- because older installations may use generated constraint names.
+-- Replacement constraints deliberately use a new, migration-owned symbol.
+-- MariaDB can reject DROP FOREIGN KEY + ADD CONSTRAINT with the same symbol in
+-- one ALTER TABLE (ERROR 1022 while rebuilding the temporary table). Keeping
+-- both operations in one statement preserves atomicity and purchase history;
+-- changing only the symbol avoids the collision without deleting any row.
 SET @purchase_fk_name = (
     SELECT kcu.CONSTRAINT_NAME
     FROM information_schema.KEY_COLUMN_USAGE AS kcu
@@ -79,9 +84,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `resource_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`resource_id`, `app_id`, `admin_id`) REFERENCES `resources` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_resource_purchase_resource_retain_20260811` FOREIGN KEY (`resource_id`, `app_id`, `admin_id`) REFERENCES `resources` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );
@@ -115,9 +118,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `resource_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_resource_purchase_buyer_retain_20260811` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );
@@ -158,9 +159,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `resource_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL'
+            '`, ADD CONSTRAINT `fk_resource_purchase_seller_null_20260811` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL'
         )
     )
 );
@@ -194,9 +193,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `store_app_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`store_app_id`, `app_id`, `admin_id`) REFERENCES `store_apps` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_store_app_purchase_app_retain_20260811` FOREIGN KEY (`store_app_id`, `app_id`, `admin_id`) REFERENCES `store_apps` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );
@@ -230,9 +227,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `store_app_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_store_app_purchase_buyer_retain_20260811` FOREIGN KEY (`buyer_user_id`, `app_id`, `admin_id`) REFERENCES `users` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );
@@ -273,9 +268,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `store_app_purchases` DROP FOREIGN KEY `',
             REPLACE(@purchase_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@purchase_fk_name, '`', '``'),
-            '` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL'
+            '`, ADD CONSTRAINT `fk_store_app_purchase_seller_null_20260811` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL'
         )
     )
 );
@@ -312,9 +305,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `resources` DROP FOREIGN KEY `',
             REPLACE(@category_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@category_fk_name, '`', '``'),
-            '` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `resource_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_resources_category_retain_20260811` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `resource_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );
@@ -348,9 +339,7 @@ SET @sql = IF(
         CONCAT(
             'ALTER TABLE `store_apps` DROP FOREIGN KEY `',
             REPLACE(@category_fk_name, '`', '``'),
-            '`, ADD CONSTRAINT `',
-            REPLACE(@category_fk_name, '`', '``'),
-            '` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `store_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
+            '`, ADD CONSTRAINT `fk_store_apps_category_retain_20260811` FOREIGN KEY (`category_id`, `app_id`, `admin_id`) REFERENCES `store_categories` (`id`, `app_id`, `admin_id`) ON DELETE RESTRICT'
         )
     )
 );

@@ -75,6 +75,21 @@ $resourceCategory = 'CONSTRAINT fk_resources_category FOREIGN KEY (category_id, 
 $storeCategory = 'CONSTRAINT fk_store_apps_category FOREIGN KEY (category_id, app_id, admin_id) REFERENCES store_categories (id, app_id, admin_id) ON DELETE RESTRICT';
 $resourceCategoryShape = 'FOREIGN KEY (category_id, app_id, admin_id) REFERENCES resource_categories (id, app_id, admin_id) ON DELETE RESTRICT';
 $storeCategoryShape = 'FOREIGN KEY (category_id, app_id, admin_id) REFERENCES store_categories (id, app_id, admin_id) ON DELETE RESTRICT';
+$replacementSymbols = [
+    'fk_resource_purchase_resource_retain_20260811',
+    'fk_resource_purchase_buyer_retain_20260811',
+    'fk_resource_purchase_seller_null_20260811',
+    'fk_store_app_purchase_app_retain_20260811',
+    'fk_store_app_purchase_buyer_retain_20260811',
+    'fk_store_app_purchase_seller_null_20260811',
+    'fk_resources_category_retain_20260811',
+    'fk_store_apps_category_retain_20260811',
+];
+$replacementSymbolsAreUniqueAndPresent = count(array_unique($replacementSymbols)) === count($replacementSymbols);
+foreach ($replacementSymbols as $replacementSymbol) {
+    $replacementSymbolsAreUniqueAndPresent = $replacementSymbolsAreUniqueAndPresent
+        && substr_count($source['migration'], "`{$replacementSymbol}`") === 1;
+}
 
 $checks = [
     'fresh resource purchases retain subject and buyer while anonymising seller' =>
@@ -108,6 +123,11 @@ $checks = [
         && substr_count($source['migration'], "@purchase_fk_delete_rule = 'SET NULL' AND @purchase_fk_column_count = 1") === 2
         && substr_count($source['migration'], 'DROP FOREIGN KEY `') >= 6
         && substr_count($source['migration'], '`, ADD CONSTRAINT `') >= 6,
+    'migration replacement symbols avoid same-name temporary-table collisions' =>
+        $replacementSymbolsAreUniqueAndPresent
+        && substr_count($source['migration'], "REPLACE(@purchase_fk_name, '`', '``')") === 6
+        && substr_count($source['migration'], "REPLACE(@category_fk_name, '`', '``')") === 2
+        && str_contains($source['migration'], 'MariaDB can reject DROP FOREIGN KEY + ADD CONSTRAINT with the same symbol'),
     'migration has create missing and replacement definitions for every purchase role' =>
         substr_count($migration, $resourceSubjectShape) === 2
         && substr_count($migration, $storeSubjectShape) === 3
@@ -119,7 +139,7 @@ $checks = [
         && substr_count($source['migration'], '@purchase_fk_column_count = 1') === 2,
     'dynamic SQL is safe under ANSI_QUOTES and quotes discovered identifiers' =>
         !str_contains($source['migration'], '"')
-        && substr_count($source['migration'], "REPLACE(@purchase_fk_name, '`', '``')") === 12,
+        && substr_count($source['migration'], "REPLACE(@purchase_fk_name, '`', '``')") === 6,
     'migration never deletes or truncates purchase history' =>
         preg_match('/\bDELETE\s+FROM\s+`?(resource_purchases|store_app_purchases)`?/i', $source['migration']) !== 1
         && preg_match('/\bTRUNCATE(?:\s+TABLE)?\s+`?(resource_purchases|store_app_purchases)`?/i', $source['migration']) !== 1
@@ -131,7 +151,7 @@ $checks = [
         substr_count($source['migration'], "COLUMN_NAME = 'category_id'") === 2
         && substr_count($source['migration'], '@category_fk_name IS NULL') === 2
         && substr_count($source['migration'], "@category_fk_delete_rule IN ('RESTRICT', 'NO ACTION')") === 2
-        && substr_count($source['migration'], "REPLACE(@category_fk_name, '`', '``')") === 4
+        && substr_count($source['migration'], "REPLACE(@category_fk_name, '`', '``')") === 2
         && substr_count($migration, $resourceCategoryShape) === 2
         && substr_count($migration, $storeCategoryShape) === 2,
     'resource category delete locks the tenant row and rejects all child history with 409' =>
