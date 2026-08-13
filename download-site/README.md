@@ -14,7 +14,7 @@ corepack pnpm lint
 ## 下载受众分层
 
 - 客户页 `/download-center/`：完全公开，但只消费已经 Finalize 的 Stable 四角色 APK。没有正式版时保留功能介绍和接口文档，且不输出候选版本、文件名、包名、SHA 或下载链接。
-- 维护者页 `/internal-downloads/`：动态路由，要求 Sign in with ChatGPT 身份，并且邮箱必须出现在服务端 `YIYUNYING_INTERNAL_DOWNLOAD_EMAILS` 逗号分隔白名单中；白名单为空时失败关闭。该路由只能部署在 Sites 身份网关后方，或由受信任入口先剥离外部 `oai-authenticated-user-*` 请求头再注入已验证身份；不能把普通反向代理转发的同名请求头当作认证。该页只展示经过白名单投影的版本证据，不生成可转发的 APK 直链。
+- 维护者页 `/internal-downloads/`：动态路由，要求 Sign in with ChatGPT 身份；邮箱和稳定用户 ID 必须分别命中服务端 `YIYUNYING_INTERNAL_DOWNLOAD_EMAILS`、`YIYUNYING_INTERNAL_DOWNLOAD_USER_IDS` 两个逗号分隔白名单，任一白名单为空时失败关闭。该路由只能部署在 Sites 身份网关后方，或由受信任入口先剥离外部 `oai-authenticated-user-*` 请求头再注入已验证身份；不能把普通反向代理转发的同名请求头当作认证。浏览器不接收 APK 固定直链；每次点击由服务端重新鉴权并签发五分钟 HMAC 下载地址。短链在有效期内可被转发，禁止分享。
 - 本机 APK 页：运行下方命令后，只在 `127.0.0.1`/`::1` 随机端口与随机会话路径提供经过大小、SHA-256 和四角色身份复核的 APK；源码、bundle、交付包和 manifest 没有下载路由。
 
 ```powershell
@@ -68,3 +68,41 @@ python download-site/scripts/deploy-site-security-remediation.py `
 ```
 
 本事务不是 Finalize 或正式发布的替代品，不会公开 `1.0.0` 候选 APK。若回滚或清理报告不完整，必须保留锁和 staging 现场并人工审计，不能强行再次执行。
+
+## 对内 APK 短时下载源
+
+`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。它只接受两条冻结轨道：`Debug 2.7.15 (60)` 与仍为 `pending` 的 `Stable 1.0.0 (63)`；每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。默认 dry-run 会用 `aapt2`、`apksigner`、文件大小和 SHA-256 复核八个真实 APK，全程不读取签名秘密、不连接服务器：
+
+```powershell
+python download-site/scripts/deploy-internal-apks.py
+```
+
+生产服务器没有 `secure_link` 模块，因此受审片段使用 Nginx `auth_request` 调用公网页根之外的只读 PHP 验证器。Sites 与验证器的唯一签名契约为：
+
+```text
+path = /__internal-apks/{debug|candidate}/{version}/{受控文件名}
+expires = 当前 Unix 秒 + 300
+sig = base64url_no_padding(HMAC-SHA256(hex_to_32_bytes(secret), expires + "\n" + path))
+```
+
+Sites 托管 secret 名为 `YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET`，必须是 64 个小写十六进制字符；SSH 密码仍只从 `YY_SSH_PASSWORD` 读取。执行脚本不会输出二者。远端秘密写入固定的 `/etc/nginx/private/yiyunying-internal-apks-secret.conf`，权限为 `0600`；APK 和验证器原子切换到固定的 `/srv/yiyunying-internal-apks/current`，不进入任何 web root。PHP-FPM 地址和对应 PHP CLI 必须先从现有服务器配置只读确认，再以显式参数传入；当前生产 FPM 证据值为 `unix:/tmp/php-cgi-82.sock`，不可由脚本猜测。服务器 PATH 中的 `php` 是 7.0，禁止用于本闭环；`--remote-php-binary` 必须指向非符号链接的绝对可执行文件，脚本会调用该文件验证自身版本严格为 `8.2`，并只用它执行验证器语法检查。
+
+主站配置必须已经包含显式片段或受控的单层 `*.conf` extension include。执行时同时传入该 include 原文、其证据配置、FPM 证据配置和目标片段路径。下列占位路径必须换成已只读确认的真实路径；两个确认常量缺一不可：
+
+```powershell
+python download-site/scripts/deploy-internal-apks.py `
+  --execute `
+  --confirmation INTERNAL_APK_PRIVATE_DEPLOY_EXECUTE_CONFIRMED `
+  --nginx-confirmation INTERNAL_APK_NGINX_AUTH_REQUEST_CONFIRMED `
+  --host <生产主机> --port 22 --username <已确认账户> `
+  --known-hosts <固定known_hosts文件> `
+  --fpm-upstream unix:/tmp/php-cgi-82.sock `
+  --remote-php-binary <已确认的PHP-8.2-CLI绝对路径> `
+  --remote-fpm-evidence-config <含该fastcgi_pass的现有配置绝对路径> `
+  --remote-nginx-host-config <主站Nginx配置绝对路径> `
+  --remote-nginx-host-include <主站中已有的精确include或单层*.conf路径> `
+  --remote-nginx-include <上述include覆盖的internal-apks.conf绝对路径> `
+  --remote-secret-include /etc/nginx/private/yiyunying-internal-apks-secret.conf
+```
+
+执行闭环固定为 pinned `known_hosts`/`RejectPolicy`、独占锁、私有同盘 staging、逐文件上传回读、PHP 语法检查、数据/秘密/配置分别同目录原子改名、`nginx -t`、reload、八包 HTTPS HEAD、两轨 Range `206`、ETag `304`、非法 Range `416`、错误签名 `404`、过期链接 `410`、非 GET/HEAD 拒绝和非法文件名 `404`。任一步失败会恢复旧数据、旧秘密和旧 Nginx 片段并再次执行 `nginx -t`/reload；回滚不完整时保留锁与事务现场。短链在五分钟内仍可转发，不得宣称绑定当前用户。

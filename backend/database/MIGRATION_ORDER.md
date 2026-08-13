@@ -66,6 +66,7 @@
 62. `migrations/upgrade_20260811_short_video_controls.sql`
 63. `migrations/upgrade_20260811_resource_store_review_closure.sql`
 64. `migrations/upgrade_20260811_management_shell_restructure.sql`
+65. `migrations/upgrade_20260814_secure_mail_settings.sql`
 
 The order of items 44 and 45 is mandatory: the commerce migration creates
 `shop_categories`, and the catalog/reward migration extends that table.

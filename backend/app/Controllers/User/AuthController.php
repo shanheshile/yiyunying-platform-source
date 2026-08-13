@@ -38,7 +38,7 @@ final class AuthController
             throw new HttpException('当前应用已关闭用户注册', 403, 403);
         }
 
-        $minAccount = max(1, (int) AppService::setting((int) $app['id'], 'account_min_length', 3));
+        $minAccount = min(64, max(1, (int) AppService::setting((int) $app['id'], 'account_min_length', 3)));
         $maxAccount = min(64, max($minAccount, (int) AppService::setting((int) $app['id'], 'account_max_length', 32)));
         $account = Validator::string($data['account'], 'account', $minAccount, $maxAccount);
         if (preg_match('/^[A-Za-z0-9_.-]+$/', $account) !== 1) {
@@ -741,7 +741,7 @@ final class AuthController
         $result = ContactVerificationService::issuePasswordReset(
             $app, (string) $data['account'], (string) $data['email_or_phone'], $request
         );
-        return Response::success($result, '验证码已发送', 201);
+        return Response::success($result, ContactVerificationService::deliveryResponseMessage($result), 202);
     }
 
     public static function sign(Request $request): \Yiyunying\Core\ApiResponse

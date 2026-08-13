@@ -47,6 +47,8 @@ public final class AppEdition {
 
     public static boolean canOpenPlatformModule(int platformLevel, String moduleId) {
         if (platformLevel != 2) return true;
-        return !"operators".equals(moduleId) && !"data_console".equals(moduleId);
+        return !"operators".equals(moduleId)
+            && !"data_console".equals(moduleId)
+            && !"mail_settings".equals(moduleId);
     }
 }

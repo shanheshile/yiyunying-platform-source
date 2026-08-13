@@ -24,6 +24,10 @@
 | `GET` | `/api/platform/dashboard` | `Yiyunying\Controllers\Platform\DashboardController::dashboard` |
 | `GET` | `/api/platform/settings` | `Yiyunying\Controllers\Platform\DashboardController::settings` |
 | `PUT` | `/api/platform/settings` | `Yiyunying\Controllers\Platform\DashboardController::saveSettings` |
+| `GET` | `/api/platform/mail-settings` | `Yiyunying\Controllers\Platform\MailSettingsController::show` |
+| `PUT` | `/api/platform/mail-settings` | `Yiyunying\Controllers\Platform\MailSettingsController::update` |
+| `POST` | `/api/platform/mail-settings/test` | `Yiyunying\Controllers\Platform\MailSettingsController::test` |
+| `POST` | `/api/platform/mail-settings/reencrypt` | `Yiyunying\Controllers\Platform\MailSettingsController::reencrypt` |
 | `GET` | `/api/platform/ip-statistics` | `Yiyunying\Controllers\Platform\DashboardController::ipStatistics` |
 | `GET` | `/api/platform/admin-registration-logs` | `Yiyunying\Controllers\Platform\DashboardController::registrationLogs` |
 | `GET` | `/api/platform/admin-login-logs` | `Yiyunying\Controllers\Platform\DashboardController::adminLoginLogs` |

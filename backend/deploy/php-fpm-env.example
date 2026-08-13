@@ -12,9 +12,23 @@ env[DB_PASSWORD] = appht
 env[QR_SIGNING_KEY] = "请替换为至少32位随机字符串"
 ; 默认留空并忽略 X-Forwarded-For。仅填入会覆盖该请求头的真实反向代理源 IP/CIDR，逗号分隔。
 env[TRUSTED_PROXIES] = ""
-env[MAIL_TRANSPORT] = "native"
-env[MAIL_FROM_ADDRESS] = "no-reply@appht.jjmxg.xyz"
+; SMTP 250 仅表示服务商已接收投递请求，接口不会宣称收件箱已实际收到。
+env[MAIL_TRANSPORT] = "smtp"
+env[MAIL_FROM_ADDRESS] = "请替换为已验证域名的发件邮箱"
 env[MAIL_FROM_NAME] = "易运盈后台"
+; 64 位小写十六进制主密钥必须从服务器秘密管理注入，不能写入仓库或总控数据库。
+env[MAIL_SETTINGS_MASTER_KEY] = "请从服务器秘密配置注入64位小写十六进制随机值"
+env[MAIL_SETTINGS_ACTIVE_KEY_ID] = "v1"
+; 密钥轮换时使用 JSON 同时保留旧、新键；完成总控重新保存并验证后才撤旧键。
+env[MAIL_SETTINGS_KEYRING_JSON] = ""
+env[MAIL_DATABASE_CONFIG_ENABLED] = "true"
+env[MAIL_SMTP_HOST] = "请替换为SMTP服务器"
+env[MAIL_SMTP_PORT] = 587
+env[MAIL_SMTP_ENCRYPTION] = "tls"
+env[MAIL_SMTP_USERNAME] = "请替换为SMTP账号"
+env[MAIL_SMTP_PASSWORD] = "请从服务器秘密配置注入，不要写入仓库"
+env[MAIL_SMTP_TIMEOUT] = 10
+env[MAIL_SMTP_HELO] = "appht.jjmxg.xyz"
 
 ; 服务器本地 AI。Ollama 只监听 127.0.0.1，Android 端不会获得模型地址。
 ; 约 4 GB 可用内存使用 1.5b，6-8 GB 使用 3b，12 GB 以上可使用 7b。

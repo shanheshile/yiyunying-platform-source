@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const routeRoot = new URL("../app/internal-downloads/", import.meta.url);
 const page = await readFile(new URL("page.tsx", routeRoot), "utf8");
 const catalog = await readFile(new URL("catalog.server.ts", routeRoot), "utf8");
+const authorization = await readFile(new URL("authorization.server.ts", routeRoot), "utf8");
+const signedLinks = await readFile(new URL("signed-links.server.ts", routeRoot), "utf8");
+const downloadRoute = await readFile(new URL("download/route.ts", routeRoot), "utf8");
+const chatGPTAuth = await readFile(new URL("../chatgpt-auth.ts", routeRoot), "utf8");
 const styles = await readFile(new URL("styles.module.css", routeRoot), "utf8");
 
 test("internal route enforces authenticated maintainer allowlist and excludes indexing", () => {
   assert.match(page, /INTERNAL_DOWNLOAD_NOTICE/);
   assert.match(page, /requireChatGPTUser\("\/internal-downloads\/"\)/);
-  assert.match(page, /YIYUNYING_INTERNAL_DOWNLOAD_EMAILS/);
-  assert.match(page, /allowedEmails\.size === 0/);
+  assert.match(page, /isAuthorizedInternalDownloadUser/);
+  assert.match(authorization, /YIYUNYING_INTERNAL_DOWNLOAD_EMAILS/);
+  assert.match(authorization, /YIYUNYING_INTERNAL_DOWNLOAD_USER_IDS/);
+  assert.match(authorization, /allowedEmails\.size === 0 \|\| allowedUserIds\.size === 0/);
+  assert.match(chatGPTAuth, /oai-authenticated-user-id/);
+  assert.match(chatGPTAuth, /userId/);
   assert.match(page, /notFound\(\)/);
   assert.match(page, /chatGPTSignOutPath/);
   assert.match(page, /剥离伪造 oai-authenticated-user-\*/);
@@ -37,15 +46,18 @@ test("only four APK roles and safe delivery fields enter the browser model", () 
   }
   assert.match(catalog, /manifest\.releases\.length !== roleOrder\.length/);
   assert.match(catalog, /expectedStablePackageName/);
+  assert.match(catalog, /expectedReleaseIdentity/);
+  assert.match(catalog, /expectedArtifacts/);
+  assert.match(catalog, /size !== expectedSize/);
   assert.match(catalog, /\^\[0-9A-F\]\{64\}\$/);
   assert.match(catalog, /assertSafeApkIdentity/);
-  assert.doesNotMatch(catalog, /downloadHref|YIYUNYING_INTERNAL_DOWNLOAD_BASE_URL|\/downloads\//);
+  assert.doesNotMatch(catalog, /YIYUNYING_INTERNAL_DOWNLOAD_BASE_URL|\/downloads\//);
   assert.doesNotMatch(catalog, /projectAssets|connectionIdentity|appKey|platformKey|authorizedPlatformKey/);
   assert.doesNotMatch(page, /release-metadata|projectAssets|connectionIdentity/);
   assert.doesNotMatch(`${page}\n${catalog}`, /\.zip|\.bundle|source-v|git-history|project-delivery/i);
 });
 
-test("all cards expose role, version, status, size, SHA, download and install instructions", () => {
+test("all cards expose role, version, status, size, SHA, short download and install instructions", () => {
   for (const marker of [
     "item.roleLabel",
     "item.versionName",
@@ -53,12 +65,27 @@ test("all cards expose role, version, status, size, SHA, download and install in
     "item.status",
     "item.size",
     "item.sha256",
+    "短时安全下载",
     "打开安装说明",
     "Get-FileHash",
   ]) assert.match(page, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(page, /<details/);
-  assert.match(page, /请启动本机内部下载服务后下载/);
-  assert.match(page, /serve-internal-downloads\.py/);
+  assert.match(page, /签名下载未配置，链接已关闭/);
+  assert.match(page, /短时地址在过期前仍可能被转发，请勿分享/);
+  assert.match(page, /INTERNAL_DOWNLOAD_LINK_TTL_SECONDS \/ 60/);
+});
+
+test("server signing contract is fixed HMAC-SHA256 and fails closed", () => {
+  assert.match(signedLinks, /INTERNAL_DOWNLOAD_LINK_TTL_SECONDS = 5 \* 60/);
+  assert.match(signedLinks, /\^\[0-9a-f\]\{64\}\$/);
+  assert.match(signedLinks, /YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET/);
+  assert.match(signedLinks, /YIYUNYING_INTERNAL_DOWNLOAD_ORIGIN/);
+  assert.match(signedLinks, /createHmac\("sha256", Buffer\.from\(configuration\.secret, "hex"\)\)/);
+  assert.match(signedLinks, /`\$\{expiresAt\}\\n\$\{pathname\}`/);
+  assert.match(signedLinks, /digest\("base64url"\)/);
+  assert.match(signedLinks, /\/__internal-apks/);
+  assert.match(signedLinks, /if \(!hasInternalDownloadSigningConfiguration\(\)\) return groups/);
+  assert.doesNotMatch(`${page}\n${signedLinks}\n${downloadRoute}`, /connectionIdentity|appKey|platformKey|authorizedPlatformKey/);
 });
 
 test("route owns responsive and print-safe styling without shared CSS edits", () => {
@@ -70,8 +97,18 @@ test("route owns responsive and print-safe styling without shared CSS edits", ()
 });
 
 test("built route redirects anonymous users, hides denied users and renders only for an allowlisted maintainer", async () => {
-  const previousEmails = process.env.YIYUNYING_INTERNAL_DOWNLOAD_EMAILS;
+  const keys = [
+    "YIYUNYING_INTERNAL_DOWNLOAD_EMAILS",
+    "YIYUNYING_INTERNAL_DOWNLOAD_USER_IDS",
+    "YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET",
+    "YIYUNYING_INTERNAL_DOWNLOAD_ORIGIN",
+  ];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const signingSecret = "01".repeat(32);
   process.env.YIYUNYING_INTERNAL_DOWNLOAD_EMAILS = "maintainer@example.com";
+  process.env.YIYUNYING_INTERNAL_DOWNLOAD_USER_IDS = "user_Maintainer_123";
+  process.env.YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET = signingSecret;
+  process.env.YIYUNYING_INTERNAL_DOWNLOAD_ORIGIN = "https://appht.jjmxg.xyz";
   try {
     const workerUrl = new URL("../dist/server/index.js", import.meta.url);
     workerUrl.searchParams.set("internal-auth", `${process.pid}-${Date.now()}-${Math.random()}`);
@@ -80,8 +117,8 @@ test("built route redirects anonymous users, hides denied users and renders only
       ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     };
     const ctx = { waitUntil() {}, passThroughOnException() {} };
-    const request = (headers = {}) => worker.fetch(
-      new Request("http://localhost/internal-downloads", {
+    const request = (path = "/internal-downloads", headers = {}) => worker.fetch(
+      new Request(`http://localhost${path}`, {
         headers: { accept: "text/html", ...headers },
       }),
       env,
@@ -92,15 +129,27 @@ test("built route redirects anonymous users, hides denied users and renders only
     assert.equal(anonymous.status, 307);
     assert.match(anonymous.headers.get("location") ?? "", /^http:\/\/localhost\/signin-with-chatgpt\?return_to=/);
 
-    const denied = await request({ "oai-authenticated-user-email": "other@example.com" });
+    const denied = await request("/internal-downloads", {
+      "oai-authenticated-user-id": "user_Maintainer_123",
+      "oai-authenticated-user-email": "other@example.com",
+    });
     assert.equal(denied.status, 404);
 
-    const allowed = await request({
+    const wrongUserId = await request("/internal-downloads", {
+      "oai-authenticated-user-id": "user_maintainer_123",
+      "oai-authenticated-user-email": "maintainer@example.com",
+    });
+    assert.equal(wrongUserId.status, 404);
+
+    const maintainerHeaders = {
+      "oai-authenticated-user-id": "user_Maintainer_123",
       "oai-authenticated-user-email": "maintainer@example.com",
       "oai-authenticated-user-full-name": "Release%20Maintainer",
       "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
-    });
+    };
+    const allowed = await request("/internal-downloads", maintainerHeaders);
     assert.equal(allowed.status, 200);
+    assert.match(allowed.headers.get("cache-control") ?? "", /no-store/);
     const html = await allowed.text();
     for (const expected of [
       "内部下载中心",
@@ -108,12 +157,71 @@ test("built route redirects anonymous users, hides denied users and renders only
       "Debug 测试包",
       "Stable Release 候选",
       "最终正式版",
-      "请启动本机内部下载服务后下载",
+      "短时安全下载",
+      "短时地址在过期前仍可能被转发，请勿分享",
     ]) assert.ok(html.includes(expected), `allowlisted page missing: ${expected}`);
     assert.doesNotMatch(html, /href=["'][^"']*\/downloads\//i);
+    assert.doesNotMatch(html, /https:\/\/appht\.jjmxg\.xyz\/__internal-apks/i);
+    assert.doesNotMatch(html, new RegExp(signingSecret, "i"));
     assert.doesNotMatch(html, /source-v|git-history|project-delivery|projectAssets|connectionIdentity/i);
+
+    const actionLinks = html.match(/href="\/internal-downloads\/download\?channel=(?:debug|candidate)&amp;role=(?:user|admin|authorized|owner)"/g) ?? [];
+    assert.equal(actionLinks.length, 8, "only Debug and pending Stable four-role actions should render");
+
+    const before = Math.floor(Date.now() / 1000);
+    const download = await request(
+      "/internal-downloads/download?channel=debug&role=user",
+      maintainerHeaders,
+    );
+    const after = Math.floor(Date.now() / 1000);
+    assert.equal(download.status, 302);
+    assert.match(download.headers.get("cache-control") ?? "", /no-store/);
+    const location = new URL(download.headers.get("location") ?? "");
+    assert.equal(location.origin, "https://appht.jjmxg.xyz");
+    assert.equal(location.pathname, "/__internal-apks/debug/2.7.15/yiyunying-user-v2.7.15-debug.apk");
+    const expires = Number(location.searchParams.get("expires"));
+    assert.ok(expires >= before + 300 && expires <= after + 300);
+    const expectedSignature = createHmac("sha256", Buffer.from(signingSecret, "hex"))
+      .update(`${expires}\n${location.pathname}`, "utf8")
+      .digest("base64url");
+    assert.equal(location.searchParams.get("sig"), expectedSignature);
+    assert.doesNotMatch(location.href, new RegExp(signingSecret, "i"));
+
+    const candidate = await request(
+      "/internal-downloads/download?channel=candidate&role=owner",
+      maintainerHeaders,
+    );
+    assert.equal(candidate.status, 302);
+    assert.equal(
+      new URL(candidate.headers.get("location") ?? "").pathname,
+      "/__internal-apks/candidate/1.0.0/yiyunying-platform-owner-v1.0.0.apk",
+    );
+
+    for (const invalidPath of [
+      "/internal-downloads/download?channel=final&role=user",
+      "/internal-downloads/download?channel=debug&role=unknown",
+      "/internal-downloads/download?channel=debug&role=user&file=arbitrary.apk",
+    ]) {
+      assert.equal((await request(invalidPath, maintainerHeaders)).status, 404, invalidPath);
+    }
+
+    delete process.env.YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET;
+    const unconfigured = await request("/internal-downloads", maintainerHeaders);
+    assert.equal(unconfigured.status, 200);
+    const unconfiguredHtml = await unconfigured.text();
+    assert.doesNotMatch(unconfiguredHtml, /href="\/internal-downloads\/download\?/);
+    assert.equal(
+      (await request("/internal-downloads/download?channel=debug&role=user", maintainerHeaders)).status,
+      404,
+    );
+
+    process.env.YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET = signingSecret;
+    delete process.env.YIYUNYING_INTERNAL_DOWNLOAD_USER_IDS;
+    assert.equal((await request("/internal-downloads", maintainerHeaders)).status, 404);
   } finally {
-    if (previousEmails === undefined) delete process.env.YIYUNYING_INTERNAL_DOWNLOAD_EMAILS;
-    else process.env.YIYUNYING_INTERNAL_DOWNLOAD_EMAILS = previousEmails;
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
   }
 });

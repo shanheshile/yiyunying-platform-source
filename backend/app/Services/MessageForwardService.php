@@ -136,22 +136,33 @@ final class MessageForwardService
         }
         if ($ids === []) return $items;
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $forumTarget = in_array($targetType, ['forum_post', 'forum_comment'], true);
+        $forumFields = $forumTarget ? ', bundle.source_type, bundle.snapshot_json' : '';
         $rows = Database::all(
             "SELECT link.target_id, bundle.id, bundle.title, bundle.item_count,
-                    bundle.anonymity_mode, bundle.created_at
+                    bundle.anonymity_mode, bundle.created_at{$forumFields}
              FROM message_forward_links link INNER JOIN message_forward_bundles bundle ON bundle.id = link.bundle_id
              WHERE link.app_id = ? AND link.target_type = ? AND link.target_id IN ({$placeholders})",
             array_merge([$appId, $targetType], $ids)
         );
         $byTarget = [];
         foreach ($rows as $row) {
-            $byTarget[(int) $row['target_id']] = [
+            $bundle = [
                 'id' => (int) $row['id'], 'title' => (string) $row['title'],
                 'item_count' => (int) $row['item_count'], 'created_at' => (string) $row['created_at'],
                 'anonymity_mode' => self::anonymityMode((string) ($row['anonymity_mode'] ?? 'none')),
                 'anonymity_scope' => 'current_bundle',
                 'read_only' => true,
             ];
+            if ($forumTarget) {
+                $snapshotItems = json_decode((string) ($row['snapshot_json'] ?? ''), true);
+                if (!is_array($snapshotItems)) $snapshotItems = [];
+                $bundle['source_kind'] = self::forumSourceKind((string) ($row['source_type'] ?? ''));
+                $bundle['preview_items'] = self::forumSnapshotPreview($snapshotItems);
+                $bundle['preview_truncated'] = count($snapshotItems) > count($bundle['preview_items']);
+                $bundle['detached_snapshot'] = true;
+            }
+            $byTarget[(int) $row['target_id']] = $bundle;
         }
         foreach ($items as &$item) {
             $bundle = $byTarget[(int) ($item['id'] ?? 0)] ?? null;
@@ -162,6 +173,112 @@ final class MessageForwardService
         }
         unset($item);
         return $items;
+    }
+
+    /**
+     * Projects an immutable forum-safe preview. It deliberately excludes source IDs,
+     * attachment URLs, avatars and live message references, so a forum card cannot
+     * cross the original conversation's authorization boundary.
+     */
+    public static function forumSnapshotPreview(array $items): array
+    {
+        $preview = [];
+        foreach (array_slice($items, 0, 4) as $raw) {
+            if (!is_array($raw)) continue;
+            $sender = self::forumPreviewText(
+                $raw['sender_display_name'] ?? $raw['sender_name'] ?? '',
+                80
+            );
+            if ($sender === '') $sender = !empty($raw['anonymous']) ? '匿名成员' : '聊天成员';
+            $contentType = strtolower(trim((string) ($raw['content_type'] ?? 'text')));
+            $content = self::forumPreviewText($raw['content'] ?? '', 240);
+            if ($content === '') $content = self::forumContentTypeLabel($contentType);
+
+            $attachments = [];
+            foreach (array_slice(is_array($raw['attachments'] ?? null) ? $raw['attachments'] : [], 0, 3) as $attachment) {
+                if (!is_array($attachment)) continue;
+                $kind = self::forumAttachmentKind($attachment);
+                $name = self::forumPreviewText(
+                    $attachment['file_name'] ?? $attachment['name'] ?? $attachment['title'] ?? '',
+                    96
+                );
+                if ($name !== '') $name = basename(str_replace('\\', '/', $name));
+                $entry = ['kind' => $kind, 'label' => self::forumAttachmentLabel($kind)];
+                if ($name !== '') $entry['name'] = $name;
+                $size = (int) ($attachment['size_bytes'] ?? $attachment['file_size'] ?? 0);
+                if ($size > 0) $entry['size_bytes'] = $size;
+                $attachments[] = $entry;
+            }
+
+            $entry = [
+                'sender' => $sender,
+                'time' => self::forumPreviewText($raw['created_at'] ?? '', 40),
+                'content_type' => self::forumSafeContentType($contentType),
+                'content' => $content,
+                'attachments' => $attachments,
+            ];
+            if ((int) ($raw['reply_to_message_id'] ?? 0) > 0) {
+                $entry['reference_summary'] = '引用了一条消息（原文不提供跳转）';
+            }
+            $nested = is_array($raw['forward_bundle'] ?? null) ? $raw['forward_bundle'] : [];
+            if ($nested !== []) {
+                $entry['nested_summary'] = '嵌套聊天快照 · ' . max(0, (int) ($nested['item_count'] ?? 0)) . ' 条';
+            }
+            $preview[] = $entry;
+        }
+        return $preview;
+    }
+
+    private static function forumSourceKind(string $sourceType): string
+    {
+        return match (strtolower(trim($sourceType))) {
+            'private' => 'private',
+            'group' => 'group',
+            'service' => 'service',
+            default => 'chat',
+        };
+    }
+
+    private static function forumPreviewText($value, int $limit): string
+    {
+        if (!is_scalar($value)) return '';
+        $text = trim((string) $value);
+        if ($text === '') return '';
+        return mb_substr($text, 0, $limit);
+    }
+
+    private static function forumSafeContentType(string $type): string
+    {
+        return in_array($type, ['text', 'image', 'video', 'audio', 'voice', 'file', 'sticker', 'location', 'card', 'recall'], true)
+            ? $type : 'other';
+    }
+
+    private static function forumContentTypeLabel(string $type): string
+    {
+        return match (self::forumSafeContentType($type)) {
+            'image' => '[图片]', 'video' => '[视频]', 'audio' => '[音频]', 'voice' => '[语音]',
+            'file' => '[附件]', 'sticker' => '[表情]', 'location' => '[位置]', 'card' => '[名片]',
+            'recall' => '[消息已撤回]', default => '[消息]',
+        };
+    }
+
+    private static function forumAttachmentKind(array $attachment): string
+    {
+        $type = strtolower(trim((string) ($attachment['media_type'] ?? $attachment['content_type'] ?? $attachment['type'] ?? '')));
+        $mime = strtolower(trim((string) ($attachment['mime_type'] ?? $attachment['mime'] ?? '')));
+        if ($type === 'sticker') return 'sticker';
+        if ($type === 'image' || str_starts_with($mime, 'image/')) return 'image';
+        if ($type === 'video' || str_starts_with($mime, 'video/')) return 'video';
+        if (in_array($type, ['voice', 'audio'], true) || str_starts_with($mime, 'audio/')) return $type === 'voice' ? 'voice' : 'audio';
+        return 'file';
+    }
+
+    private static function forumAttachmentLabel(string $kind): string
+    {
+        return match ($kind) {
+            'image' => '图片', 'video' => '视频', 'voice' => '语音', 'audio' => '音频',
+            'sticker' => '表情', default => '附件',
+        };
     }
 
     public static function showForUser(array $user, int $bundleId): array

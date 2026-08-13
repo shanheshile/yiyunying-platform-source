@@ -50,8 +50,9 @@ final class ContactVerificationService
              json_encode(['channel' => $channel, 'contact' => $contact, 'ip' => $request->clientIp()], JSON_UNESCAPED_UNICODE), $expiredAt]
         );
         try {
-            if ($channel === 'email') self::deliverEmail($contact, (string) $app['name'], $code, '找回密码');
-            else self::deliverPhoneCode($contact, $code);
+            $delivery = $channel === 'email'
+                ? VerificationEmailDeliveryService::deliver($contact, (string) $app['name'], $code, '找回密码')
+                : self::deliverPhoneCode($contact, $code);
         } catch (\Throwable $exception) {
             Database::execute('UPDATE verification_codes SET used_at = NOW() WHERE id = ?', [$id]);
             throw $exception;
@@ -60,6 +61,8 @@ final class ContactVerificationService
         $result = [
             'verification_id' => $id, 'scene' => 'password_reset', 'channel' => $channel,
             'target_masked' => $masked, 'expired_at' => $expiredAt,
+            'delivery_status' => (string) ($delivery['delivery_status'] ?? ''),
+            'retry_after_seconds' => 60,
         ];
         if ((bool) config('app.debug', false)) $result['debug_code'] = $code;
         return $result;
@@ -102,12 +105,19 @@ final class ContactVerificationService
              json_encode(['channel' => 'email', 'ip' => $request->clientIp()], JSON_UNESCAPED_UNICODE), $expiredAt]
         );
         try {
-            self::deliverEmail($email, (string) $app['name'], $code, '注册');
+            $delivery = VerificationEmailDeliveryService::deliver($email, (string) $app['name'], $code, '注册');
         } catch (\Throwable $exception) {
             Database::execute('UPDATE verification_codes SET used_at = NOW() WHERE id = ?', [$id]);
             throw $exception;
         }
-        $result = ['verification_id' => $id, 'scene' => $scene, 'target_masked' => self::maskEmail($email), 'expired_at' => $expiredAt];
+        $result = [
+            'verification_id' => $id,
+            'scene' => $scene,
+            'target_masked' => self::maskEmail($email),
+            'expired_at' => $expiredAt,
+            'delivery_status' => (string) ($delivery['delivery_status'] ?? ''),
+            'retry_after_seconds' => 60,
+        ];
         if ((bool) config('app.debug', false)) $result['debug_code'] = $code;
         return $result;
     }
@@ -133,27 +143,14 @@ final class ContactVerificationService
         Database::execute('UPDATE verification_codes SET used_at = NOW() WHERE id = ? AND used_at IS NULL', [(int) $code['id']]);
     }
 
-    private static function deliverEmail(string $email, string $appName, string $code, string $purpose): void
+    public static function deliveryResponseMessage(array $result): string
     {
-        $transport = strtolower((string) config('mail.transport', 'native'));
-        $subject = $appName . $purpose . '验证码';
-        $message = "您正在进行{$purpose}操作，验证码是：{$code}\n\n10 分钟内有效。如非本人操作，请忽略本邮件。";
-        if ($transport === 'log') {
-            $directory = dirname(__DIR__, 2) . '/storage/logs';
-            if (!is_dir($directory)) @mkdir($directory, 0775, true);
-            file_put_contents($directory . '/verification-mail.log', date('c') . "\t{$email}\t{$code}\n", FILE_APPEND | LOCK_EX);
-            return;
-        }
-        if ($transport !== 'native') throw new HttpException('邮件发送通道未配置', 503, 503);
-        $from = (string) config('mail.from_address', 'no-reply@appht.jjmxg.xyz');
-        $fromName = (string) config('mail.from_name', '易运盈后台');
-        $headers = [
-            'Content-Type: text/plain; charset=UTF-8',
-            'From: ' . mb_encode_mimeheader($fromName, 'UTF-8') . ' <' . $from . '>',
-        ];
-        if (!@mail($email, mb_encode_mimeheader($subject, 'UTF-8'), $message, implode("\r\n", $headers))) {
-            throw new HttpException('验证码邮件发送失败，请联系管理员检查邮件通道', 503, 503);
-        }
+        return match ((string) ($result['delivery_status'] ?? '')) {
+            'delivered' => '验证码已确认送达',
+            'accepted_unconfirmed' => '邮件服务已接收投递请求，最终送达尚未确认，请检查收件箱和垃圾邮件',
+            'simulated' => '验证码仅写入本地测试日志，未实际发送邮件',
+            default => '验证码投递状态未确认',
+        };
     }
 
     private static function maskEmail(string $email): string
@@ -162,14 +159,14 @@ final class ContactVerificationService
         return mb_substr($name, 0, 1) . str_repeat('*', max(2, mb_strlen($name) - 1)) . '@' . $domain;
     }
 
-    private static function deliverPhoneCode(string $phone, string $code): void
+    private static function deliverPhoneCode(string $phone, string $code): array
     {
         $transport = strtolower((string) config('sms.transport', 'disabled'));
         if ($transport === 'log' || (bool) config('app.debug', false)) {
             $directory = dirname(__DIR__, 2) . '/storage/logs';
             if (!is_dir($directory)) @mkdir($directory, 0775, true);
             file_put_contents($directory . '/verification-sms.log', date('c') . "\t{$phone}\t{$code}\n", FILE_APPEND | LOCK_EX);
-            return;
+            return ['delivery_status' => 'simulated'];
         }
         throw new HttpException('短信验证码通道未配置，请使用绑定邮箱找回或联系管理员', 503, 503);
     }

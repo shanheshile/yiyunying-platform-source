@@ -86,6 +86,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             "upgrade_20260811_short_video_controls.sql",
             "upgrade_20260811_resource_store_review_closure.sql",
             "upgrade_20260811_management_shell_restructure.sql",
+            "upgrade_20260814_secure_mail_settings.sql",
         ]
         offsets = [SOURCE.index(name) for name in expected]
         self.assertEqual(offsets, sorted(offsets))

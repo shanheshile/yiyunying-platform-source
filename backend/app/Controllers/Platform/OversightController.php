@@ -100,6 +100,7 @@ final class OversightController
         if ($post === null) throw new HttpException('帖子不存在或不在当前平台作用域', 404, 404);
         $post = ContentTagService::hydrate([$post])[0];
         $post = MessageMediaService::hydrate([$post], 'forum_post', (int) $app['id'])[0];
+        $post = MessageForwardService::hydrate([$post], 'forum_post', (int) $app['id'])[0];
         $post['sections'] = ForumExperienceService::sections($post, null, true);
         $post['comments'] = Database::all(
             'SELECT comment.*, user.uid, user.account, profile.nickname, profile.avatar
@@ -110,6 +111,7 @@ final class OversightController
         );
         $post['comments'] = ContentTagService::hydrate($post['comments']);
         $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', (int) $app['id']);
+        $post['comments'] = MessageForwardService::hydrate($post['comments'], 'forum_comment', (int) $app['id']);
         $post['paid_rule'] = Database::one(
             'SELECT price_integral AS price_balance, asset_type, preview_content, status, created_at, updated_at FROM forum_paid_contents WHERE post_id = ?',
             [(int) $post['id']]

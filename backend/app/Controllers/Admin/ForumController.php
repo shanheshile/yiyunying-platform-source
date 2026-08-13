@@ -16,6 +16,7 @@ use Yiyunying\Services\ForumCommentNotificationService;
 use Yiyunying\Services\ForumExperienceService;
 use Yiyunying\Services\LogService;
 use Yiyunying\Services\MessageMediaService;
+use Yiyunying\Services\MessageForwardService;
 use Yiyunying\Services\NotificationService;
 use Yiyunying\Services\ProfileAvatarService;
 use Yiyunying\Services\RewardRuleService;
@@ -176,6 +177,7 @@ final class ForumController
         $post['tags'] = ContentTagService::decode($post['tags_json'] ?? null);
         unset($post['tags_json']);
         $post = MessageMediaService::hydrate([$post], 'forum_post', $appId)[0];
+        $post = MessageForwardService::hydrate([$post], 'forum_post', $appId)[0];
         $post['sections'] = ForumExperienceService::sections($post, null, true);
         $post['has_sections'] = $post['sections'] !== [];
         $post['audit_status_name'] = self::auditStatusName((string) ($post['audit_status'] ?? 'pending'));
@@ -188,6 +190,7 @@ final class ForumController
         );
         $post['comments'] = ContentTagService::hydrate($post['comments']);
         $post['comments'] = MessageMediaService::hydrate($post['comments'], 'forum_comment', $appId);
+        $post['comments'] = MessageForwardService::hydrate($post['comments'], 'forum_comment', $appId);
         $post['paid_rule'] = Database::one(
             'SELECT price_integral AS price_balance, asset_type, preview_content, status, created_at, updated_at
              FROM forum_paid_contents WHERE post_id = ?',

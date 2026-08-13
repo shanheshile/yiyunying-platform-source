@@ -69,6 +69,7 @@ $required = @(
     'database\migrations\upgrade_20260811_short_video_controls.sql',
     'database\migrations\upgrade_20260811_resource_store_review_closure.sql',
     'database\migrations\upgrade_20260811_management_shell_restructure.sql',
+    'database\migrations\upgrade_20260814_secure_mail_settings.sql',
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
@@ -136,6 +137,23 @@ $required = @(
     'tools\test-shop-goods-comment-management-contract.php',
     'tools\test-message-presentation.php',
     'tools\test-update-package-metadata-contract.php',
+    'tools\test-forum-forward-snapshot-contract.php',
+    'tools\test-verification-email-delivery-contract.php',
+    'tools\test-secure-mail-settings-contract.php',
+    'tools\export-account-credential-packages.ps1',
+    'tools\export-desktop-credential-console.ps1',
+    'tools\credential-console-server.py',
+    'tools\credential-console.js',
+    'tools\credential-console.html',
+    'tools\credential-console-tests.html',
+    'tools\credential-console-readme.md',
+    'tools\get-or-create-internal-download-secret.ps1',
+    'tools\view-account-credential-package.ps1',
+    'tools\tests\test-export-account-credential-packages.ps1',
+    'tools\tests\test-export-desktop-credential-console.ps1',
+    'tools\tests\test-credential-console-xss.ps1',
+    'tools\tests\test_credential_console_server.py',
+    'tools\tests\test-internal-download-secret.ps1',
     'tools\deploy-ssh.py',
     'tools\publish-android-ssh.py',
     'tools\verify-production-release-ssh.py',
@@ -146,10 +164,15 @@ $required = @(
     'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_audience_separation.py',
     'tools\tests\test_internal_download_server.py',
+    'tools\tests\test_verification_email_smtp.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_download_site_security_remediation.py',
+    'tools\tests\test_internal_apk_private_deploy.py',
     'tools\tests\test_release_evidence_chain.py',
     '..\download-site\scripts\deploy-site-security-remediation.py',
+    '..\download-site\scripts\deploy-internal-apks.py',
+    '..\download-site\deploy\internal-apk-verifier.php',
+    '..\download-site\deploy\nginx-internal-apks-auth-request.conf',
     'tools\migrate-catalog-private-files.php',
     'tools\verify-catalog-migration-report.php',
     'tools\generate-requirement-verification.php',
@@ -227,6 +250,27 @@ foreach ($file in $powerShellFiles) {
     }
 }
 
+$credentialPackageContract = Join-Path $root 'tools\tests\test-export-account-credential-packages.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $credentialPackageContract
+if ($LASTEXITCODE -ne 0) {
+    throw 'DPAPI account credential package offline contract failed.'
+}
+$desktopCredentialConsoleContract = Join-Path $root 'tools\tests\test-export-desktop-credential-console.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $desktopCredentialConsoleContract
+if ($LASTEXITCODE -ne 0) {
+    throw 'Private desktop credential console export contract failed.'
+}
+$desktopCredentialConsoleXssContract = Join-Path $root 'tools\tests\test-credential-console-xss.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $desktopCredentialConsoleXssContract
+if ($LASTEXITCODE -ne 0) {
+    throw 'Private desktop credential console XSS contract failed.'
+}
+$internalDownloadSecretContract = Join-Path $root 'tools\tests\test-internal-download-secret.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $internalDownloadSecretContract
+if ($LASTEXITCODE -ne 0) {
+    throw 'DPAPI internal-download signing secret contract failed.'
+}
+
 $python = Get-Command python -ErrorAction SilentlyContinue
 if ($null -eq $python) {
     throw 'Python is required for deployment and release safety checks.'
@@ -235,14 +279,19 @@ $pythonFiles = @(
     'tools\deploy-ssh.py',
     'tools\publish-android-ssh.py',
     'tools\verify-production-release-ssh.py',
+    'tools\credential-console-server.py',
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
     'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_audience_separation.py',
     'tools\tests\test_internal_download_server.py',
+    'tools\tests\test_verification_email_smtp.py',
+    'tools\tests\test_credential_console_server.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_download_site_security_remediation.py',
+    'tools\tests\test_internal_apk_private_deploy.py',
+    '..\download-site\scripts\deploy-internal-apks.py',
     '..\download-site\scripts\deploy-site-security-remediation.py',
     'tools\tests\test_release_evidence_chain.py'
 )
@@ -257,8 +306,11 @@ foreach ($testFile in @(
     'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_audience_separation.py',
     'tools\tests\test_internal_download_server.py',
+    'tools\tests\test_verification_email_smtp.py',
+    'tools\tests\test_credential_console_server.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_download_site_security_remediation.py',
+    'tools\tests\test_internal_apk_private_deploy.py',
     'tools\tests\test_release_evidence_chain.py'
 )) {
     $testPath = Join-Path $root $testFile
@@ -474,6 +526,21 @@ exit($invalid === [] ? 0 : 1);
         throw "Update package metadata contract checks failed.`n$updateMetadataOutput"
     }
     Write-Host "Update package metadata contract checks: passed"
+    $forumForwardOutput = & $php.Source (Join-Path $root 'tools\test-forum-forward-snapshot-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Forum forward snapshot contract checks failed.`n$forumForwardOutput"
+    }
+    Write-Host "Forum forward snapshot contract checks: passed"
+    $verificationEmailOutput = & $php.Source (Join-Path $root 'tools\test-verification-email-delivery-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Verification email delivery contract checks failed.`n$verificationEmailOutput"
+    }
+    Write-Host "Verification email delivery contract checks: passed"
+    $secureMailOutput = & $php.Source (Join-Path $root 'tools\test-secure-mail-settings-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Secure root mail settings contract checks failed.`n$secureMailOutput"
+    }
+    Write-Host "Secure root mail settings contract checks: passed"
     Write-Host "PHP lint: passed ($($phpFiles.Count) files)"
 } else {
     Write-Host 'PHP is not in PATH; php -l was skipped.'

@@ -56,6 +56,8 @@ import xyz.jjmxg.yiyunying.ui.upload.FilePreviewActivity;
 import xyz.jjmxg.yiyunying.ui.chat.ForwardSnapshotActivity;
 
 public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
+    static final String PAYLOAD_SELECTION_STATE = "chat_selection_state";
+
     public interface Listener {
         void onLongPress(JsonObject message);
         default void onSelectionChanged(JsonObject message, boolean selected) { }
@@ -167,10 +169,27 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     }
 
     public void setSelectionMode(boolean enabled, Set<Long> selected) {
+        boolean modeChanged = selectionMode != enabled;
+        Set<Long> previousSelection = new HashSet<>(selectedIds);
         selectionMode = enabled;
         selectedIds.clear();
         if (selected != null) selectedIds.addAll(selected);
-        notifyDataSetChanged();
+        if (getItemCount() == 0) return;
+        if (modeChanged) {
+            // Entering or leaving selection changes the message-column width, so visible
+            // media is rebound once using the matching responsive dimensions.
+            notifyItemRangeChanged(0, getItemCount());
+            return;
+        }
+        Set<Long> changedCandidates = new HashSet<>(previousSelection);
+        changedCandidates.addAll(selectedIds);
+        for (Long id : changedCandidates) {
+            boolean wasSelected = previousSelection.contains(id);
+            boolean isSelected = selectedIds.contains(id);
+            if (wasSelected == isSelected) continue;
+            int position = positionOf(id);
+            if (position >= 0) notifyItemChanged(position, PAYLOAD_SELECTION_STATE);
+        }
     }
 
 
@@ -287,15 +306,41 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.systemDelete.setVisibility(deletableSystem ? View.VISIBLE : View.GONE);
         holder.binding.systemDelete.setOnClickListener(deletableSystem ? view -> listener.onDeleteSystem(item) : null);
         bindAvatar(holder, item, mine, system, sender);
-        holder.binding.selectionRail.setVisibility(selectionMode && selectable ? View.VISIBLE : View.GONE);
-        holder.binding.selectCheck.setChecked(selectedIds.contains(messageId));
-        holder.binding.selectCheck.setOnClickListener(view -> listener.onSelectionChanged(item, holder.binding.selectCheck.isChecked()));
-        View.OnClickListener messageClick = view -> {
-            if (selectionMode && selectable) {
-                listener.onSelectionChanged(item, !selectedIds.contains(messageId));
-            } else if (call) {
-                listener.onCallClick(item);
+        bindInteractionState(holder, item, selectable, call, messageId);
+    }
+
+    @Override public void onBindViewHolder(@NonNull Holder holder, int position,
+                                           @NonNull List<Object> payloads) {
+        if (!payloads.isEmpty()) {
+            boolean selectionOnly = true;
+            for (Object payload : payloads) {
+                if (!PAYLOAD_SELECTION_STATE.equals(payload)) {
+                    selectionOnly = false;
+                    break;
+                }
             }
+            if (selectionOnly) {
+                JsonObject item = items.get(position);
+                boolean system = "system".equals(Jsons.string(item, "sender_type"));
+                boolean recalled = ChatDisplayNamePolicy.isRecalled(item);
+                bindInteractionState(holder, item, !system && !recalled,
+                    isCallMessage(item), itemId(item));
+                return;
+            }
+        }
+        super.onBindViewHolder(holder, position, payloads);
+    }
+
+    private void bindInteractionState(Holder holder, JsonObject item, boolean selectable,
+                                      boolean call, long messageId) {
+        holder.binding.selectionRail.setVisibility(selectionMode && selectable
+            ? View.VISIBLE : View.GONE);
+        holder.binding.selectCheck.setOnClickListener(null);
+        holder.binding.selectCheck.setChecked(selectedIds.contains(messageId));
+        holder.binding.selectCheck.setOnClickListener(view -> listener.onSelectionChanged(
+            item, holder.binding.selectCheck.isChecked()));
+        View.OnClickListener messageClick = view -> {
+            if (!selectMessageIfActive(item) && call) listener.onCallClick(item);
         };
         holder.binding.root.setOnClickListener(messageClick);
         holder.binding.bubble.setOnClickListener(call || selectionMode ? messageClick : null);
@@ -309,6 +354,16 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         holder.binding.bubble.setLongClickable(selectable);
         holder.binding.messageBody.setLongClickable(selectable);
         holder.binding.root.setLongClickable(selectable);
+    }
+
+    private boolean selectMessageIfActive(JsonObject message) {
+        if (!selectionMode) return false;
+        long messageId = itemId(message);
+        String senderType = Jsons.string(message, "sender_type");
+        if (messageId <= 0 || "system".equals(senderType)
+            || ChatDisplayNamePolicy.isRecalled(message)) return false;
+        listener.onSelectionChanged(message, !selectedIds.contains(messageId));
+        return true;
     }
 
     private static String messageContent(JsonObject item) {
@@ -386,6 +441,11 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     }
 
     private static void clearDynamicMediaResources(View view) {
+        view.animate().cancel();
+        view.clearAnimation();
+        if (view instanceof FrameLayout) {
+            MediaStackAnimator.cancel((FrameLayout) view);
+        }
         if (view instanceof ImageView) {
             ImageView image = (ImageView) view;
             Glide.with(image.getContext().getApplicationContext()).clear(image);
@@ -462,12 +522,14 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         int current = Math.max(0, Math.min(media.size() - 1, stackedPositions.getOrDefault(groupKey, 0)));
         stackedPositions.put(groupKey, current);
         int depth = Math.min(3, media.size());
-        int railWidth = dp(context, 58);
-        int railGap = dp(context, 8);
-        int layerOffsetX = dp(context, 17);
-        int layerOffsetY = dp(context, 15);
-        int stageWidth = dp(context, 196);
-        int stageHeight = dp(context, 212);
+        ChatMediaLayoutPolicy.StackMetrics metrics = ChatMediaLayoutPolicy.stackMetricsDp(
+            mediaContentWidthDp(holder), depth);
+        int railWidth = dp(context, metrics.railWidth);
+        int railGap = dp(context, metrics.railGap);
+        int layerOffsetX = dp(context, metrics.layerOffsetX);
+        int layerOffsetY = dp(context, metrics.layerOffsetY);
+        int stageWidth = dp(context, metrics.stageWidth);
+        int stageHeight = dp(context, metrics.stageHeight);
         LinearLayout.LayoutParams rootParams = new LinearLayout.LayoutParams(
             railWidth + railGap + stageWidth + (depth - 1) * layerOffsetX,
             stageHeight + (depth - 1) * layerOffsetY + dp(context, 4)
@@ -500,6 +562,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         positionLabel.setContentDescription("当前第 " + (current + 1) + " " + unit
             + typeLabel + "，共 " + media.size() + " " + unit);
         expand.setOnClickListener(view -> {
+            if (selectMessageIfActive(message)) return;
             listener.onMessageHeightWillChange();
             expandedMediaGroups.add(groupKey);
             int adapterPosition = holder.getBindingAdapterPosition();
@@ -519,7 +582,6 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         root.setContentDescription("当前第 " + (current + 1) + " " + unit + typeLabel
             + "，共 " + media.size() + " " + unit + "；左右滑动切换");
         boolean[] longPressed = {false};
-        boolean[] animating = {false};
         GestureDetector gestures = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(@NonNull MotionEvent event) { return true; }
             @Override public void onLongPress(@NonNull MotionEvent event) {
@@ -530,8 +592,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         float[] down = new float[2];
         boolean[] horizontalDrag = {false};
-        boolean[] gestureBlocked = {false};
         stage.setOnClickListener(view -> {
+            if (selectMessageIfActive(message)) return;
             int index = Math.max(0, Math.min(media.size() - 1,
                 stackedPositions.getOrDefault(groupKey, 0)));
             InlineMediaPreviewDialog.show(context, media, index);
@@ -540,20 +602,19 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             gestures.onTouchEvent(event);
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
-                gestureBlocked[0] = animating[0];
-                if (gestureBlocked[0]) return true;
+                if (MediaStackAnimator.isRunning(stage)) {
+                    MediaStackAnimator.cancel(stage);
+                    int settled = Math.max(0, Math.min(media.size() - 1,
+                        stackedPositions.getOrDefault(groupKey, 0)));
+                    renderStackLayers(stage, context, media, settled, stageWidth, stageHeight,
+                        layerOffsetX, layerOffsetY);
+                }
                 down[0] = event.getX();
                 down[1] = event.getY();
                 horizontalDrag[0] = false;
                 longPressed[0] = false;
                 stage.animate().cancel();
                 if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(false);
-                return true;
-            }
-            if (gestureBlocked[0]) {
-                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    gestureBlocked[0] = false;
-                }
                 return true;
             }
             float deltaX = event.getX() - down[0];
@@ -582,6 +643,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                 }
                 if (Math.abs(deltaY) > touchSlop && view.getParent() != null) {
                     view.getParent().requestDisallowInterceptTouchEvent(false);
+                    return false;
                 }
                 return true;
             }
@@ -613,11 +675,10 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                 MediaStackTransitionPolicy.Transition settle = commit ? dragged
                     : MediaStackTransitionPolicy.transition(media.size(), target, value, 3,
                         layerOffsetX, layerOffsetY);
-                animating[0] = true;
+                if (commit) stackedPositions.put(groupKey, finalTarget);
                 MediaStackAnimator.animate(stage, settle, 0f, commit ? 220L : 145L,
                     itemIndex -> stackLayerCard(context, media.get(itemIndex), stageWidth, stageHeight, -1),
                     () -> {
-                        if (commit) stackedPositions.put(groupKey, finalTarget);
                         renderStackLayers(stage, context, media, finalTarget, stageWidth, stageHeight,
                             layerOffsetX, layerOffsetY);
                         positionLabel.setText("第 " + (finalTarget + 1) + "/" + media.size() + " " + unit);
@@ -626,7 +687,6 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                         root.setContentDescription("当前第 " + (finalTarget + 1)
                             + " " + unit + typeLabel + "，共 " + media.size()
                             + " " + unit + "；左右滑动切换");
-                        animating[0] = false;
                     });
                 return true;
             }
@@ -638,8 +698,25 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
     private void renderStackLayers(FrameLayout stage, Context context, List<JsonObject> media,
                                    int current, int stageWidth, int stageHeight,
                                    int layerOffsetX, int layerOffsetY) {
+        MediaStackAnimator.cancel(stage);
+        Map<Integer, MaterialCardView> reusableCards = new HashMap<>();
+        List<View> staleCards = new ArrayList<>();
+        for (int index = 0; index < stage.getChildCount(); index++) {
+            View child = stage.getChildAt(index);
+            if (child instanceof MaterialCardView && child.getTag() instanceof Integer) {
+                MaterialCardView previous = reusableCards.put(
+                    (Integer) child.getTag(), (MaterialCardView) child);
+                if (previous != null) staleCards.add(previous);
+            } else {
+                staleCards.add(child);
+            }
+        }
         stage.removeAllViews();
-        if (media.isEmpty()) return;
+        if (media.isEmpty()) {
+            staleCards.addAll(reusableCards.values());
+            for (View stale : staleCards) clearDynamicMediaResources(stale);
+            return;
+        }
         List<Integer> stackIndexes = MediaStackOrder.resolve(media.size(), current, 3);
         for (int layer = stackIndexes.size() - 1; layer >= 0; layer--) {
             int index = stackIndexes.get(layer);
@@ -647,14 +724,24 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             if (index < 0 || index >= media.size()) {
                 continue;
             }
-            MaterialCardView layerCard = stackLayerCard(
-                context, media.get(index), stageWidth, stageHeight, layer);
+            MaterialCardView layerCard = reusableCards.remove(index);
+            if (layerCard == null) {
+                layerCard = stackLayerCard(
+                    context, media.get(index), stageWidth, stageHeight, layer);
+            } else {
+                layerCard.animate().cancel();
+                layerCard.clearAnimation();
+                layerCard.setStrokeColor(layer == 0
+                    ? ThemeColors.primary(context) : context.getColor(R.color.outline));
+            }
             layerCard.setTag(index);
             MediaStackAnimator.applyPose(layerCard,
                 MediaStackTransitionPolicy.pose(layer, 3, layerOffsetX, layerOffsetY),
                 context.getResources().getDisplayMetrics().density);
             stage.addView(layerCard);
         }
+        staleCards.addAll(reusableCards.values());
+        for (View stale : staleCards) clearDynamicMediaResources(stale);
     }
 
     private MaterialCardView stackLayerCard(Context context, JsonObject attachment,
@@ -702,7 +789,9 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         boolean mine = isMine(message);
         String unit = videos ? "段" : "张";
         String typeLabel = videos ? "视频" : "图片";
-        int mediaColumnWidth = dp(context, 222);
+        int contentWidthDp = mediaContentWidthDp(holder);
+        int mediaColumnWidth = dp(context,
+            ChatMediaLayoutPolicy.expandedColumnWidthDp(contentWidthDp));
 
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.HORIZONTAL);
@@ -721,13 +810,14 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             mediaColumn.addView(mediaView(holder, message, attachment, false, mediaColumnWidth));
         }
 
-        int railWidth = dp(context, 58);
+        int railWidth = dp(context, ChatMediaLayoutPolicy.expandedRailWidthDp(contentWidthDp));
         LinearLayout controlRail = new LinearLayout(context);
         controlRail.setOrientation(LinearLayout.VERTICAL);
         controlRail.setGravity(Gravity.CENTER);
         TextView collapse = stackRailControl(context, "收起", railWidth, true);
         collapse.setContentDescription("收起全部 " + media.size() + " " + unit + typeLabel);
         collapse.setOnClickListener(view -> {
+            if (selectMessageIfActive(message)) return;
             listener.onMessageHeightWillChange();
             expandedMediaGroups.remove(groupKey);
             int position = holder.getBindingAdapterPosition();
@@ -744,7 +834,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         controlRail.addView(total);
 
         View gap = new View(context);
-        gap.setLayoutParams(new LinearLayout.LayoutParams(dp(context, 8), 1));
+        gap.setLayoutParams(new LinearLayout.LayoutParams(
+            dp(context, ChatMediaLayoutPolicy.expandedGapDp(contentWidthDp)), 1));
         if (mine) {
             root.addView(controlRail);
             root.addView(gap);
@@ -766,6 +857,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         Context context = holder.itemView.getContext();
         FrameLayout frame = new FrameLayout(context);
         int[] dimensions = mediaSize(context, attachment, sticker);
+        if (maximumWidth <= 0) maximumWidth = mediaContentWidthPx(holder);
         if (maximumWidth > 0 && dimensions[0] > maximumWidth) {
             float scale = maximumWidth / (float) dimensions[0];
             dimensions = new int[]{maximumWidth, Math.max(dp(context, 112), Math.round(dimensions[1] * scale))};
@@ -807,7 +899,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         frame.setContentDescription(sticker ? "表情包" : (video ? "聊天视频"
             : (isDynamicImage(attachment) ? "聊天动图" : "聊天图片")));
         frame.setOnClickListener(view -> {
-            openConversationGallery(context, attachment);
+            if (!selectMessageIfActive(message)) openConversationGallery(context, attachment);
         });
         frame.setOnLongClickListener(view -> { listener.onLongPress(message); return true; });
         return frame;
@@ -849,6 +941,25 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         return new int[]{square, square};
     }
 
+    private int mediaContentWidthPx(Holder holder) {
+        return dp(holder.itemView.getContext(), mediaContentWidthDp(holder));
+    }
+
+    private int mediaContentWidthDp(Holder holder) {
+        Context context = holder.itemView.getContext();
+        float density = Math.max(0.1f, context.getResources().getDisplayMetrics().density);
+        int viewportWidthDp = context.getResources().getConfiguration().screenWidthDp;
+        if (viewportWidthDp <= 0) {
+            viewportWidthDp = Math.round(
+                context.getResources().getDisplayMetrics().widthPixels / density);
+        }
+        int width = ChatMediaLayoutPolicy.contentWidthDp(viewportWidthDp, selectionMode);
+        int horizontalPaddingPx = holder.binding.bubbleContent.getPaddingLeft()
+            + holder.binding.bubbleContent.getPaddingRight();
+        int horizontalPaddingDp = (int) Math.ceil(horizontalPaddingPx / density);
+        return Math.max(72, width - horizontalPaddingDp);
+    }
+
     private View fileRow(Holder holder, JsonObject message, JsonObject attachment) {
         Context context = holder.itemView.getContext();
         String type = Jsons.string(attachment, "media_type");
@@ -856,7 +967,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             LinearLayout audioBlock = new LinearLayout(context);
             audioBlock.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams blockParams = new LinearLayout.LayoutParams(
-                dp(context, isMine(message) ? 292 : 268), ViewGroup.LayoutParams.WRAP_CONTENT);
+                mediaContentWidthPx(holder), ViewGroup.LayoutParams.WRAP_CONTENT);
             blockParams.bottomMargin = dp(context, 6);
             audioBlock.setLayoutParams(blockParams);
             boolean voice = isRecordedVoice(attachment);
@@ -890,6 +1001,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
                 toggle.setGravity(Gravity.END);
                 toggle.setPadding(dp(context, 10), collapsed ? dp(context, 5) : 0, dp(context, 10), dp(context, 5));
                 toggle.setOnClickListener(view -> {
+                    if (selectMessageIfActive(message)) return;
                     listener.onMessageHeightWillChange();
                     if (!collapsedTranscripts.add(messageId)) collapsedTranscripts.remove(messageId);
                     int position = positionOf(messageId);
@@ -903,7 +1015,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         if (isBusinessType(type)) return businessCard(holder, message, attachment, type);
         MaterialCardView card = new MaterialCardView(context);
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-            dp(context, isMine(message) ? 292 : 276), ViewGroup.LayoutParams.WRAP_CONTENT);
+            mediaContentWidthPx(holder), ViewGroup.LayoutParams.WRAP_CONTENT);
         cardParams.bottomMargin = dp(context, 6);
         card.setLayoutParams(cardParams);
         card.setRadius(dp(context, 8));
@@ -964,7 +1076,9 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         openParams.leftMargin = dp(context, 7);
         row.addView(open, openParams);
         card.addView(row);
-        card.setOnClickListener(view -> previewAttachment(context, attachment));
+        card.setOnClickListener(view -> {
+            if (!selectMessageIfActive(message)) previewAttachment(context, attachment);
+        });
         card.setOnLongClickListener(view -> { listener.onLongPress(message); return true; });
         return card;
     }
@@ -1087,7 +1201,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         Context context = holder.itemView.getContext();
         JsonObject metadata = Jsons.object(attachment, "metadata");
         MaterialCardView card = new MaterialCardView(context);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(context, 268), ViewGroup.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            mediaContentWidthPx(holder), ViewGroup.LayoutParams.WRAP_CONTENT);
         params.bottomMargin = dp(context, 6);
         card.setLayoutParams(params);
         card.setRadius(dp(context, 7));
@@ -1120,7 +1235,9 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         content.addView(detail);
         content.addView(action);
         card.addView(content);
-        card.setOnClickListener(view -> listener.onAttachmentClick(message, attachment));
+        card.setOnClickListener(view -> {
+            if (!selectMessageIfActive(message)) listener.onAttachmentClick(message, attachment);
+        });
         card.setOnLongClickListener(view -> { listener.onLongPress(message); return true; });
         return card;
     }
@@ -1129,7 +1246,8 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         Context context = holder.itemView.getContext();
         JsonObject metadata = Jsons.object(attachment, "metadata");
         MaterialCardView card = new MaterialCardView(context);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(context, 268), ViewGroup.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            mediaContentWidthPx(holder), ViewGroup.LayoutParams.WRAP_CONTENT);
         params.bottomMargin = dp(context, 6);
         card.setLayoutParams(params);
         card.setRadius(dp(context, 8));
@@ -1173,7 +1291,9 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         body.addView(label, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 40)));
         card.addView(body);
         card.setContentDescription("推荐好友 " + name.getText());
-        card.setOnClickListener(view -> listener.onAttachmentClick(message, attachment));
+        card.setOnClickListener(view -> {
+            if (!selectMessageIfActive(message)) listener.onAttachmentClick(message, attachment);
+        });
         card.setOnLongClickListener(view -> { listener.onLongPress(message); return true; });
         return card;
     }
@@ -1329,6 +1449,7 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
         card.addView(text);
         long targetForwardId = forwardId;
         card.setOnClickListener(view -> {
+            if (selectMessageIfActive(message)) return;
             if (!Jsons.array(forward, "items").isEmpty()) {
                 ForwardSnapshotActivity.openEmbedded(context, forward, managedAppId);
             } else {
@@ -1336,6 +1457,10 @@ public final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> 
             }
         });
         card.setOnLongClickListener(view -> { listener.onLongPress(message); return true; });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            mediaContentWidthPx(holder), ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.bottomMargin = dp(context, 6);
+        card.setLayoutParams(params);
         return card;
     }
 

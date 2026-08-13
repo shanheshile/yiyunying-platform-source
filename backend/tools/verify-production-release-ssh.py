@@ -36,6 +36,7 @@ SCHEMA_MIGRATIONS = (
     "2026.08.11-short-video-controls",
     "2026.08.11-resource-store-review-closure",
     "2026.08.11-management-shell-restructure",
+    "2026.08.14-secure-mail-settings",
 )
 CATALOG_SCHEMA_MIGRATION = "2026.08.11-resource-store-review-closure"
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")

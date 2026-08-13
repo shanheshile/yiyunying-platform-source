@@ -282,6 +282,30 @@ public final class ModuleRegistry {
             new String[]{"module", "action", "target_type", "id"}, new String[]{"actor_level", "target_id", "created_at"}));
         result.add(simple("data_console", "数据总控", role, "审计", "/api/platform/data-console/tables",
             new String[]{"table_name", "id"}, new String[]{"record_estimate", "column_count", "writable", "updated_at"}));
+        result.add(ModuleSpec.builder("mail_settings", "邮件服务配置", role).group("安全")
+            .path("/api/platform/mail-settings").dataKey("items")
+            .primary("transport_label", "from_address", "id")
+            .secondary("source", "send_ready", "smtp_password_configured", "revision", "updated_at")
+            .action(itemAction("修改邮件配置", "PUT", "/api/platform/mail-settings",
+                choice("transport", "邮件通道", true, options(
+                    "disabled", "禁用邮件",
+                    "native", "服务器本机邮件服务",
+                    "smtp", "SMTP（TLS）"
+                )),
+                req("from_address", "发件邮箱"), req("from_name", "发件名称"),
+                field("smtp_host", "SMTP 主机"), integer("smtp_port", "SMTP 端口"),
+                choice("smtp_encryption", "SMTP 加密", false, options("tls", "STARTTLS", "ssl", "SSL/TLS")),
+                field("smtp_username", "SMTP 用户名"), pwdOptional("smtp_password", "SMTP 新密码（留空则保持）"),
+                bool("clear_smtp_password", "清除已保存的 SMTP 密码"),
+                integerRequired("expected_revision", "当前配置版本"),
+                pwd("current_password", "当前 root 密码")).confirm(false))
+            .action(itemAction("发送测试邮件", "POST", "/api/platform/mail-settings/test",
+                req("recipient_email", "明确的测试收件邮箱"),
+                pwd("current_password", "当前 root 密码")).confirm(false))
+            .action(itemAction("使用活动密钥重加密密码", "POST", "/api/platform/mail-settings/reencrypt",
+                integerRequired("expected_revision", "当前配置版本"),
+                pwd("current_password", "当前 root 密码")).confirm(false))
+            .build());
         FieldSpec[] platformAiKnowledgeFields = new FieldSpec[]{
             choice("scope_type", "作用范围", false, SCOPE_TYPES).withDefault("platform"),
             integer("platform_id", "授权平台 ID"), integer("admin_id", "管理员 ID"), integer("app_id", "应用 ID"),
@@ -1075,6 +1099,7 @@ public final class ModuleRegistry {
         return result;
     }
     private static FieldSpec pwd(String key, String label) { return FieldSpec.typed(key, label, FieldType.PASSWORD, true); }
+    private static FieldSpec pwdOptional(String key, String label) { return FieldSpec.typed(key, label, FieldType.PASSWORD, false); }
     private static FieldSpec integer(String key, String label) { return FieldSpec.typed(key, label, FieldType.INTEGER, false); }
     private static FieldSpec integerRequired(String key, String label) { return FieldSpec.typed(key, label, FieldType.INTEGER, true); }
     private static FieldSpec decimal(String key, String label) { return FieldSpec.typed(key, label, FieldType.DECIMAL, false); }

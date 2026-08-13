@@ -15,8 +15,16 @@ final class IdentityService
         $nicknameEnabled = (bool) AppService::setting($appId, 'registration_nickname_enabled', true);
         $emailEnabled = (bool) AppService::setting($appId, 'registration_email_enabled', false);
         $phoneEnabled = (bool) AppService::setting($appId, 'registration_phone_enabled', false);
+        $accountMin = min(64, max(1, (int) AppService::setting($appId, 'account_min_length', 3)));
+        $accountMax = min(64, max($accountMin, (int) AppService::setting($appId, 'account_max_length', 32)));
         return [
-            'account' => ['enabled' => true, 'required' => true, 'label' => '账号'],
+            'account' => [
+                'enabled' => true,
+                'required' => true,
+                'label' => '账号',
+                'min_length' => $accountMin,
+                'max_length' => $accountMax,
+            ],
             'nickname' => [
                 'enabled' => $nicknameEnabled,
                 'required' => $nicknameEnabled && (bool) AppService::setting($appId, 'registration_nickname_required', true),
@@ -33,6 +41,11 @@ final class IdentityService
                 'required' => $phoneEnabled && (bool) AppService::setting($appId, 'registration_phone_required', false),
                 'verification_required' => false,
                 'label' => '手机号',
+            ],
+            'password' => [
+                'required' => true,
+                'min_bytes' => max(6, min(72, (int) config('security.password_min_length', 8))),
+                'max_bytes' => 72,
             ],
             'password_confirmation_required' => true,
             'uid' => [

@@ -7,15 +7,19 @@ import android.animation.ObjectAnimator;
 import android.view.View;
 import android.widget.FrameLayout;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 /** Applies {@link MediaStackTransitionPolicy} poses to real Android card views. */
 public final class MediaStackAnimator {
+    private static final Map<FrameLayout, WeakReference<AnimatorSet>> ACTIVE = new WeakHashMap<>();
+
     public interface ViewFactory {
         View create(int itemIndex);
     }
@@ -40,6 +44,7 @@ public final class MediaStackAnimator {
         float dragTranslationX,
         ViewFactory factory
     ) {
+        cancel(stage);
         Map<Integer, View> cards = indexedCards(stage);
         Set<Integer> activeItems = new HashSet<>();
         float density = stage.getResources().getDisplayMetrics().density;
@@ -80,6 +85,7 @@ public final class MediaStackAnimator {
         ViewFactory factory,
         Runnable completion
     ) {
+        cancel(stage);
         Map<Integer, View> cards = indexedCards(stage);
         float density = stage.getResources().getDisplayMetrics().density;
         List<Animator> animators = new ArrayList<>();
@@ -118,18 +124,52 @@ public final class MediaStackAnimator {
         set.playTogether(animators);
         set.setDuration(Math.max(1L, durationMs));
         set.addListener(new AnimatorListenerAdapter() {
-            private boolean completed;
+            private boolean cancelled;
 
-            private void completeOnce() {
-                if (completed) return;
-                completed = true;
-                completion.run();
+            @Override public void onAnimationCancel(Animator animation) {
+                cancelled = true;
+                removeIfCurrent(stage, set);
             }
 
-            @Override public void onAnimationEnd(Animator animation) { completeOnce(); }
-            @Override public void onAnimationCancel(Animator animation) { completeOnce(); }
+            @Override public void onAnimationEnd(Animator animation) {
+                removeIfCurrent(stage, set);
+                // A recycled holder must not be repopulated by a stale end callback.
+                if (!cancelled) completion.run();
+            }
         });
+        synchronized (ACTIVE) {
+            ACTIVE.put(stage, new WeakReference<>(set));
+        }
         set.start();
+    }
+
+    /** Stops an in-flight stack transition without running its stale completion callback. */
+    public static void cancel(FrameLayout stage) {
+        AnimatorSet set = null;
+        synchronized (ACTIVE) {
+            WeakReference<AnimatorSet> reference = ACTIVE.remove(stage);
+            if (reference != null) set = reference.get();
+        }
+        if (set != null) set.cancel();
+    }
+
+    public static boolean isRunning(FrameLayout stage) {
+        synchronized (ACTIVE) {
+            WeakReference<AnimatorSet> reference = ACTIVE.get(stage);
+            AnimatorSet set = reference == null ? null : reference.get();
+            if (set == null) {
+                ACTIVE.remove(stage);
+                return false;
+            }
+            return set.isStarted() && !set.isPaused();
+        }
+    }
+
+    private static void removeIfCurrent(FrameLayout stage, AnimatorSet candidate) {
+        synchronized (ACTIVE) {
+            WeakReference<AnimatorSet> reference = ACTIVE.get(stage);
+            if (reference != null && reference.get() == candidate) ACTIVE.remove(stage);
+        }
     }
 
     private static Map<Integer, View> indexedCards(FrameLayout stage) {

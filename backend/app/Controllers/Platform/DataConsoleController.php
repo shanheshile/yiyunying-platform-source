@@ -16,10 +16,11 @@ final class DataConsoleController
 {
     private const HIDDEN_TABLES = [
         'platform_tokens', 'admin_tokens', 'user_tokens', 'user_refresh_tokens',
-        'captcha_challenges', 'password_reset_tokens',
+        'captcha_challenges', 'password_reset_tokens', 'platform_mail_settings',
     ];
     private const SENSITIVE_COLUMNS = [
         'password_hash', 'token_hash', 'app_secret_hash', 'secret', 'private_key',
+        'smtp_password_ciphertext',
     ];
 
     public static function tables(Request $request): \Yiyunying\Core\ApiResponse

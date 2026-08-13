@@ -147,6 +147,9 @@ public final class FeatureDirectoryFragment extends BaseFragment {
         List<ModuleSpec> visible = new ArrayList<>();
         for (ModuleSpec module : app().modules().forRole(app().session().role())) {
             if ("home".equals(module.id())) continue;
+            if (app().session().role() == Role.PLATFORM
+                && !xyz.jjmxg.yiyunying.domain.AppEdition.canOpenPlatformModule(
+                    app().session().actorLevel(), module.id())) continue;
             if ("dashboard".equals(module.id()) && excludeDashboard()) continue;
             if ("dashboard".equals(module.id()) && !"apps".equals(mode())) continue;
             if (app().session().role() == Role.USER && "blacklist".equals(module.id())) continue;

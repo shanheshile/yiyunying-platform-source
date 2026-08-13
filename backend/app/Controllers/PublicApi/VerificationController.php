@@ -21,6 +21,6 @@ final class VerificationController
             trim((string) $request->input('scene', 'register')),
             $request
         );
-        return Response::success($result, '验证码已发送到邮箱', 201);
+        return Response::success($result, ContactVerificationService::deliveryResponseMessage($result), 202);
     }
 }

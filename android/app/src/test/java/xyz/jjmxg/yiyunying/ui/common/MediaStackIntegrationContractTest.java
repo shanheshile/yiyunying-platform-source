@@ -18,6 +18,9 @@ public final class MediaStackIntegrationContractTest {
         assertTrue(source.contains("MediaStackAnimator.applyDrag"));
         assertTrue(source.contains("MediaStackTransitionPolicy.transition"));
         assertTrue(source.contains("MediaStackAnimator.animate"));
+        assertTrue(source.contains("MediaStackAnimator.cancel"));
+        assertTrue(source.contains("reusableCards.remove(index)"));
+        assertTrue(source.contains("clearDynamicMediaResources(stale)"));
         assertFalse(source.contains("stage.setTranslationX"));
         assertFalse(source.contains("translationX(direction * dp(context, 54)).alpha"));
     }
@@ -39,6 +42,13 @@ public final class MediaStackIntegrationContractTest {
         String source = read("src/main/java/xyz/jjmxg/yiyunying/ui/forum/ForumPostActivity.java");
         assertTrue(source.contains("MediaViewRenderer.renderCommentMedia"));
         assertTrue(source.contains("Jsons.array(comment, \"attachments\")"));
+    }
+
+    @Test public void animatorCancellationCannotRepopulateARecycledHolder() throws Exception {
+        String source = read("src/main/java/xyz/jjmxg/yiyunying/ui/common/MediaStackAnimator.java");
+        assertTrue(source.contains("public static void cancel(FrameLayout stage)"));
+        assertTrue(source.contains("if (!cancelled) completion.run()"));
+        assertTrue(source.contains("WeakReference<AnimatorSet>"));
     }
 
     private static String read(String relative) throws Exception {

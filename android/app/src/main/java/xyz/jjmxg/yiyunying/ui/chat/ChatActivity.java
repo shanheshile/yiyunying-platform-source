@@ -616,8 +616,12 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         messageLayoutManager.setStackFromEnd(true);
         binding.recycler.setLayoutManager(messageLayoutManager);
         binding.recycler.setAdapter(adapter);
-        binding.recycler.setHasFixedSize(true);
-        binding.recycler.setItemViewCacheSize(12);
+        // Message rows change height when media stacks, transcripts and selection controls
+        // change. Fixed-size layout caching can otherwise retain a stale clipped row.
+        binding.recycler.setHasFixedSize(false);
+        // Dynamic media holders retain decoded image targets; a smaller cache bounds memory
+        // without sacrificing the immediately adjacent history rows.
+        binding.recycler.setItemViewCacheSize(6);
         binding.recycler.setItemAnimator(null);
         xyz.jjmxg.yiyunying.ui.common.TopCenterDoubleTap.attach(
             binding.toolbar, binding.recycler);
@@ -1244,8 +1248,10 @@ public final class ChatActivity extends xyz.jjmxg.yiyunying.ui.common.SystemInse
         if (binding == null || !selectionMode) return;
         long startId = rangeStartCandidateId > 0 ? rangeStartCandidateId : rangeStartMessageId;
         long endId = rangeEndCandidateId > 0 ? rangeEndCandidateId : rangeEndMessageId;
-        boolean showStart = selectionScrollDirection <= 0;
-        boolean showEnd = selectionScrollDirection >= 0;
+        // Do not cover the newly selected message with both range handles. A handle appears
+        // only after the user scrolls in that direction and establishes a range candidate.
+        boolean showStart = selectionScrollDirection < 0;
+        boolean showEnd = selectionScrollDirection > 0;
         positionRangeOverlay(binding.rangeStartOverlay, startId, true, showStart);
         positionRangeOverlay(binding.rangeEndOverlay, endId, false, showEnd);
     }

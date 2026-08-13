@@ -104,9 +104,22 @@ return [
         ), static fn(string $value): bool => $value !== '')),
     ],
     'mail' => [
-        'transport' => (string) $env('MAIL_TRANSPORT', 'native'),
+        'transport' => (string) $env('MAIL_TRANSPORT', 'disabled'),
         'from_address' => (string) $env('MAIL_FROM_ADDRESS', 'no-reply@example.test'),
         'from_name' => (string) $env('MAIL_FROM_NAME', '易运盈后台'),
+        'database_config_enabled' => $envBool('MAIL_DATABASE_CONFIG_ENABLED', true),
+        'settings_master_key' => (string) $env('MAIL_SETTINGS_MASTER_KEY', ''),
+        'settings_active_key_id' => (string) $env('MAIL_SETTINGS_ACTIVE_KEY_ID', 'v1'),
+        'settings_keyring_json' => (string) $env('MAIL_SETTINGS_KEYRING_JSON', ''),
+        'smtp' => [
+            'host' => (string) $env('MAIL_SMTP_HOST', ''),
+            'port' => (int) $env('MAIL_SMTP_PORT', 587),
+            'encryption' => (string) $env('MAIL_SMTP_ENCRYPTION', 'tls'),
+            'username' => (string) $env('MAIL_SMTP_USERNAME', ''),
+            'password' => (string) $env('MAIL_SMTP_PASSWORD', ''),
+            'timeout' => (int) $env('MAIL_SMTP_TIMEOUT', 10),
+            'helo' => (string) $env('MAIL_SMTP_HELO', ''),
+        ],
     ],
     'speech' => [
         'provider' => $speechProvider,

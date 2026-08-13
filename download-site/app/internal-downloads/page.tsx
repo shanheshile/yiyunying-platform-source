@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { chatGPTSignOutPath, requireChatGPTUser } from "../chatgpt-auth";
+import { isAuthorizedInternalDownloadUser } from "./authorization.server";
 import {
   buildInternalDownloadCatalog,
   INTERNAL_DOWNLOAD_NOTICE,
   type InternalPackage,
 } from "./catalog.server";
+import {
+  attachInternalDownloadActionLinks,
+  INTERNAL_DOWNLOAD_LINK_TTL_SECONDS,
+} from "./signed-links.server";
 import styles from "./styles.module.css";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "内部下载中心",
@@ -16,7 +22,13 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-function PackageCard({ item }: { item: InternalPackage }) {
+function PackageCard({
+  item,
+  groupId,
+}: {
+  item: InternalPackage;
+  groupId: "debug" | "candidate" | "final";
+}) {
   return (
     <article className={styles.card} data-role={item.role}>
       <div className={styles.cardHeader}>
@@ -36,7 +48,21 @@ function PackageCard({ item }: { item: InternalPackage }) {
       </dl>
       <p className={styles.fileName}>{item.fileName}</p>
       <div className={styles.actions}>
-        <span className={styles.downloadUnavailable}>请启动本机内部下载服务后下载</span>
+        {item.downloadHref ? (
+          <a
+            className={styles.download}
+            href={item.downloadHref}
+            rel="nofollow noreferrer"
+            referrerPolicy="no-referrer"
+            download={item.fileName}
+          >
+            短时安全下载
+          </a>
+        ) : (
+          <span className={styles.downloadUnavailable}>
+            {groupId === "final" ? "正式版暂不从内部通道分发" : "签名下载未配置，链接已关闭"}
+          </span>
+        )}
         <details className={styles.installHelp}>
           <summary>打开安装说明</summary>
           <ol>
@@ -54,23 +80,10 @@ function PackageCard({ item }: { item: InternalPackage }) {
   );
 }
 
-function allowedInternalDownloadEmails(): ReadonlySet<string> {
-  const configured = process.env.YIYUNYING_INTERNAL_DOWNLOAD_EMAILS ?? "";
-  return new Set(
-    configured
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-  );
-}
-
 export default async function InternalDownloadsPage() {
   const user = await requireChatGPTUser("/internal-downloads/");
-  const allowedEmails = allowedInternalDownloadEmails();
-  if (allowedEmails.size === 0 || !allowedEmails.has(user.email.trim().toLowerCase())) {
-    notFound();
-  }
-  const groups = buildInternalDownloadCatalog();
+  if (!isAuthorizedInternalDownloadUser(user)) notFound();
+  const groups = attachInternalDownloadActionLinks(buildInternalDownloadCatalog());
 
   return (
     <main className={styles.page}>
@@ -83,6 +96,9 @@ export default async function InternalDownloadsPage() {
           <strong>{INTERNAL_DOWNLOAD_NOTICE}</strong>
           <span>不得公开索引、分享外链或把 Release 候选交付客户。本路由只允许部署在 Sites 身份网关或会剥离伪造 oai-authenticated-user-* 请求头的受信任入口后方。</span>
         </div>
+        <p className={styles.linkLifetime}>
+          每次点击都会重新核验账号并由服务端即时签发，下载地址仅在 {INTERNAL_DOWNLOAD_LINK_TTL_SECONDS / 60} 分钟内有效；短时地址在过期前仍可能被转发，请勿分享。
+        </p>
         <p className={styles.sessionLine}>
           当前维护者：<strong>{user.displayName}</strong>
           <a href={chatGPTSignOutPath("/")}>退出内部下载中心</a>
@@ -105,7 +121,9 @@ export default async function InternalDownloadsPage() {
             </div>
             {group.packages.length > 0 ? (
               <div className={styles.grid}>
-                {group.packages.map((item) => <PackageCard item={item} key={`${group.id}-${item.role}`} />)}
+                {group.packages.map((item) => (
+                  <PackageCard item={item} groupId={group.id} key={`${group.id}-${item.role}`} />
+                ))}
               </div>
             ) : (
               <div className={styles.empty} role="status">{group.emptyMessage}</div>
@@ -122,7 +140,7 @@ export default async function InternalDownloadsPage() {
           <li>记录设备、角色、版本代码、安装结果和首次启动结果。</li>
           <li>候选版必须完成真机验收及发布签署，才可进入“最终正式版”。</li>
         </ol>
-        <p>本机命令：<code>python download-site/scripts/serve-internal-downloads.py --manifest releases/1.0.0/release-manifest.json</code></p>
+        <p>链接过期、签名无效或文件校验不一致时，停止安装并刷新本页重新获取。</p>
       </aside>
     </main>
   );

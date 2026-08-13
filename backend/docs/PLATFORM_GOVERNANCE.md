@@ -247,6 +247,9 @@ Content-Type: application/json
 | GET | `/api/platform/me` | 当前平台、设置和轮询策略 |
 | GET | `/api/platform/dashboard` | 分级数据面板和 30 日统计 |
 | GET/PUT | `/api/platform/settings` | 查看/修改自己的注册、赠送和强制规则 |
+| GET/PUT | `/api/platform/mail-settings` | 仅1级总控读取非敏感状态/保存全局邮件配置，SMTP 密码只写不回显 |
+| POST | `/api/platform/mail-settings/test` | 仅1级总控测试明确收件地址，带密码复核、审计与频控 |
+| POST | `/api/platform/mail-settings/reencrypt` | 仅1级总控在密钥轮换期间重加密 SMTP 密码 |
 | GET | `/api/platform/ip-statistics` | 按 IP 汇总 admin 注册 |
 | GET | `/api/platform/admin-registration-logs` | admin 注册日志 |
 | GET | `/api/platform/admin-login-logs` | admin 登录日志 |

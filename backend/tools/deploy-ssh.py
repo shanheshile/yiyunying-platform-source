@@ -27,6 +27,7 @@ REQUIRED_RELEASE_MIGRATIONS = (
     "database/migrations/upgrade_20260811_short_video_controls.sql",
     "database/migrations/upgrade_20260811_resource_store_review_closure.sql",
     "database/migrations/upgrade_20260811_management_shell_restructure.sql",
+    "database/migrations/upgrade_20260814_secure_mail_settings.sql",
 )
 
 
@@ -81,7 +82,7 @@ def assert_required_release_migrations(migrations: list[str]) -> list[str]:
     positions = [normalized.index(item) for item in REQUIRED_RELEASE_MIGRATIONS if item in normalized]
     if missing or duplicate or positions != sorted(positions):
         raise RuntimeError(
-            "This release must include migrations 61-64 exactly once and in order; "
+            "This release must include migrations 61-65 exactly once and in order; "
             f"missing={missing}, duplicate={duplicate}"
         )
     return normalized

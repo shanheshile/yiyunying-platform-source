@@ -40,6 +40,7 @@ use Yiyunying\Controllers\Platform\ExchangeController as PlatformExchange;
 use Yiyunying\Controllers\Platform\GovernanceController as PlatformGovernance;
 use Yiyunying\Controllers\Platform\LifecycleController as PlatformLifecycle;
 use Yiyunying\Controllers\Platform\IdentityController as PlatformIdentity;
+use Yiyunying\Controllers\Platform\MailSettingsController as PlatformMailSettings;
 use Yiyunying\Controllers\Platform\PollController as PlatformPoll;
 use Yiyunying\Controllers\Platform\OperatorController as PlatformOperator;
 use Yiyunying\Controllers\Platform\OversightController as PlatformOversight;
@@ -128,6 +129,10 @@ $router->post('/api/platform/my-identity-unbind-requests', [PlatformIdentity::cl
 $router->get('/api/platform/dashboard', [PlatformDashboard::class, 'dashboard']);
 $router->get('/api/platform/settings', [PlatformDashboard::class, 'settings']);
 $router->put('/api/platform/settings', [PlatformDashboard::class, 'saveSettings']);
+$router->get('/api/platform/mail-settings', [PlatformMailSettings::class, 'show']);
+$router->put('/api/platform/mail-settings', [PlatformMailSettings::class, 'update']);
+$router->post('/api/platform/mail-settings/test', [PlatformMailSettings::class, 'test']);
+$router->post('/api/platform/mail-settings/reencrypt', [PlatformMailSettings::class, 'reencrypt']);
 $router->get('/api/platform/ip-statistics', [PlatformDashboard::class, 'ipStatistics']);
 $router->get('/api/platform/admin-registration-logs', [PlatformDashboard::class, 'registrationLogs']);
 $router->get('/api/platform/admin-login-logs', [PlatformDashboard::class, 'adminLoginLogs']);

@@ -7,7 +7,10 @@ import android.content.Context;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -16,6 +19,7 @@ import com.google.gson.JsonObject;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
 
 import xyz.jjmxg.yiyunying.BuildConfig;
 import xyz.jjmxg.yiyunying.core.AppAccess;
@@ -43,7 +47,12 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
     private boolean phoneRequired;
     private boolean emailVerificationRequired;
     private boolean buildIdentityValid;
+    private int accountMinLength = 3;
+    private int accountMaxLength = 32;
+    private int passwordMinLength = 8;
+    private long emailResendAvailableAtMs;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable emailCountdownTick = this::updateEmailCountdown;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,12 +107,17 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
         String email = text(binding.emailInput.getText());
         String phone = text(binding.phoneInput.getText());
         String emailCode = text(binding.emailCodeInput.getText());
-        if (account.length() < 3) {
-            binding.accountLayout.setError("账号至少 3 个字符");
+        if (account.length() < accountMinLength || account.length() > accountMaxLength) {
+            binding.accountLayout.setError("账号长度需为 " + accountMinLength + "-" + accountMaxLength + " 个字符");
             return;
         }
-        if (password.length() < 6) {
-            binding.passwordLayout.setError("密码至少 6 个字符");
+        if (!account.matches("[A-Za-z0-9_.-]+")) {
+            binding.accountLayout.setError("账号只能包含字母、数字、下划线、点和短横线");
+            return;
+        }
+        int passwordBytes = password.getBytes(StandardCharsets.UTF_8).length;
+        if (passwordBytes < passwordMinLength || passwordBytes > 72) {
+            binding.passwordLayout.setError("密码长度需为 " + passwordMinLength + "-72 个字节");
             return;
         }
         if (!password.equals(confirmation)) {
@@ -209,6 +223,11 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
             JsonObject nickname = Jsons.object(policy, "nickname");
             JsonObject email = Jsons.object(policy, "email");
             JsonObject phone = Jsons.object(policy, "phone");
+            JsonObject account = Jsons.object(policy, "account");
+            JsonObject password = Jsons.object(policy, "password");
+            accountMinLength = bounded(Jsons.intValue(account, "min_length", 3), 1, 64);
+            accountMaxLength = bounded(Jsons.intValue(account, "max_length", 32), accountMinLength, 64);
+            passwordMinLength = bounded(Jsons.intValue(password, "min_bytes", 8), 6, 72);
             nicknameRequired = booleanValue(nickname, "required", false);
             emailRequired = booleanValue(email, "required", false);
             phoneRequired = booleanValue(phone, "required", false);
@@ -233,7 +252,8 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
             showConnectionConfigurationError();
             return;
         }
-        String email = text(binding.emailInput.getText());
+        if (emailCodeRequest != null) return;
+        String email = text(binding.emailInput.getText()).toLowerCase(java.util.Locale.ROOT);
         binding.emailLayout.setError(null);
         if (email.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
             binding.emailLayout.setError("请输入正确的邮箱");
@@ -244,28 +264,60 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
         body.addProperty("email", email);
         body.addProperty("scene", "register");
         binding.sendEmailCodeButton.setEnabled(false);
-        emailCodeRequest = AppAccess.from(this).repository().post("/api/public/verification-code/email", body, result -> {
+        binding.sendEmailCodeButton.setText("正在请求邮件服务…");
+        emailCodeRequest = AppAccess.from(this).repository().postPublic("/api/public/verification-code/email", body, result -> {
             emailCodeRequest = null;
             if (binding == null) return;
             if (!result.isSuccessful()) {
-                binding.sendEmailCodeButton.setEnabled(true);
+                restoreEmailCodeButton();
                 Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "验证码发送失败" : result.message(), Snackbar.LENGTH_LONG).show();
                 return;
             }
-            Snackbar.make(binding.getRoot(), result.message().isEmpty() ? "验证码已发送" : result.message(), Snackbar.LENGTH_LONG).show();
-            startEmailCountdown(60);
+            JsonObject delivery = result.dataObject();
+            if (!EmailCodeDelivery.accepted(delivery)) {
+                restoreEmailCodeButton();
+                String message = result.message().isEmpty()
+                    ? "邮件投递状态未确认，验证码未标记为已发送"
+                    : result.message();
+                Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
+                return;
+            }
+            String message = result.message().isEmpty()
+                ? EmailCodeDelivery.fallbackMessage(delivery)
+                : result.message();
+            Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
+            startEmailCountdown(EmailCodeDelivery.retrySeconds(delivery));
         });
     }
 
-    private void startEmailCountdown(int remaining) {
+    private void startEmailCountdown(int seconds) {
+        handler.removeCallbacks(emailCountdownTick);
+        emailResendAvailableAtMs = SystemClock.elapsedRealtime() + seconds * 1000L;
+        updateEmailCountdown();
+    }
+
+    private void updateEmailCountdown() {
         if (binding == null) return;
-        if (remaining <= 0) {
+        long remainingMs = emailResendAvailableAtMs - SystemClock.elapsedRealtime();
+        if (remainingMs <= 0) {
+            emailResendAvailableAtMs = 0L;
             binding.sendEmailCodeButton.setText("重新发送邮箱验证码");
-            binding.sendEmailCodeButton.setEnabled(true);
+            binding.sendEmailCodeButton.setEnabled(buildIdentityValid);
             return;
         }
+        int remaining = (int) Math.ceil(remainingMs / 1000d);
         binding.sendEmailCodeButton.setText(remaining + " 秒后可重新发送");
-        handler.postDelayed(() -> startEmailCountdown(remaining - 1), 1000L);
+        binding.sendEmailCodeButton.setEnabled(false);
+        handler.postDelayed(emailCountdownTick, Math.min(1000L, remainingMs));
+    }
+
+    private void restoreEmailCodeButton() {
+        if (emailResendAvailableAtMs > SystemClock.elapsedRealtime()) {
+            updateEmailCountdown();
+            return;
+        }
+        binding.sendEmailCodeButton.setText("发送邮箱验证码");
+        binding.sendEmailCodeButton.setEnabled(buildIdentityValid);
     }
 
     private void setLoading(boolean loading) {
@@ -301,12 +353,18 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
     }
 
     private void constrainWidth() {
-        int available = getResources().getDisplayMetrics().widthPixels - dp(24);
-        binding.formContainer.getLayoutParams().width = Math.min(available, dp(560));
-        binding.formContainer.requestLayout();
+        int viewport = binding.getRoot().getWidth();
+        if (viewport <= 0) viewport = getResources().getDisplayMetrics().widthPixels;
+        int available = Math.max(dp(280), viewport - dp(24));
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(Math.min(available, dp(560)), -2);
+        params.gravity = Gravity.CENTER_HORIZONTAL;
+        binding.formContainer.setLayoutParams(params);
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private static int bounded(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
     private String baseUrl() {
         return BuildConfig.DEFAULT_API_BASE_URL;
     }
@@ -347,7 +405,7 @@ public final class RegisterActivity extends xyz.jjmxg.yiyunying.ui.common.System
         if (request != null) request.cancel();
         if (policyRequest != null) policyRequest.cancel();
         if (emailCodeRequest != null) emailCodeRequest.cancel();
-        handler.removeCallbacksAndMessages(null);
+        handler.removeCallbacks(emailCountdownTick);
         super.onDestroy();
     }
 }

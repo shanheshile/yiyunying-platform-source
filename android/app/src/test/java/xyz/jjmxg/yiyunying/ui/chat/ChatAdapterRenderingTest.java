@@ -5,6 +5,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -22,7 +23,9 @@ import org.robolectric.annotation.Config;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import xyz.jjmxg.yiyunying.R;
 import xyz.jjmxg.yiyunying.domain.Role;
@@ -164,6 +167,75 @@ public final class ChatAdapterRenderingTest {
         assertEquals(1, adapter.positionOf(2L));
     }
 
+    @Test
+    public void repeatedSelectionChangesUsePayloadInsteadOfRebindingEveryMediaRow() {
+        ChatAdapter adapter = new ChatAdapter(1L, Role.USER, message -> { });
+        JsonObject first = message("content", "first");
+        JsonObject second = message("content", "second");
+        second.addProperty("id", 102L);
+        adapter.submit(Arrays.asList(first, second));
+        adapter.setSelectionMode(true, Collections.singleton(101L));
+
+        AtomicInteger fullRefreshes = new AtomicInteger();
+        AtomicInteger selectionPayloadRows = new AtomicInteger();
+        adapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override public void onChanged() { fullRefreshes.incrementAndGet(); }
+            @Override public void onItemRangeChanged(int positionStart, int itemCount,
+                                                     Object payload) {
+                if (ChatAdapter.PAYLOAD_SELECTION_STATE.equals(payload)) {
+                    selectionPayloadRows.addAndGet(itemCount);
+                }
+            }
+        });
+
+        LinkedHashSet<Long> selected = new LinkedHashSet<>();
+        selected.add(101L);
+        selected.add(102L);
+        adapter.setSelectionMode(true, selected);
+
+        assertEquals(0, fullRefreshes.get());
+        assertEquals(1, selectionPayloadRows.get());
+    }
+
+    @Test
+    public void narrowSelectionKeepsBothPerspectivesMediaCompleteAndSelectable() {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.setTheme(R.style.Theme_Yiyunying);
+        AtomicInteger selectionClicks = new AtomicInteger();
+        ChatAdapter adapter = new ChatAdapter(1L, Role.USER, new ChatAdapter.Listener() {
+            @Override public void onLongPress(JsonObject message) { }
+            @Override public void onSelectionChanged(JsonObject message, boolean selected) {
+                selectionClicks.incrementAndGet();
+            }
+        });
+        JsonObject mine = mediaMessage(101L, 1L);
+        JsonObject theirs = mediaMessage(102L, 2L);
+        adapter.submit(Arrays.asList(mine, theirs));
+        adapter.setSelectionMode(true, Collections.singleton(101L));
+
+        RecyclerView parent = new RecyclerView(context);
+        parent.setLayoutManager(new LinearLayoutManager(context));
+        for (int position = 0; position < 2; position++) {
+            ChatAdapter.Holder holder = adapter.onCreateViewHolder(parent, 0);
+            adapter.onBindViewHolder(holder, position);
+            measure(holder.itemView, dp(context, 360));
+
+            View selectionRail = holder.itemView.findViewById(R.id.selectionRail);
+            LinearLayout messageColumn = holder.itemView.findViewById(R.id.messageColumn);
+            LinearLayout mediaContainer = holder.itemView.findViewById(R.id.mediaContainer);
+            assertEquals(View.VISIBLE, selectionRail.getVisibility());
+            assertEquals(1, mediaContainer.getChildCount());
+            assertTrue(mediaContainer.getChildAt(0).getMeasuredWidth()
+                <= messageColumn.getMeasuredWidth());
+            assertTrue(mediaContainer.getChildAt(0).getMeasuredHeight() > 0);
+
+            ViewGroup stack = (ViewGroup) mediaContainer.getChildAt(0);
+            assertTrue(stack.getChildCount() >= 1);
+            assertTrue(stack.getChildAt(0).performClick());
+        }
+        assertEquals(2, selectionClicks.get());
+    }
+
     private static JsonObject message(String field, String value) {
         JsonObject item = new JsonObject();
         item.addProperty("id", 101L);
@@ -173,6 +245,23 @@ public final class ChatAdapterRenderingTest {
         item.addProperty("content_type", "text");
         item.addProperty(field, value);
         item.addProperty("created_at", "2026-08-01 08:00:00");
+        return item;
+    }
+
+    private static JsonObject mediaMessage(long id, long senderId) {
+        JsonObject item = message("content", "");
+        item.addProperty("id", id);
+        item.addProperty("sender_id", senderId);
+        JsonArray attachments = new JsonArray();
+        for (int index = 0; index < 4; index++) {
+            JsonObject attachment = new JsonObject();
+            attachment.addProperty("media_type", "image");
+            attachment.addProperty("width", 1200);
+            attachment.addProperty("height", 900);
+            attachment.addProperty("file_name", "photo-" + index + ".jpg");
+            attachments.add(attachment);
+        }
+        item.add("attachments", attachments);
         return item;
     }
 

@@ -63,7 +63,12 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
         binding.serverInput.setText(BuildConfig.DEFAULT_API_BASE_URL);
         binding.platformKeyInput.setText(BuildConfig.DEFAULT_PLATFORM_KEY);
         binding.appKeyInput.setText(BuildConfig.DEFAULT_APP_KEY);
-        binding.accountInput.setText(session.account().isEmpty() ? AppEdition.defaultAccount() : session.account());
+        // The user edition's build-time account is a role marker, not a customer account.
+        // Only management editions may use their compiled operator account as a convenience.
+        String storedAccount = session.account().trim();
+        binding.accountInput.setText(
+            storedAccount.isEmpty() && selectedRole != Role.USER ? AppEdition.defaultAccount() : storedAccount
+        );
         binding.roleToggle.setVisibility(View.GONE);
         updateRole(selectedRole);
         binding.loginButton.setOnClickListener(view -> login());
@@ -178,7 +183,8 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
                 ? View.VISIBLE : View.GONE
         );
         String account = text(binding.accountInput.getText());
-        if (account.isEmpty() || "root".equals(account) || "admin".equals(account) || "user".equals(account)) {
+        if (role != Role.USER
+            && (account.isEmpty() || "root".equals(account) || "admin".equals(account) || "user".equals(account))) {
             binding.accountInput.setText(AppEdition.defaultAccount());
             binding.accountInput.setSelection(binding.accountInput.length());
         }
@@ -231,6 +237,7 @@ public final class LoginActivity extends xyz.jjmxg.yiyunying.ui.common.SystemIns
                 openMain();
             } else {
                 String message = result.message().isEmpty() ? "登录失败" : result.message();
+                if (result.httpCode() == 401) binding.passwordLayout.setError(message);
                 Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
             }
         });

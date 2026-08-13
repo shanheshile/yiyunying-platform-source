@@ -306,8 +306,13 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
         String author = Jsons.string(post, "nickname");
         RuntimeLanguage.setDynamicToolbarTitle(binding.toolbar, Jsons.string(post, "plate_name"));
         RuntimeLanguage.setDynamicText(binding.title, title);
+        String postContent = Jsons.string(post, "content");
         RuntimeLanguage.protectDynamicText(binding.content);
-        LinkNavigator.setTextWithLinks(binding.content, Jsons.string(post, "content"));
+        LinkNavigator.setTextWithLinks(binding.content, postContent);
+        boolean postSnapshot = ForumForwardSnapshotCard.renderInto(
+            this, binding.forumForwardSnapshotContainer, Jsons.object(post, "forward_bundle"), postContent);
+        binding.content.setVisibility(postSnapshot && ForumForwardSnapshotCard.isLegacyForwardSummary(postContent)
+            ? View.GONE : View.VISIBLE);
         binding.authorName.setText(
             author.isEmpty() ? RuntimeLanguage.translate(this, "用户 ").toString()
                 + Jsons.longValue(post, "user_id") : author);
@@ -852,6 +857,19 @@ public final class ForumPostActivity extends xyz.jjmxg.yiyunying.ui.common.Syste
             LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             textParams.topMargin = dp(4);
             content.addView(text, textParams);
+
+            String commentContent = Jsons.string(comment, "content");
+            LinearLayout snapshotContainer = new LinearLayout(this);
+            snapshotContainer.setOrientation(LinearLayout.VERTICAL);
+            boolean commentSnapshot = ForumForwardSnapshotCard.renderInto(
+                this, snapshotContainer, Jsons.object(comment, "forward_bundle"), commentContent);
+            if (commentSnapshot) {
+                LinearLayout.LayoutParams snapshotParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                snapshotParams.topMargin = dp(7);
+                content.addView(snapshotContainer, snapshotParams);
+                if (ForumForwardSnapshotCard.isLegacyForwardSummary(commentContent)) text.setVisibility(View.GONE);
+            }
             LinearLayout media = new LinearLayout(this);
             media.setOrientation(LinearLayout.VERTICAL);
             content.addView(media, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));

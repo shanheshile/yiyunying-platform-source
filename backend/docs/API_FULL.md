@@ -329,6 +329,10 @@ public 接口：app_key 必填
 | GET | `/api/platform/dashboard` | 范围内数据面板 | `platform_id`，仅 1 级可选分支 |
 | GET | `/api/platform/settings` | 当前平台规则 | 无 |
 | PUT | `/api/platform/settings` | 保存注册、赠送、下游和强制规则 | `settings` |
+| GET | `/api/platform/mail-settings` | 1级总控读取邮件非敏感状态 | 无 |
+| PUT | `/api/platform/mail-settings` | 1级总控保存邮件配置；密码只写不回显 | `transport,from_address,from_name,smtp_*,expected_revision,current_password` |
+| POST | `/api/platform/mail-settings/test` | 审计且频控的明确地址测试邮件 | `recipient_email,current_password` |
+| POST | `/api/platform/mail-settings/reencrypt` | 使用当前活动密钥重加密 SMTP 密码 | `expected_revision,current_password` |
 | GET | `/api/platform/ip-statistics` | admin 注册 IP 汇总 | `platform_id,ip` |
 | GET | `/api/platform/admin-registration-logs` | admin 注册日志 | `platform_id,ip,page,limit` |
 | GET | `/api/platform/admin-login-logs` | admin 登录日志 | `platform_id,page,limit` |
