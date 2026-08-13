@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { isFormalPublicRelease } from "../app/release-state.mjs";
+import { createPublicReleaseProjection } from "../scripts/public-release-projection.mjs";
 
 const releaseMetadata = JSON.parse(
   await readFile(new URL("../release-metadata.json", import.meta.url), "utf8"),
@@ -90,11 +95,23 @@ test("publishes the release clients selected by the current public policy", asyn
 
   assert.equal(publicReleases.length, 4);
   assert.deepEqual(new Set(publicReleases.map(({ id }) => id)), publicReleaseIds);
+  const isFormal = isFormalPublicRelease(releaseMetadata);
   for (const release of publicReleases) {
-    assert.match(html, new RegExp(release.name));
-    assert.ok(html.includes(release.fileName), `${release.id} file missing from HTML`);
     assert.match(release.sha256, /^[A-F0-9]{64}$/);
     assert.ok(release.sizeBytes > 1024 * 1024);
+    if (isFormal) {
+      assert.match(html, new RegExp(release.name));
+      assert.ok(html.includes(release.fileName), `${release.id} file missing from HTML`);
+    } else {
+      for (const forbidden of [
+        release.fileName,
+        release.sha256,
+        release.packageName,
+        release.versionName,
+      ]) {
+        assert.ok(!html.includes(String(forbidden)), `${release.id} candidate metadata leaked in HTML`);
+      }
+    }
   }
   for (const asset of releaseMetadata.projectAssets) {
     assert.ok(!html.includes(asset.fileName), `${asset.id} project asset leaked in HTML`);
@@ -102,6 +119,10 @@ test("publishes the release clients selected by the current public policy", asyn
 
   assert.doesNotMatch(html, /完整项目|源码快照|Git 历史|项目交接|校验清单/);
   assert.doesNotMatch(html, /PROJECT_ASSETS|projectAssets/);
+  if (!isFormal) {
+    assert.ok(!html.includes(releaseMetadata.versionName), "candidate version leaked in HTML");
+    assert.doesNotMatch(html, /href=["'][^"']*\/downloads\//i);
+  }
 });
 
 test("requires finalized Stable evidence without Debug markers for the formal UI state", async () => {
@@ -112,8 +133,10 @@ test("requires finalized Stable evidence without Debug markers for the formal UI
     assert.match(html, /下载易云盈正式版/);
     assert.match(html, /已正式发布/);
   } else {
-    assert.match(html, /发布候选/);
-    assert.match(html, /仅供闭环测试/);
+    assert.match(html, /正式版准备中/);
+    assert.match(html, /正式版尚未开放/);
+    assert.match(html, /功能介绍与接口文档已开放/);
+    assert.doesNotMatch(html, /发布候选|候选包|仅供闭环测试/);
     assert.doesNotMatch(html, /已正式发布/);
   }
 
@@ -138,6 +161,131 @@ test("requires finalized Stable evidence without Debug markers for the formal UI
   assert.equal(isFormalPublicRelease(stablePending), false);
   assert.equal(isFormalPublicRelease(stableFinalized), true);
   assert.equal(isFormalPublicRelease(debugPending), false);
+});
+
+test("exports four formal clients only from a finalized manifest bound to pending metadata", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "yiyunying-public-export-"));
+  try {
+    const metadataPath = join(temporary, "release-metadata.json");
+    const manifestPath = join(temporary, "release-manifest.json");
+    const outputPath = join(temporary, "public");
+    const finalManifest = structuredClone(releaseMetadata);
+    delete finalManifest.pendingManifestSha256;
+    finalManifest.finalizationStatus = "finalized";
+    finalManifest.releaseEvidenceCommit = "b".repeat(40);
+    await writeFile(metadataPath, JSON.stringify(releaseMetadata), "utf8");
+    await writeFile(manifestPath, JSON.stringify(finalManifest), "utf8");
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/export-static.mjs", import.meta.url)),
+        `--metadata=${metadataPath}`,
+        `--final-manifest=${manifestPath}`,
+        `--output-dir=${outputPath}`,
+      ],
+      { encoding: "utf8", windowsHide: true },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const [html, script] = await Promise.all([
+      readFile(join(outputPath, "index.html"), "utf8"),
+      readFile(join(outputPath, "site.js"), "utf8"),
+    ]);
+    assert.match(html, /下载易云盈正式版/);
+    assert.match(html, /已正式发布/);
+    for (const [index, release] of releaseMetadata.releases.entries()) {
+      assert.ok(html.includes(release.shortName), `${release.id} formal role tab missing`);
+      assert.ok(script.includes(release.fileName), `${release.id} browser projection missing`);
+      assert.ok(script.includes(release.sha256), `${release.id} browser hash missing`);
+      if (index === 0) {
+        assert.ok(html.includes(release.fileName), "default formal filename missing");
+        assert.ok(html.includes(release.sha256), "default formal hash missing");
+        assert.ok(
+          html.includes(`/downloads/${releaseMetadata.versionName}/${release.fileName}`),
+          "default formal download href missing",
+        );
+      }
+    }
+    for (const asset of releaseMetadata.projectAssets) {
+      assert.ok(!html.includes(asset.fileName), `${asset.id} leaked to formal HTML`);
+      assert.ok(!script.includes(asset.fileName), `${asset.id} leaked to formal script`);
+    }
+    const identityHashes = { ...releaseMetadata.connectionIdentity };
+    delete identityHashes.apiBaseUrl;
+    for (const value of Object.values(identityHashes)) {
+      assert.ok(!html.includes(String(value)), "connection identity leaked to formal HTML");
+      assert.ok(!script.includes(String(value)), "connection identity leaked to formal script");
+    }
+    const validator = spawnSync(
+      "python",
+      [
+        "-c",
+        [
+          "import importlib.util,sys,types",
+          "from pathlib import Path",
+          "stub=types.ModuleType('paramiko')",
+          "stub.SSHClient=type('SSHClient',(),{})",
+          "stub.SFTPClient=type('SFTPClient',(),{})",
+          "stub.RejectPolicy=type('RejectPolicy',(),{})",
+          "sys.modules['paramiko']=stub",
+          "path=Path('scripts/deploy-static.py').resolve()",
+          "spec=importlib.util.spec_from_file_location('formal_export_validator',path)",
+          "module=importlib.util.module_from_spec(spec)",
+          "sys.modules[spec.name]=module",
+          "spec.loader.exec_module(module)",
+          "files=module.validate_site_tree(Path(sys.argv[1]),sys.argv[2],channel='Stable')",
+          "assert {item.relative for item in files} >= {'index.html','site.js','docs.js'}",
+        ].join(";"),
+        outputPath,
+        releaseMetadata.versionName,
+      ],
+      {
+        cwd: fileURLToPath(new URL("..", import.meta.url)),
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    assert.equal(validator.status, 0, validator.stderr || validator.stdout);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("formal public projection rejects immutable, identity and pending-evidence drift", () => {
+  const finalManifest = structuredClone(releaseMetadata);
+  delete finalManifest.pendingManifestSha256;
+  finalManifest.finalizationStatus = "finalized";
+  finalManifest.releaseEvidenceCommit = "b".repeat(40);
+  assert.equal(
+    createPublicReleaseProjection(releaseMetadata, {
+      ...finalManifest,
+      finalizationStatus: "pending",
+      releaseEvidenceCommit: null,
+    }),
+    null,
+  );
+  assert.doesNotThrow(() => createPublicReleaseProjection(releaseMetadata, finalManifest));
+
+  const immutableDrift = structuredClone(finalManifest);
+  immutableDrift.releaseNotes = ["unbound note"];
+  assert.throws(
+    () => createPublicReleaseProjection(releaseMetadata, immutableDrift),
+    /immutable field mismatch/,
+  );
+  const roleDrift = structuredClone(finalManifest);
+  roleDrift.releases[0].packageName = "example.wrong";
+  const matchingPendingDrift = structuredClone(releaseMetadata);
+  matchingPendingDrift.releases[0].packageName = "example.wrong";
+  assert.throws(
+    () => createPublicReleaseProjection(matchingPendingDrift, roleDrift),
+    /APK identity mismatch/,
+  );
+  const missingPendingHash = structuredClone(releaseMetadata);
+  delete missingPendingHash.pendingManifestSha256;
+  assert.throws(
+    () => createPublicReleaseProjection(missingPendingHash, finalManifest),
+    /canonical pending evidence/,
+  );
 });
 
 test("renders audited four-role and per-system API guides", async () => {
@@ -195,10 +343,17 @@ test("renders customer operation closures with safe no-script fallbacks", async 
     renderedHtml("/api-docs/"),
   ]);
 
-  for (const text of [
-    "分享官网", "APK 打开、安装与校验", "Get-FileHash", "shasum -a 256",
-    "安装未知应用", "不要转换成 EXE、ZIP", "下载失败",
-  ]) assert.ok(home.includes(text), `homepage operation guide missing: ${text}`);
+  assert.ok(home.includes("分享官网"), "homepage operation guide missing: 分享官网");
+  if (isFormalPublicRelease(releaseMetadata)) {
+    for (const text of [
+      "APK 打开、安装与校验", "Get-FileHash", "shasum -a 256",
+      "安装未知应用", "不要转换成 EXE、ZIP", "下载失败",
+    ]) assert.ok(home.includes(text), `homepage operation guide missing: ${text}`);
+  } else {
+    for (const forbidden of ["APK 打开、安装与校验", "data-release-file", 'class="file-verification"']) {
+      assert.ok(!home.includes(forbidden), `pending homepage leaked download guide: ${forbidden}`);
+    }
+  }
 
   for (const text of [
     "分享当前接口", "打印全部文档", "公开文档链接可访问，无需登录",
@@ -311,10 +466,11 @@ test("renders privacy and terms pages without invented contact details", async (
 });
 
 test("keeps full release metadata on the server and exports four public pages", async () => {
-  const [page, client, exporter, layout, manifest] = await Promise.all([
+  const [page, client, exporter, projection, layout, manifest] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/home-client.tsx", import.meta.url), "utf8"),
     readFile(new URL("../scripts/export-static.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/public-release-projection.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/site.webmanifest", import.meta.url), "utf8"),
   ]);
@@ -335,7 +491,8 @@ test("keeps full release metadata on the server and exports four public pages", 
   assert.match(page, /PUBLIC_RELEASE_IDS = \["user", "admin", "authorized", "owner"\]/);
   assert.doesNotMatch(client, /release-metadata\.json/);
   assert.doesNotMatch(client, /PROJECT_ASSETS|projectAssets/);
-  assert.match(exporter, /PUBLIC_RELEASE_IDS = \["user", "admin", "authorized", "owner"\]/);
+  assert.match(projection, /ROLE_ORDER = \["user", "admin", "authorized", "owner"\]/);
+  assert.match(exporter, /loadPublicReleaseProjection/);
   assert.match(exporter, /"\/api-docs\/", "\/privacy\/", "\/terms\/"/);
   assert.match(layout, /易云盈｜软件授权与运营平台/);
   assert.match(layout, /\/download-center\/logo\.svg/);
@@ -343,7 +500,7 @@ test("keeps full release metadata on the server and exports four public pages", 
   assert.match(manifest, /\/download-center\/logo\.svg/);
   assert.match(manifest, /易云盈应用运营平台/);
 
-  for (const source of [page, client, exporter, layout, manifest]) {
+  for (const source of [page, client, exporter, projection, layout, manifest]) {
     assert.ok(!source.includes("\uFFFD"), "source contains replacement characters");
   }
 });

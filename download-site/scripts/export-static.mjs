@@ -1,28 +1,44 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isFormalPublicRelease } from "../app/release-state.mjs";
+import { resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  loadPublicReleaseProjection,
+  PUBLIC_RELEASE_PROJECTION_KEY,
+} from "./public-release-projection.mjs";
 
 const BASE_PATH = "/download-center/";
-const OUTPUT_DIR = new URL("../static-dist/", import.meta.url);
+const DEFAULT_OUTPUT_DIR = new URL("../static-dist/", import.meta.url);
 const CLIENT_DIR = new URL("../dist/client/", import.meta.url);
-const releaseMetadata = JSON.parse(
-  await readFile(new URL("../release-metadata.json", import.meta.url), "utf8"),
-);
-const PUBLIC_RELEASE_IDS = ["user", "admin", "authorized", "owner"];
-const releases = PUBLIC_RELEASE_IDS.map((id) => {
-  const release = releaseMetadata.releases.find((candidate) => candidate.id === id);
-  if (!release) throw new Error(`Missing required public release metadata: ${id}`);
-  return release;
-});
-const isFormalRelease = isFormalPublicRelease({
-  ...releaseMetadata,
-  releases,
-});
 
-const browserScript = `(() => {
-  const releases = ${JSON.stringify(releases)};
-  const version = ${JSON.stringify(releaseMetadata.versionName)};
-  const isFormalRelease = ${JSON.stringify(isFormalRelease)};
-  const downloadRoot = ${JSON.stringify(releaseMetadata.downloadRootBase)} + "/" + version;
+function argument(name) {
+  const prefix = `--${name}=`;
+  return process.argv.slice(2).find((value) => value.startsWith(prefix))?.slice(prefix.length);
+}
+
+function directoryUrl(value) {
+  return pathToFileURL(resolve(value) + sep);
+}
+
+const metadataPath = argument("metadata") ??
+  new URL("../release-metadata.json", import.meta.url);
+const pendingMetadata = JSON.parse(await readFile(metadataPath, "utf8"));
+const finalManifestPath = argument("final-manifest") ??
+  new URL(`../../releases/${pendingMetadata.versionName}/release-manifest.json`, import.meta.url);
+const OUTPUT_DIR = argument("output-dir")
+  ? directoryUrl(argument("output-dir"))
+  : DEFAULT_OUTPUT_DIR;
+const { publicRelease } = await loadPublicReleaseProjection(
+  metadataPath,
+  finalManifestPath,
+);
+const isFormalRelease = publicRelease !== null;
+
+const formalBrowserScript = `(() => {
+  const publicRelease = ${JSON.stringify(publicRelease)};
+  const releases = publicRelease?.releases || [];
+  const downloadRoot = publicRelease
+    ? publicRelease.downloadRootBase + "/" + publicRelease.versionName
+    : "";
   const roleButtons = Array.from(document.querySelectorAll(".public-role-tabs button"));
   const releaseName = document.querySelector(".selected-product strong");
   const releaseDescription = document.querySelector(".selected-product p");
@@ -99,12 +115,14 @@ const browserScript = `(() => {
   }
 
   function currentDownloadUrl() {
+    if (!current) return "";
     return downloadRoot + "/" + current.fileName
       + "?sha256=" + current.sha256.slice(0, 16).toLowerCase();
   }
 
   function selectRelease(index) {
     current = releases[index] || releases[0];
+    if (!current) return;
     roleButtons.forEach((button, buttonIndex) => {
       const selected = buttonIndex === index;
       button.classList.toggle("is-active", selected);
@@ -131,10 +149,10 @@ const browserScript = `(() => {
   roleButtons.forEach((button, index) => {
     button.addEventListener("click", () => selectRelease(index));
   });
-  verificationButtons[0]?.addEventListener("click", () => copyText(current.fileName));
-  verificationButtons[1]?.addEventListener("click", () => copyText(current.sha256));
+  verificationButtons[0]?.addEventListener("click", () => current && copyText(current.fileName));
+  verificationButtons[1]?.addEventListener("click", () => current && copyText(current.sha256));
   downloadButton?.addEventListener("click", () => {
-    showToast(current.name + (isFormalRelease ? "已开始下载" : "候选包已开始下载"));
+    if (current) showToast(current.name + "已开始下载");
   });
   shareHomeButton?.addEventListener("click", shareHome);
   if (deviceNote) {
@@ -144,6 +162,69 @@ const browserScript = `(() => {
   }
   selectRelease(0);
 })();`;
+
+const pendingBrowserScript = `(() => {
+  const shareHomeButton = document.querySelector('[data-action="share-home"]');
+  const toast = document.querySelector(".toast");
+  let toastTimer = 0;
+
+  function showToast(message) {
+    if (!toast) return;
+    window.clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.classList.add("is-visible");
+    toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2400);
+  }
+
+  async function copyWebsite(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    if (!copied) throw new Error("copy_failed");
+  }
+
+  shareHomeButton?.addEventListener("click", async () => {
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+    try {
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: "易云盈｜软件授权与运营平台",
+            text: "易云盈正式官网与接口文档",
+            url: url.toString(),
+          });
+          showToast("系统分享面板已打开，官网链接可直接访问");
+          return;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            showToast("已取消分享，页面内容未更改");
+            return;
+          }
+        }
+      }
+      await copyWebsite(url.toString());
+      showToast("规范官网链接已复制，可直接粘贴分享");
+    } catch {
+      showToast("分享失败，请从地址栏手动复制官网链接");
+    }
+  });
+})();`;
+
+const browserScript = isFormalRelease
+  ? formalBrowserScript
+  : pendingBrowserScript;
 
 const docsBrowserScript = `(() => {
   const SAFE_BASE_URL = "https://api.example.com";
@@ -358,27 +439,33 @@ await cp(CLIENT_DIR, OUTPUT_DIR, {
   filter: (source) => !source.includes(`${String.raw`\.vite`}`),
 });
 
-let homeHtml = rewriteAssetPaths(await renderPage("/"));
-homeHtml = homeHtml.replace(
-  "</body>",
-  `<script src="${BASE_PATH}site.js" defer></script></body>`,
-);
-await writeFile(new URL("index.html", OUTPUT_DIR), homeHtml, "utf8");
-await writeFile(new URL("site.js", OUTPUT_DIR), browserScript, "utf8");
-
-for (const pathname of ["/api-docs/", "/privacy/", "/terms/"]) {
-  const pageDirectory = new URL(pathname.slice(1), OUTPUT_DIR);
-  await mkdir(pageDirectory, { recursive: true });
-  let pageHtml = rewriteAssetPaths(await renderPage(pathname));
-  if (pathname === "/api-docs/") {
-    pageHtml = pageHtml.replace(
-      "</body>",
-      `<script src="${BASE_PATH}docs.js" defer></script></body>`,
-    );
-  }
-  await writeFile(new URL("index.html", pageDirectory), pageHtml, "utf8");
+if (publicRelease) {
+  globalThis[PUBLIC_RELEASE_PROJECTION_KEY] = publicRelease;
 }
+try {
+  let homeHtml = rewriteAssetPaths(await renderPage("/"));
+  homeHtml = homeHtml.replace(
+    "</body>",
+    `<script src="${BASE_PATH}site.js" defer></script></body>`,
+  );
+  await writeFile(new URL("index.html", OUTPUT_DIR), homeHtml, "utf8");
+  await writeFile(new URL("site.js", OUTPUT_DIR), browserScript, "utf8");
 
-await writeFile(new URL("docs.js", OUTPUT_DIR), docsBrowserScript, "utf8");
+  for (const pathname of ["/api-docs/", "/privacy/", "/terms/"]) {
+    const pageDirectory = new URL(pathname.slice(1), OUTPUT_DIR);
+    await mkdir(pageDirectory, { recursive: true });
+    let pageHtml = rewriteAssetPaths(await renderPage(pathname));
+    if (pathname === "/api-docs/") {
+      pageHtml = pageHtml.replace(
+        "</body>",
+        `<script src="${BASE_PATH}docs.js" defer></script></body>`,
+      );
+    }
+    await writeFile(new URL("index.html", pageDirectory), pageHtml, "utf8");
+  }
+  await writeFile(new URL("docs.js", OUTPUT_DIR), docsBrowserScript, "utf8");
+} finally {
+  delete globalThis[PUBLIC_RELEASE_PROJECTION_KEY];
+}
 
 console.log(`Static official site exported to ${OUTPUT_DIR.pathname}`);

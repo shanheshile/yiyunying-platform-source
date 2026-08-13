@@ -144,8 +144,12 @@ $required = @(
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
     'tools\tests\test_device_upgrade_gate.py',
+    'tools\tests\test_download_audience_separation.py',
+    'tools\tests\test_internal_download_server.py',
     'tools\tests\test_download_site_atomic_publish.py',
+    'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_release_evidence_chain.py',
+    '..\download-site\scripts\deploy-site-security-remediation.py',
     'tools\migrate-catalog-private-files.php',
     'tools\verify-catalog-migration-report.php',
     'tools\generate-requirement-verification.php',
@@ -235,7 +239,11 @@ $pythonFiles = @(
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
     'tools\tests\test_device_upgrade_gate.py',
+    'tools\tests\test_download_audience_separation.py',
+    'tools\tests\test_internal_download_server.py',
     'tools\tests\test_download_site_atomic_publish.py',
+    'tools\tests\test_download_site_security_remediation.py',
+    '..\download-site\scripts\deploy-site-security-remediation.py',
     'tools\tests\test_release_evidence_chain.py'
 )
 & $python.Source -W error -m py_compile @($pythonFiles | ForEach-Object { Join-Path $root $_ })
@@ -247,7 +255,10 @@ foreach ($testFile in @(
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
     'tools\tests\test_device_upgrade_gate.py',
+    'tools\tests\test_download_audience_separation.py',
+    'tools\tests\test_internal_download_server.py',
     'tools\tests\test_download_site_atomic_publish.py',
+    'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_release_evidence_chain.py'
 )) {
     $testPath = Join-Path $root $testFile

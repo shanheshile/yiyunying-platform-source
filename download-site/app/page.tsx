@@ -1,4 +1,5 @@
 import Home, { type PublicReleaseMetadata } from "./home-client";
+import { isFormalPublicRelease } from "./release-state.mjs";
 import releaseMetadata from "../release-metadata.json";
 
 const PUBLIC_RELEASE_IDS = ["user", "admin", "authorized", "owner"] as const;
@@ -12,7 +13,7 @@ const publicReleases = PUBLIC_RELEASE_IDS.map((id) => {
   return release;
 });
 
-const publicReleaseMetadata: PublicReleaseMetadata = {
+const candidateReleaseMetadata: PublicReleaseMetadata = {
   versionName: releaseMetadata.versionName,
   releaseDate: releaseMetadata.releaseDate,
   downloadRootBase: releaseMetadata.downloadRootBase,
@@ -42,5 +43,15 @@ const publicReleaseMetadata: PublicReleaseMetadata = {
 };
 
 export default function Page() {
+  const exportProjection = (
+    globalThis as typeof globalThis & {
+      __YIYUNYING_VALIDATED_PUBLIC_RELEASE_PROJECTION__?: PublicReleaseMetadata;
+    }
+  ).__YIYUNYING_VALIDATED_PUBLIC_RELEASE_PROJECTION__;
+  const publicReleaseMetadata = isFormalPublicRelease(exportProjection)
+    ? exportProjection ?? null
+    : isFormalPublicRelease(candidateReleaseMetadata)
+      ? candidateReleaseMetadata
+      : null;
   return <Home releaseMetadata={publicReleaseMetadata} />;
 }

@@ -246,6 +246,7 @@ class ReleaseFixture:
                 f'<img src="/download-center/logo.svg">{self.version}'
             ),
             "site.js": "document.documentElement.dataset.ready='true';",
+            "docs.js": "document.documentElement.dataset.docs='true';",
             "logo.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
             "api-docs/index.html": '<a href="/download-center/">home</a>',
             "privacy/index.html": '<a href="/download-center/">home</a>',
@@ -298,32 +299,20 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
             self.fixture.repository,
         )
 
-    def test_complete_finalized_release_closes_eight_artifact_loop(self) -> None:
-        artifacts, manifest = self.load()
-        self.assertEqual(len(artifacts), 8)
-        self.assertEqual(len({item.name for item in artifacts}), 8)
-        self.assertEqual(manifest["releaseEvidenceCommit"], "b" * 40)
-        self.assertEqual(
-            {item.name for item in artifacts[:4]}, set(self.fixture.apk_names)
-        )
-        self.assertEqual(
-            {item.name for item in artifacts[4:]},
-            set(self.fixture.project_names.values()),
-        )
+    def test_complete_finalized_debug_release_is_rejected_from_public_deploy(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "only accepts Stable"):
+            self.load()
 
-    def test_http_requires_explicit_debug_only_dual_confirmation(self) -> None:
-        MODULE.validate_public_transport(self.fixture.manifest, False, "")
+    def test_debug_transport_is_rejected_even_with_legacy_confirmation(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "only accepts Stable"):
+            MODULE.validate_public_transport(self.fixture.manifest, False, "")
         insecure = copy.deepcopy(self.fixture.manifest)
         insecure["connectionIdentity"]["apiBaseUrl"] = "http://downloads.example.test/"
-        with self.assertRaisesRegex(RuntimeError, "dual confirmation"):
+        with self.assertRaisesRegex(RuntimeError, "only accepts Stable"):
             MODULE.validate_public_transport(insecure, False, "")
-        with self.assertRaisesRegex(RuntimeError, "dual confirmation"):
+        with self.assertRaisesRegex(RuntimeError, "only accepts Stable"):
             MODULE.validate_public_transport(insecure, True, "wrong-confirmation")
-        MODULE.validate_public_transport(
-            insecure, True, MODULE.DEBUG_HTTP_CONFIRMATION
-        )
-        insecure["releases"][0]["packageName"] = "example.owner"
-        with self.assertRaisesRegex(RuntimeError, "non-production Debug"):
+        with self.assertRaisesRegex(RuntimeError, "only accepts Stable"):
             MODULE.validate_public_transport(
                 insecure, True, MODULE.DEBUG_HTTP_CONFIRMATION
             )
@@ -410,7 +399,29 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
                 manifest=self.fixture.manifest,
             )
 
+    def test_final_manifest_pending_metadata_and_public_site_close_one_loop(self) -> None:
+        self.fixture.make_stable()
+        self.fixture.write_stable_site()
+        artifacts, manifest = self.load()
+        site_files = MODULE.validate_site_tree(
+            self.fixture.site_dir,
+            self.fixture.version,
+            channel="Stable",
+            manifest=manifest,
+        )
+        self.assertEqual(len(artifacts), 4)
+        self.assertEqual(
+            {artifact.name for artifact in artifacts},
+            set(self.fixture.apk_names),
+        )
+        self.assertIn("index.html", {item.relative for item in site_files})
+        self.assertIn("site.js", {item.relative for item in site_files})
+        self.assertIn("docs.js", {item.relative for item in site_files})
+        self.assertEqual(self.fixture.metadata["finalizationStatus"], "pending")
+        self.assertEqual(manifest["finalizationStatus"], "finalized")
+
     def test_pending_or_same_commit_manifest_is_rejected(self) -> None:
+        self.fixture.make_stable()
         self.fixture.manifest["finalizationStatus"] = "pending"
         self.fixture.rewrite_manifest()
         with self.assertRaisesRegex(RuntimeError, "finalized"):
@@ -423,18 +434,21 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
             self.load()
 
     def test_metadata_must_exactly_match_four_apk_manifest_entries(self) -> None:
+        self.fixture.make_stable()
         self.fixture.metadata["releases"][0]["sha256"] = "6" * 64
         self.fixture.rewrite_metadata()
         with self.assertRaisesRegex(RuntimeError, "exactly match"):
             self.load()
 
     def test_connection_identity_and_identity_bytes_are_bound(self) -> None:
+        self.fixture.make_stable()
         self.fixture.metadata["connectionIdentity"]["appKeySha256"] = "7" * 64
         self.fixture.rewrite_metadata()
         with self.assertRaisesRegex(RuntimeError, "connectionIdentity"):
             self.load()
 
         self.fixture = ReleaseFixture(Path(self.temporary.name) / "second")
+        self.fixture.make_stable()
         identity_path = (
             self.fixture.repository / "backend" / "config" / "release-identity.json"
         )
@@ -443,12 +457,14 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
             self.load()
 
     def test_project_manifest_binds_final_manifest_and_all_three_assets(self) -> None:
+        self.fixture.make_stable()
         self.fixture.project_manifest["releaseManifestSha256"] = "8" * 64
         self.fixture.rewrite_project_manifest()
         with self.assertRaisesRegex(RuntimeError, "releaseManifestSha256"):
             self.load()
 
         self.fixture = ReleaseFixture(Path(self.temporary.name) / "second")
+        self.fixture.make_stable()
         self.fixture.project_manifest["assets"].pop()
         self.fixture.rewrite_project_manifest()
         with self.assertRaisesRegex(RuntimeError, "exactly source"):

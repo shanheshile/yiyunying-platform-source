@@ -10,7 +10,7 @@
                     "build":  "vinext build",
                     "export:static":  "vinext build \u0026\u0026 node scripts/export-static.mjs",
                     "start":  "vinext start",
-                    "test":  "vinext build \u0026\u0026 node --test tests/rendered-html.test.mjs",
+                    "test":  "vinext build \u0026\u0026 node --test tests/*.test.mjs",
                     "lint":  "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern static-dist",
                     "db:generate":  "drizzle-kit generate"
                 },

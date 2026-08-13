@@ -58,6 +58,7 @@ IMMUTABLE_METADATA_FIELDS = (
 STABLE_SITE_FILES = {
     "index.html",
     "site.js",
+    "docs.js",
     "site.webmanifest",
     "logo.svg",
     "og-card.png",
@@ -244,6 +245,8 @@ def validate_public_transport(
     insecure_http_confirmation: str,
 ) -> None:
     channel = release_channel(manifest)
+    if channel != "Stable":
+        raise RuntimeError("Public deployment only accepts Stable releases")
     api_base_url = str(manifest["connectionIdentity"]["apiBaseUrl"])
     scheme = urlsplit(api_base_url).scheme
     releases = manifest.get("releases")
@@ -255,23 +258,10 @@ def validate_public_transport(
         for entry in releases
     )
 
-    if channel == "Stable":
-        if scheme != "https":
-            raise RuntimeError("Stable publication requires an HTTPS API base URL")
-        if debug_only:
-            raise RuntimeError("Stable publication may not contain Debug package identities")
-        return
-    if scheme == "https":
-        return
-    if (
-        not allow_insecure_http_debug
-        or insecure_http_confirmation != DEBUG_HTTP_CONFIRMATION
-        or not debug_only
-    ):
-        raise RuntimeError(
-            "HTTP publication is allowed only for the complete non-production Debug set "
-            "with explicit dual confirmation"
-        )
+    if scheme != "https":
+        raise RuntimeError("Stable publication requires an HTTPS API base URL")
+    if debug_only:
+        raise RuntimeError("Stable publication may not contain Debug package identities")
 
 
 def validate_remote_root(value: str) -> str:
@@ -311,11 +301,11 @@ def stable_site_file_allowed(relative: str) -> bool:
 def validate_site_tree(
     site_dir: Path,
     version: str,
-    channel: str = "Debug",
+    channel: str = "Stable",
     manifest: dict | None = None,
 ) -> list[SiteFile]:
-    if channel not in RELEASE_CHANNELS:
-        raise RuntimeError("Download site channel must be Debug or Stable")
+    if channel != "Stable":
+        raise RuntimeError("Public deployment only accepts Stable releases")
     index_path = site_dir / "index.html"
     if not index_path.is_file() or index_path.is_symlink():
         raise RuntimeError("Download site must contain a regular index.html")
@@ -342,20 +332,17 @@ def validate_site_tree(
             raise RuntimeError(f"Download site contains a non-regular entry: {path}")
         relative = path.relative_to(site_dir).as_posix()
         lower = relative.lower()
-        if channel == "Stable" and (
+        if (
             path.suffix.lower() in STABLE_FORBIDDEN_SUFFIXES
             or any(marker in lower for marker in forbidden_markers)
         ):
             raise RuntimeError(f"Stable site contains a forbidden public file: {relative}")
-        if channel == "Debug" or stable_site_file_allowed(relative):
+        if stable_site_file_allowed(relative):
             discovered.append(
                 SiteFile(relative, path, sha256(path), path.stat().st_size)
             )
     if not discovered:
         raise RuntimeError("Download site is empty")
-    if channel == "Debug":
-        return discovered
-
     selected = {item.relative: item for item in discovered}
     missing = sorted(STABLE_SITE_FILES - set(selected))
     if missing:
@@ -365,8 +352,15 @@ def validate_site_tree(
         for relative in selected
     ):
         raise RuntimeError("Stable site must contain its content-hashed stylesheet")
-    if png_dimensions(site_dir / "og-card.png") != (1200, 630):
-        raise RuntimeError("Stable og-card.png must be exactly 1200x630")
+    og_width, og_height = png_dimensions(site_dir / "og-card.png")
+    if (
+        og_width < 1200
+        or og_height < 630
+        or abs((og_width * 630) - (og_height * 1200)) >= og_width
+    ):
+        raise RuntimeError(
+            "Stable og-card.png must preserve the 1200x630 social-card aspect ratio"
+        )
 
     manifest_document = read_json(
         site_dir / "site.webmanifest", "stable site web manifest"
@@ -464,6 +458,9 @@ def load_release_files(
     manifest = read_json(manifest_path, "release manifest")
     if manifest.get("schemaVersion") != 4:
         raise RuntimeError("Release manifest schemaVersion must be 4")
+    channel = release_channel(manifest)
+    if channel != "Stable":
+        raise RuntimeError("Public deployment only accepts Stable releases")
     if manifest.get("finalizationStatus") != "finalized":
         raise RuntimeError("Release manifest must be finalized")
     if str(manifest.get("versionName")) != version or int(manifest.get("versionCode", 0)) < 1:
@@ -471,7 +468,6 @@ def load_release_files(
     if manifest.get("downloadRootBase") != "/downloads":
         raise RuntimeError("Release manifest downloadRootBase must be /downloads")
 
-    channel = release_channel(manifest)
     build_commit = require_commit(manifest.get("buildSourceCommit"), "buildSourceCommit")
     evidence_commit = require_commit(manifest.get("releaseEvidenceCommit"), "releaseEvidenceCommit")
     if build_commit == evidence_commit:
@@ -691,23 +687,17 @@ def load_release_files(
 
     if len(project_artifacts) != 4 or len({item.name for item in project_artifacts}) != 4:
         raise RuntimeError("Expected four finalized project artifacts")
-    if channel == "Stable":
-        public_artifacts = [
-            apk_by_id[release_id]
-            for release_id in ("user", "admin", "authorized", "owner")
-        ]
-        if len(public_artifacts) != 4 or any(
-            marker in artifact.name.lower()
-            for artifact in public_artifacts
-            for marker in ("source", "bundle", "delivery", "manifest")
-        ):
-            raise RuntimeError("Stable public artifact whitelist is invalid")
-        return public_artifacts, manifest
-
-    artifacts = apk_artifacts + project_artifacts
-    if len(artifacts) != 8 or len({item.name for item in artifacts}) != 8:
-        raise RuntimeError("Expected four APKs and four finalized project artifacts")
-    return artifacts, manifest
+    public_artifacts = [
+        apk_by_id[release_id]
+        for release_id in ("user", "admin", "authorized", "owner")
+    ]
+    if len(public_artifacts) != 4 or any(
+        marker in artifact.name.lower()
+        for artifact in public_artifacts
+        for marker in ("debug", "source", "bundle", "delivery", "manifest")
+    ):
+        raise RuntimeError("Stable public artifact whitelist is invalid")
+    return public_artifacts, manifest
 
 
 def run_local(command: list[str], label: str) -> str:

@@ -31,10 +31,8 @@ import {
   UserCheck,
   Users,
   UsersRound,
-  Wrench,
 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { isFormalPublicRelease } from "./release-state.mjs";
 
 type PublicRelease = {
   id: "user" | "admin" | "authorized" | "owner";
@@ -164,14 +162,16 @@ async function shareOfficialWebsite(onDone: (message: string) => void) {
 export default function Home({
   releaseMetadata,
 }: {
-  releaseMetadata: PublicReleaseMetadata;
+  releaseMetadata: PublicReleaseMetadata | null;
 }) {
-  const VERSION = releaseMetadata.versionName;
-  const RELEASE_DATE = releaseMetadata.releaseDate;
-  const DOWNLOAD_ROOT = releaseMetadata.downloadRootBase + "/" + VERSION;
-  const PUBLIC_RELEASES = releaseMetadata.releases;
-  const IS_FORMAL_RELEASE = isFormalPublicRelease(releaseMetadata);
-  const RELEASE_NOTES = releaseMetadata.releaseNotes;
+  const VERSION = releaseMetadata?.versionName ?? "";
+  const RELEASE_DATE = releaseMetadata?.releaseDate ?? "";
+  const DOWNLOAD_ROOT = releaseMetadata
+    ? releaseMetadata.downloadRootBase + "/" + VERSION
+    : "";
+  const PUBLIC_RELEASES = releaseMetadata?.releases ?? [];
+  const IS_FORMAL_RELEASE = releaseMetadata !== null;
+  const RELEASE_NOTES = releaseMetadata?.releaseNotes ?? [];
   const [selectedId, setSelectedId] = useState<PublicRelease["id"]>("user");
   const [toast, setToast] = useState("");
   const isAndroid = useSyncExternalStore(
@@ -190,22 +190,13 @@ export default function Home({
     PUBLIC_RELEASES.find((release) => release.id === selectedId) ??
     PUBLIC_RELEASES[0];
 
-  if (!selected) {
-    return (
-      <main className="release-unavailable">
-        <ShieldCheck aria-hidden="true" />
-        <h1>公开版本正在准备</h1>
-        <p>四个角色客户端的发布信息尚未就绪，请稍后再试。</p>
-      </main>
-    );
-  }
-
-  const downloadUrl =
-    DOWNLOAD_ROOT +
-    "/" +
-    selected.fileName +
-    "?sha256=" +
-    selected.sha256.slice(0, 16).toLowerCase();
+  const downloadUrl = selected
+    ? DOWNLOAD_ROOT +
+      "/" +
+      selected.fileName +
+      "?sha256=" +
+      selected.sha256.slice(0, 16).toLowerCase()
+    : "";
 
   return (
     <main id="top">
@@ -243,7 +234,7 @@ export default function Home({
               <div className="hero-actions">
                 <a className="primary-action" href="#download">
                   <Download size={19} aria-hidden="true" />
-                  {IS_FORMAL_RELEASE ? "下载正式版" : "查看发布候选"}
+                  {IS_FORMAL_RELEASE ? "下载正式版" : "查看正式版状态"}
                 </a>
                 <a className="secondary-action" href={API_DOCS_URL} target="_blank" rel="noreferrer">
                   <Code2 size={19} aria-hidden="true" />接口文档
@@ -440,20 +431,21 @@ export default function Home({
         <section className="download-section" id="download">
           <div className="section-heading centered download-heading">
             <p>OFFICIAL CLIENTS</p>
-            <h2>{IS_FORMAL_RELEASE ? "下载易云盈正式版" : "易云盈发布候选"}</h2>
+            <h2>{IS_FORMAL_RELEASE ? "下载易云盈正式版" : "易云盈正式版准备中"}</h2>
             <span>
               {IS_FORMAL_RELEASE
                 ? "官网提供用户端、管理员端、授权代理端和买断总控端，请严格按已开通账号角色选择。"
-                : "当前构建尚在发布验证阶段，仅供闭环测试；完成签名、HTTPS 与发布校验后将自动切换为正式发布。"}
+                : "平台功能介绍与接口文档已开放；客户端下载将在完成正式发布验收后开放。"}
             </span>
           </div>
 
+          {IS_FORMAL_RELEASE && selected ? <>
           <div className="download-shell">
             <div className="release-summary">
               <div>
-                <span className={"release-badge " + (IS_FORMAL_RELEASE ? "is-formal" : "is-candidate")}>
-                  {IS_FORMAL_RELEASE ? <BadgeCheck aria-hidden="true" /> : <Wrench aria-hidden="true" />}
-                  {IS_FORMAL_RELEASE ? "已正式发布" : "发布候选 · 验证中"}
+                <span className="release-badge is-formal">
+                  <BadgeCheck aria-hidden="true" />
+                  已正式发布
                 </span>
                 <h3>易云盈 v{VERSION}</h3>
                 <p>
@@ -491,14 +483,12 @@ export default function Home({
                 download={selected.fileName}
                 onClick={() =>
                   setToast(
-                    IS_FORMAL_RELEASE
-                      ? selected.name + "已开始下载"
-                      : selected.name + "候选包已开始下载",
+                    selected.name + "已开始下载",
                   )
                 }
               >
                 <Download size={21} aria-hidden="true" />
-                {IS_FORMAL_RELEASE ? "下载 Android 安装包" : "下载候选包（仅验证）"}
+                下载 Android 安装包
                 <span>{selected.size}</span>
               </a>
 
@@ -555,6 +545,14 @@ export default function Home({
               ))}
             </ul>
           </div>
+          </> : (
+            <div className="download-shell release-unavailable" aria-live="polite">
+              <ShieldCheck aria-hidden="true" />
+              <h3>正式版尚未开放</h3>
+              <p>当前页面不会公开候选版本、安装包名称、校验值或下载地址。请先浏览完整功能介绍与接口文档，正式版通过验收后将在这里开放。</p>
+              <a className="secondary-action" href={API_DOCS_URL}>查看接口文档</a>
+            </div>
+          )}
         </section>
 
         <section className="faq-section" aria-labelledby="faq-title">
