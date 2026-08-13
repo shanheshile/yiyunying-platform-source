@@ -542,11 +542,13 @@ def http_status(request: Request, expected: set[int]) -> tuple[int, object, byte
 def verify_public_downloads(
     origin: str, artifacts: list[ApkArtifact], secret_hex: str
 ) -> None:
-    expires = int(time.time()) + 300
-    etag_examples: dict[str, tuple[ApkArtifact, str, str]] = {}
+    def fresh_url(path: str) -> str:
+        expires = int(time.time()) + 300
+        return f"{origin}{path}?{signed_query(secret_hex, expires, path)}"
+
+    etag_examples: dict[str, tuple[ApkArtifact, str]] = {}
     for artifact in artifacts:
-        query = signed_query(secret_hex, expires, artifact.public_path)
-        url = f"{origin}{artifact.public_path}?{query}"
+        url = fresh_url(artifact.public_path)
         _, headers, body = http_status(Request(url, method="HEAD"), {200})
         if body:
             raise RuntimeError("HEAD verification unexpectedly returned a body")
@@ -561,21 +563,22 @@ def verify_public_downloads(
         etag = headers.get("ETag", "")
         if not etag:
             raise RuntimeError("HEAD verification lacks ETag")
-        etag_examples.setdefault(artifact.track, (artifact, url, etag))
+        etag_examples.setdefault(artifact.track, (artifact, etag))
 
-    for artifact, url, etag in etag_examples.values():
+    for artifact, etag in etag_examples.values():
         _, headers, body = http_status(
-            Request(url, headers={"Range": "bytes=0-63"}, method="GET"), {206}
+            Request(fresh_url(artifact.public_path), headers={"Range": "bytes=0-63"}, method="GET"), {206}
         )
         if len(body) != 64 or headers.get("Content-Range", "").split("/")[0] != "bytes 0-63":
             raise RuntimeError("Range verification failed")
-        http_status(Request(url, headers={"If-None-Match": etag}, method="GET"), {304})
+        http_status(Request(fresh_url(artifact.public_path), headers={"If-None-Match": etag}, method="GET"), {304})
         http_status(
-            Request(url, headers={"Range": f"bytes={artifact.size}-"}, method="GET"),
+            Request(fresh_url(artifact.public_path), headers={"Range": f"bytes={artifact.size}-"}, method="GET"),
             {416},
         )
-        http_status(Request(url, data=b"", method="POST"), {403})
+        http_status(Request(fresh_url(artifact.public_path), data=b"", method="POST"), {403})
 
+        expires = int(time.time()) + 300
         bad_url = f"{origin}{artifact.public_path}?expires={expires}&sig={'A' * 43}"
         http_status(Request(bad_url, method="HEAD"), {404})
         expired = int(time.time()) - 1
@@ -586,7 +589,7 @@ def verify_public_downloads(
         http_status(Request(expired_url, method="HEAD"), {410})
 
     invalid_path = "/__internal-apks/candidate/1.0.0/not-an-allowed-role.apk"
-    invalid_url = f"{origin}{invalid_path}?{signed_query(secret_hex, expires, invalid_path)}"
+    invalid_url = fresh_url(invalid_path)
     http_status(Request(invalid_url, method="HEAD"), {404})
 
 
@@ -710,7 +713,9 @@ def deploy(
 
         directories = (
             stage,
+            posixpath.join(stage, "debug"),
             posixpath.join(stage, "debug/2.7.15"),
+            posixpath.join(stage, "candidate"),
             posixpath.join(stage, "candidate/1.0.0"),
             posixpath.join(stage, "_auth"),
         )

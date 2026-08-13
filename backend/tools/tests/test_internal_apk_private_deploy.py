@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import unittest
+import urllib.parse
 from unittest import mock
 
 
@@ -131,6 +132,64 @@ class PrivateDownloadContractTests(unittest.TestCase):
 
 
 class DeploymentSafetyTests(unittest.TestCase):
+    def test_nested_staging_parents_precede_version_directories(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        debug_parent = 'posixpath.join(stage, "debug"),'
+        debug_version = 'posixpath.join(stage, "debug/2.7.15"),'
+        candidate_parent = 'posixpath.join(stage, "candidate"),'
+        candidate_version = 'posixpath.join(stage, "candidate/1.0.0"),'
+        self.assertLess(source.index(debug_parent), source.index(debug_version))
+        self.assertLess(source.index(candidate_parent), source.index(candidate_version))
+
+    def test_public_probe_refreshes_short_link_before_every_request(self) -> None:
+        secret = "ab" * 32
+        clock = [1_800_000_000]
+        artifacts = [
+            MODULE.ApkArtifact(
+                track=track,
+                role="user",
+                version="1.0.0",
+                version_code=63,
+                file_name=f"{track}.apk",
+                package_name=f"example.{track}",
+                version_name=f"1.0.0-{track}",
+                signer_sha256="cd" * 32,
+                path=ROOT / f"{track}.apk",
+                size=1234,
+                sha256="ef" * 32,
+            )
+            for track in ("debug", "candidate")
+        ]
+
+        def fake_http(request, expected):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query)
+            expires = int(query["expires"][0])
+            if expected == {410}:
+                self.assertLess(expires, clock[0])
+            else:
+                self.assertGreater(expires, clock[0])
+            status = next(iter(expected))
+            headers = {}
+            body = b""
+            if status == 200:
+                headers = {
+                    "Content-Length": "1234",
+                    "Content-Type": "application/vnd.android.package-archive",
+                    "Cache-Control": "private, no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "ETag": '"fixture-etag"',
+                }
+            elif status == 206:
+                headers = {"Content-Range": "bytes 0-63/1234"}
+                body = b"x" * 64
+            clock[0] += 301
+            return status, headers, body
+
+        with mock.patch.object(MODULE.time, "time", side_effect=lambda: clock[0]), mock.patch.object(
+            MODULE, "http_status", side_effect=fake_http
+        ):
+            MODULE.verify_public_downloads("https://example.test", artifacts, secret)
+
     def args(self, **overrides) -> argparse.Namespace:
         values = dict(
             aapt2=None,
