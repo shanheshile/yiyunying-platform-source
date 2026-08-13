@@ -13,6 +13,7 @@ $runRoot = $projectRoot
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw 'JAVA_HOME is not set. Pass -JavaHome or configure JDK 17 first.'
 }
+$JavaHome = $JavaHome.TrimEnd([char[]]@('\', '/'))
 
 if ($projectRoot -match '[^\x00-\x7F]') {
     $runRoot = $null

@@ -90,6 +90,39 @@ def run(
 
 
 class ReleaseEvidenceChainTest(unittest.TestCase):
+    def test_java_home_is_normalized_before_native_process_use(self) -> None:
+        marker = "$JavaHome = $JavaHome.TrimEnd([char[]]@('\\', '/'))"
+
+        release_source = read(RELEASE_PATH)
+        release_normalize = release_source.index(marker)
+        self.assertLess(
+            release_source.index("if ([string]::IsNullOrWhiteSpace($JavaHome))"),
+            release_normalize,
+        )
+        self.assertLess(
+            release_normalize,
+            release_source.index("Test-Path -LiteralPath $JavaHome", release_normalize),
+        )
+        self.assertLess(
+            release_normalize,
+            release_source.index("$env:JAVA_HOME = $JavaHome", release_normalize),
+        )
+        self.assertLess(
+            release_normalize,
+            release_source.index("-File $verifyScript -JavaHome $JavaHome", release_normalize),
+        )
+
+        verify_source = read(VERIFY_PATH)
+        verify_normalize = verify_source.index(marker)
+        self.assertLess(
+            verify_source.index("if ([string]::IsNullOrWhiteSpace($JavaHome))"),
+            verify_normalize,
+        )
+        self.assertLess(
+            verify_normalize,
+            verify_source.index("$env:JAVA_HOME = $JavaHome", verify_normalize),
+        )
+
     def test_stable_verify_reuses_existing_debug_tests_and_release_outputs(self) -> None:
         source = read(VERIFY_PATH)
         for marker in (

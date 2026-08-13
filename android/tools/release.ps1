@@ -641,6 +641,7 @@ $connectionIdentity = Read-ReleaseConnectionIdentity -ReleaseChannel $Channel
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw 'JAVA_HOME 未配置，请通过 -JavaHome 指定 JDK 17。'
 }
+$JavaHome = $JavaHome.TrimEnd([char[]]@('\', '/'))
 if (-not (Test-Path -LiteralPath $JavaHome)) {
     throw "JDK 路径不存在：$JavaHome"
 }
