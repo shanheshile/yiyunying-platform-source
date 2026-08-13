@@ -168,6 +168,11 @@ class DownloadAudienceSeparationTest(unittest.TestCase):
         self.assertIn("(?<release_version>", source)
         self.assertIn(r"\k<release_version>", source)
         self.assertIn("(?:-[0-9a-f]{24})?", source)
+        self.assertRegex(
+            source,
+            r'location\s+~\s+"\^/downloads/.+\{24\}.+\\k<release_version>.+\$"\s*\{',
+            "the regex must be quoted so Nginx does not parse {24} as a config block",
+        )
         self.assertIn("Lifecycle policies", source)
         self.assertIn("location = /downloads", source)
         self.assertIn("location /downloads/", source)
