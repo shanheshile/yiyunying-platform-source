@@ -11,6 +11,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
+require_once __DIR__ . '/catalog-public-upload-type.php';
 require $root . '/bootstrap.php';
 
 $reportArgument = cliOption($argv, '--report');
@@ -318,15 +319,20 @@ function assertNoPublicCatalogResidue(string $publicDirectory): void
         if ($entry->isLink()) throw new RuntimeException('公开目录存在符号链接或重解析入口');
         if ($entry->isDir()) continue;
         if (!$entry->isFile()) throw new RuntimeException('公开目录存在未知类型条目');
-        if ($underUploads && (strtolower(pathinfo($relative, PATHINFO_EXTENSION)) === 'svg'
-            || strtolower((string) (@mime_content_type($path) ?: '')) === 'image/svg+xml')) {
-            throw new RuntimeException('公开上传目录仍存在可执行 SVG 文件');
-        }
         $stat = @lstat($path);
         if (!is_array($stat) || (int) ($stat['nlink'] ?? 0) !== 1) {
             throw new RuntimeException('公开目录存在硬链接或无法验证的文件');
         }
         if ($relative === 'uploads/.gitkeep' && (int) ($stat['size'] ?? -1) === 0) continue;
+        if ($underUploads) {
+            $typeAssessment = catalogMigrationAssessPublicUploadFile($path);
+            if ($typeAssessment === 'svg') {
+                throw new RuntimeException('公开上传目录仍存在可执行 SVG 文件');
+            }
+            if ($typeAssessment !== 'safe') {
+                throw new RuntimeException('公开上传目录存在无法安全识别的文件类型');
+            }
+        }
         $hash = hash_file('sha256', $path);
         if (!is_string($hash) || $hash === '') throw new RuntimeException('公开文件无法校验');
         $batch[] = [

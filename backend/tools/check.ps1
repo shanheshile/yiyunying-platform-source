@@ -138,6 +138,7 @@ $required = @(
     'tools\test-upload-reference-write-toctou-contract.php',
     'tools\test-wallet-amount-regression.php',
     'tools\test-public-upload-svg-safety.php',
+    'tools\catalog-public-upload-type.php',
     'tools\test-resource-comment-management-contract.php',
     'tools\test-shop-goods-comment-management-contract.php',
     'tools\test-message-presentation.php',

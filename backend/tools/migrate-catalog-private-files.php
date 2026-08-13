@@ -10,6 +10,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
+require_once __DIR__ . '/catalog-public-upload-type.php';
 require $root . '/bootstrap.php';
 
 $apply = in_array('--apply', $argv, true);
@@ -735,12 +736,6 @@ function scanPublicCatalogResidue(string $publicDirectory, array &$summary): voi
             addIssue($summary, ['kind' => 'unknown_public_entry', 'path_sha256' => hash('sha256', $path)]);
             continue;
         }
-        if ($underUploads && (strtolower(pathinfo($relative, PATHINFO_EXTENSION)) === 'svg'
-            || strtolower((string) (@mime_content_type($path) ?: '')) === 'image/svg+xml')) {
-            $summary['unsafe_public_entries']++;
-            addIssue($summary, ['kind' => 'unsafe_public_svg', 'path_sha256' => hash('sha256', $relative)]);
-            continue;
-        }
         if ($relative === 'uploads/.gitkeep') {
             $placeholderStat = @lstat($path);
             if (is_array($placeholderStat) && (int) ($placeholderStat['size'] ?? -1) === 0
@@ -750,6 +745,17 @@ function scanPublicCatalogResidue(string $publicDirectory, array &$summary): voi
             $summary['unsafe_public_entries']++;
             addIssue($summary, ['kind' => 'invalid_upload_placeholder']);
             continue;
+        }
+        if ($underUploads) {
+            $typeAssessment = catalogMigrationAssessPublicUploadFile($path);
+            if ($typeAssessment !== 'safe') {
+                $summary['unsafe_public_entries']++;
+                addIssue($summary, [
+                    'kind' => $typeAssessment === 'svg' ? 'unsafe_public_svg' : 'unsafe_public_upload_type',
+                    'path_sha256' => hash('sha256', $relative),
+                ]);
+                continue;
+            }
         }
         $hash = hash_file('sha256', $path);
         if (!is_string($hash) || $hash === '') {
