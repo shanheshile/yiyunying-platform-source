@@ -535,7 +535,11 @@ def http_status(request: Request, expected: set[int]) -> tuple[int, object, byte
     except Exception as exc:
         raise RuntimeError(f"HTTPS verification transport failed: {type(exc).__name__}") from exc
     if status_code not in expected:
-        raise RuntimeError(f"HTTPS verification returned unexpected status {status_code}")
+        parsed = urlsplit(request.full_url)
+        raise RuntimeError(
+            "HTTPS verification returned unexpected status "
+            f"{status_code} for {request.get_method()} {parsed.path}; expected {sorted(expected)}"
+        )
     return status_code, headers, body
 
 
@@ -576,7 +580,7 @@ def verify_public_downloads(
             Request(fresh_url(artifact.public_path), headers={"Range": f"bytes={artifact.size}-"}, method="GET"),
             {416},
         )
-        http_status(Request(fresh_url(artifact.public_path), data=b"", method="POST"), {403})
+        http_status(Request(fresh_url(artifact.public_path), data=b"", method="POST"), {405})
 
         expires = int(time.time()) + 300
         bad_url = f"{origin}{artifact.public_path}?expires={expires}&sig={'A' * 43}"

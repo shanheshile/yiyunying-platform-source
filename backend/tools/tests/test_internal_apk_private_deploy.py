@@ -41,6 +41,8 @@ class PrivateDownloadContractTests(unittest.TestCase):
         self.assertEqual(2, rendered.count("auth_request /__internal-apks-auth;"))
         self.assertEqual(2, rendered.count("error_page 401 =404"))
         self.assertEqual(2, rendered.count("error_page 403 =410"))
+        self.assertEqual(2, rendered.count("if ($request_method !~ ^(GET|HEAD)$) { return 405; }"))
+        self.assertNotIn("limit_except", rendered)
         self.assertIn("fastcgi_pass unix:/tmp/php-cgi-82.sock;", rendered)
         self.assertIn("location = /__internal-apks-auth", rendered)
         self.assertIn("internal;", rendered)
