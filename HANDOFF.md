@@ -95,6 +95,18 @@
 
 解除方式只有两个：BIOS 开启虚拟化并重启后恢复 AVD，或连接真实 Android 调试设备。无论哪种方式，都必须先安装同角色 code 61 RC，再用 code 62 Stable 覆盖升级并记录包名、版本、签名连续、启动、登录、API、关键入口和数据保留。
 
+已新增 fail-closed 执行门禁 `android/tools/verify-device-upgrade.ps1`。它先离线核验 RC/Stable 的角色包名、versionName、code 61 → 62、非 debuggable、唯一 production signer 和 v2 签名，再对指定且唯一在线的 ADB serial 依次执行 `install -r`，回读 packageName/userId/dataDir，启动、停止并再次启动验证前台窗口。脚本不使用 `-d` 或卸载，也不输出设备序列号明文。离线假工具链 10/10 PASS；四角色真实 RC/Stable 的包与签名预检全部走通，并在 ADB 为空时按预期退出 1，未执行安装。
+
+设备就绪后四个角色分别执行一次，参数模板如下（RC 与 Stable 必须选择同一角色）：
+
+```powershell
+powershell -File android/tools/verify-device-upgrade.ps1 `
+  -Role <user|admin|authorized|owner> `
+  -Serial <adb-serial> `
+  -RcApk <code61-rc-apk> `
+  -StableApk <code62-stable-apk>
+```
+
 ## 7. 门禁解除后的固定顺序
 
 1. 完成 code 61 → code 62 真实设备升级闭环并保存证据。

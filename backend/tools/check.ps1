@@ -143,6 +143,7 @@ $required = @(
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py',
     'tools\migrate-catalog-private-files.php',
@@ -233,6 +234,7 @@ $pythonFiles = @(
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py'
 )
@@ -244,6 +246,7 @@ foreach ($testFile in @(
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py'
 )) {
