@@ -3,11 +3,23 @@
 
 from __future__ import annotations
 
+import importlib.util
+import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
-SOURCE = Path(__file__).with_name("deploy-ssh.py").read_text(encoding="utf-8")
+DEPLOY_PATH = Path(__file__).with_name("deploy-ssh.py")
+SOURCE = DEPLOY_PATH.read_text(encoding="utf-8")
+SPEC = importlib.util.spec_from_file_location("deploy_ssh_under_test", DEPLOY_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("Unable to load deploy-ssh.py for command construction tests")
+DEPLOY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(DEPLOY)
 
 
 class DeploySshSafetyContractTest(unittest.TestCase):
@@ -127,6 +139,84 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         migration = SOURCE.index('f"database-migration-{index}"')
         self.assertGreater(gate_closed, migration)
         self.assertLess(gate_closed, deploy)
+
+    def test_catalog_gate_php_and_data_round_trip_as_separate_shell_arguments(self) -> None:
+        php_bootstrap = (
+            "PHP_BIN=/www/server/php/82/bin/php; "
+            'if [ ! -x "$PHP_BIN" ]; then PHP_BIN=$(command -v php || true); fi; '
+            'test -n "$PHP_BIN"; '
+        )
+        cases = (
+            (("0", "false"), 29, "catalog-gate=false"),
+            (("1", "true"), 30, "catalog-gate=true"),
+        )
+        for accepted_values, failure_status, success_message in cases:
+            with self.subTest(success_message=success_message):
+                command = DEPLOY.catalog_gate_readback_command(
+                    "/srv/yiyunying backend",
+                    php_bootstrap,
+                    accepted_values,
+                    failure_status,
+                    success_message,
+                )
+                arguments = shlex.split(command, posix=True)
+                php_index = arguments.index("-r")
+                php_source = arguments[php_index + 1]
+                php_arguments = arguments[php_index + 2 :]
+
+                self.assertEqual(
+                    php_arguments,
+                    [
+                        "catalog_private_migration_ready",
+                        "bool",
+                        *accepted_values,
+                        str(failure_status),
+                        success_message,
+                    ],
+                )
+                self.assertNotIn("catalog_private_migration_ready", php_source)
+                self.assertNotIn("'", php_source)
+                self.assertIn("s.setting_key = ?", php_source)
+                self.assertIn("s.value_type <> ?", php_source)
+                self.assertIn("s.setting_value NOT IN (?, ?)", php_source)
+                self.assertIn(
+                    "[$argv[1], $argv[2], $argv[3], $argv[4]]",
+                    php_source,
+                )
+
+        with self.assertRaisesRegex(ValueError, "exactly two"):
+            DEPLOY.catalog_gate_readback_command(
+                "/srv/yiyunying",
+                php_bootstrap,
+                ("true",),
+                30,
+                "catalog-gate=true",
+            )
+
+    def test_catalog_gate_generated_php_parses_with_local_php(self) -> None:
+        php_executable = os.environ.get("PHP82_BIN") or shutil.which("php")
+        if php_executable is None:
+            self.skipTest("No local PHP executable; strict shell construction test still applies")
+
+        command = DEPLOY.catalog_gate_readback_command(
+            "/srv/yiyunying",
+            "",
+            ("0", "false"),
+            29,
+            "catalog-gate=false",
+        )
+        arguments = shlex.split(command, posix=True)
+        php_source = arguments[arguments.index("-r") + 1]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            php_file = Path(temporary_directory) / "catalog-gate-readback.php"
+            php_file.write_text("<?php\n" + php_source + "\n", encoding="utf-8")
+            result = subprocess.run(
+                [php_executable, "-l", str(php_file)],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_maintenance_can_stop_php_fpm_before_a_real_restart(self) -> None:
         self.assertIn("it may stop PHP-FPM", SOURCE)

@@ -17,9 +17,6 @@ import tarfile
 import time
 from urllib.parse import urlsplit
 
-import paramiko
-
-
 # These migrations form one release gate.  In particular, 63 moves catalog
 # files and must never be omitted or run outside the maintenance sequence.
 REQUIRED_RELEASE_MIGRATIONS = (
@@ -33,6 +30,46 @@ REQUIRED_RELEASE_MIGRATIONS = (
 
 def quote(value: str) -> str:
     return shlex.quote(value)
+
+
+def catalog_gate_readback_command(
+    remote_root: str,
+    php_bootstrap: str,
+    accepted_values: tuple[str, str],
+    failure_status: int,
+    success_message: str,
+) -> str:
+    """Build a shell-safe, prepared catalog-gate readback command."""
+    if len(accepted_values) != 2:
+        raise ValueError("accepted_values must contain exactly two values")
+    if not 1 <= failure_status <= 255:
+        raise ValueError("failure_status must be a non-zero shell exit status")
+
+    php_source = (
+        'require "bootstrap.php"; '
+        '$rows = Yiyunying\\Core\\Database::one('
+        '"SELECT COUNT(*) AS total FROM apps a LEFT JOIN app_settings s ON s.app_id = a.id '
+        'AND s.setting_key = ? WHERE a.deleted_at IS NULL AND (s.id IS NULL '
+        'OR s.value_type <> ? OR s.setting_value NOT IN (?, ?))", '
+        '[$argv[1], $argv[2], $argv[3], $argv[4]]); '
+        'if ((int) ($rows["total"] ?? -1) !== 0) exit((int) $argv[5]); '
+        'echo $argv[6];'
+    )
+    php_arguments = (
+        "catalog_private_migration_ready",
+        "bool",
+        *accepted_values,
+        str(failure_status),
+        success_message,
+    )
+    return (
+        f"cd {quote(remote_root)}; "
+        + php_bootstrap
+        + '"$PHP_BIN" -r '
+        + quote(php_source)
+        + " "
+        + " ".join(quote(argument) for argument in php_arguments)
+    )
 
 
 def dotenv_value(value: str) -> str:
@@ -149,6 +186,8 @@ def validate_release_archive(
 
 
 def main() -> int:
+    import paramiko
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=22)
@@ -500,18 +539,12 @@ def main() -> int:
 
             # Migration 63 closes this gate for every live app.  Refuse to
             # switch code until the live database independently reads it back.
-            catalog_gate_closed = (
-                f"cd {quote(args.remote_root)}; " + catalog_php
-                + "\"$PHP_BIN\" -r "
-                + quote(
-                    'require "bootstrap.php"; '
-                    '$rows = Yiyunying\\Core\\Database::one('
-                    '"SELECT COUNT(*) AS total FROM apps a LEFT JOIN app_settings s ON s.app_id = a.id '
-                    "AND s.setting_key = 'catalog_private_migration_ready' "
-                    "WHERE a.deleted_at IS NULL AND (s.id IS NULL OR s.value_type <> 'bool' "
-                    "OR s.setting_value NOT IN ('0', 'false'))"
-                    "); if ((int) ($rows['total'] ?? -1) !== 0) exit(29); echo \"catalog-gate=false\";"
-                )
+            catalog_gate_closed = catalog_gate_readback_command(
+                args.remote_root,
+                catalog_php,
+                ("0", "false"),
+                29,
+                "catalog-gate=false",
             )
             run(client, catalog_gate_closed, "catalog-gate-closed-readback")
 
@@ -566,17 +599,12 @@ def main() -> int:
                 f"--release-version {quote(args.release_version)} --activate --maintenance-confirmed"
             )
             run(client, catalog_verify, "catalog-verify-activate")
-            catalog_gate_readback = (
-                f"cd {quote(args.remote_root)}; " + catalog_php
-                + "\"$PHP_BIN\" -r "
-                + quote(
-                    'require "bootstrap.php"; '
-                    '$rows = Yiyunying\\Core\\Database::one('
-                    '"SELECT COUNT(*) AS total FROM apps a LEFT JOIN app_settings s ON s.app_id = a.id '
-                    "AND s.setting_key = 'catalog_private_migration_ready' "
-                    "WHERE a.deleted_at IS NULL AND (s.id IS NULL OR s.setting_value NOT IN ('1', 'true') OR s.value_type <> 'bool')"
-                    "); if ((int) ($rows['total'] ?? -1) !== 0) exit(30); echo \"catalog-gate=true\";"
-                )
+            catalog_gate_readback = catalog_gate_readback_command(
+                args.remote_root,
+                catalog_php,
+                ("1", "true"),
+                30,
+                "catalog-gate=true",
             )
             run(client, catalog_gate_readback, "catalog-gate-readback")
 
