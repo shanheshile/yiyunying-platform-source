@@ -33,6 +33,13 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+
+class AndroidToolDiscoveryContractTest(unittest.TestCase):
+    def test_publisher_defaults_to_aapt2_for_unicode_safe_apk_paths(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('resolve_android_tool("aapt2", args.aapt)', source)
+        self.assertNotIn('resolve_android_tool("aapt", args.aapt)', source)
+
 SIGNER = "A" * 64
 OLD_SIGNER = "B" * 64
 EDITION_DATA = {

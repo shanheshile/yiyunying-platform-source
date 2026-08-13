@@ -61,7 +61,12 @@ class DeviceUpgradeGateStaticContractTest(unittest.TestCase):
                 self.source,
                 rf"{role}\s*=\s*@\{{\s*Package\s*=\s*'{re.escape(package)}';\s*Suffix\s*=\s*'{suffix}'\s*\}}",
             )
-        for marker in ("-ExpectedCode 61", "-ExpectedCode 62", "versionCode=62"):
+        for marker in (
+            "Assert-BaselineApkEvidence",
+            "-StableVersionCode $version.Code",
+            "-ExpectedCode $version.Code",
+            "VersionCode -ge $StableVersionCode",
+        ):
             self.assertIn(marker, self.source)
 
     def test_apk_checks_complete_before_any_device_install(self) -> None:
@@ -69,14 +74,14 @@ class DeviceUpgradeGateStaticContractTest(unittest.TestCase):
         ordered = (
             "Read-ApkEvidence -Path $RcApk",
             "Read-ApkEvidence -Path $StableApk",
-            "Assert-ApkEvidence -Evidence $rc",
+            "Assert-BaselineApkEvidence -Evidence $rc",
             "Assert-ApkEvidence -Evidence $stable",
             "Assert-DeviceOnline",
             "Install-ApkUpgradeOnly -Path $RcApk",
         )
         positions = [main.index(marker) for marker in ordered]
         self.assertEqual(sorted(positions), positions)
-        self.assertEqual(2, main.count("-RequireNotDebuggable"))
+        self.assertEqual(1, main.count("-RequireNotDebuggable"))
         for marker in (
             "stable_signer_sha256",
             "Verified using v2 scheme",
@@ -119,8 +124,8 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="device-upgrade-gate-")
         self.root = Path(self.temp.name)
-        self.rc_apk = self.root / "user-code61-rc.apk"
-        self.stable_apk = self.root / "user-code62-stable.apk"
+        self.rc_apk = self.root / "user-baseline-code62.apk"
+        self.stable_apk = self.root / "user-stable-code63.apk"
         self.rc_apk.write_bytes(b"R" * (1024 * 1024 + 1))
         self.stable_apk.write_bytes(b"S" * (1024 * 1024 + 1))
         self.state = self.root / "state.txt"
@@ -157,14 +162,17 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
                 stream.write(json.dumps({"tool": tool, "args": args}) + "\n")
 
             package = "xyz.jjmxg.yiyunying.user"
-            version_name = "2.8.0-user"
+            baseline_version_name = "2.8.0-user"
+            stable_version_name = "1.0.0-user"
             signer = os.environ["FAKE_SIGNER"]
 
             if tool == "aapt2":
                 if os.environ.get("FAKE_AAPT_FAIL") == "1":
                     print("Authorization: Bearer EXAMPLE_SENSITIVE_VALUE token=EXAMPLE_SECOND_VALUE")
                     raise SystemExit(9)
-                code = 61 if "code61" in args[-1].lower() else 62
+                baseline = "baseline-code62" in args[-1].lower()
+                code = 62 if baseline else 63
+                version_name = baseline_version_name if baseline else stable_version_name
                 print(f"package: name='{package}' versionCode='{code}' versionName='{version_name}'")
                 raise SystemExit(0)
 
@@ -188,13 +196,14 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
             if command == ["get-state"]:
                 print(os.environ.get("FAKE_DEVICE_STATE", "device"))
             elif command[0:2] == ["install", "-r"]:
-                code = "61" if "code61" in command[-1].lower() else "62"
+                code = "62" if "baseline-code62" in command[-1].lower() else "63"
                 state_file.write_text(code, encoding="ascii")
                 print("Success")
             elif command[0:3] == ["shell", "dumpsys", "package"]:
                 code = state_file.read_text(encoding="ascii")
                 print(f"  Package [{package}] (abc):")
                 print(f"    versionCode={code} minSdk=24 targetSdk=35")
+                version_name = baseline_version_name if code == "62" else stable_version_name
                 print(f"    versionName={version_name}")
                 print("    userId=10234")
                 print(f"    dataDir=/data/user/0/{package}")
@@ -268,16 +277,18 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
     def _calls(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
-    def test_full_fake_code61_to_code62_upgrade_passes(self) -> None:
+    def test_full_fake_code62_to_code63_upgrade_passes(self) -> None:
         completed = self._run()
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         payload = json.loads(next(line for line in completed.stdout.splitlines() if line.startswith("{")))
         self.assertEqual("PASS", payload["status"])
-        self.assertEqual(61, payload["fromVersionCode"])
-        self.assertEqual(62, payload["toVersionCode"])
+        self.assertEqual(62, payload["fromVersionCode"])
+        self.assertEqual("2.8.0-user", payload["fromVersionName"])
+        self.assertEqual(63, payload["toVersionCode"])
+        self.assertEqual("1.0.0-user", payload["versionName"])
         self.assertTrue(payload["uidPreserved"])
         self.assertTrue(payload["dataDirPreserved"])
-        self.assertEqual("62", self.state.read_text(encoding="ascii"))
+        self.assertEqual("63", self.state.read_text(encoding="ascii"))
         adb_calls = [entry["args"] for entry in self._calls() if entry["tool"] == "adb"]
         install_calls = [args for args in adb_calls if "install" in args]
         self.assertEqual(2, len(install_calls))

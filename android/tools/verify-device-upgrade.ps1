@@ -178,8 +178,8 @@ function Read-VersionState {
     if ($values.VERSION_NAME -notmatch '^\d+\.\d+\.\d+$' -or $values.VERSION_CODE -notmatch '^\d+$') {
         throw 'Android version file is invalid.'
     }
-    if ([int] $values.VERSION_CODE -ne 62) {
-        throw "Upgrade gate requires Stable versionCode=62; source is $($values.VERSION_CODE)."
+    if ([int] $values.VERSION_CODE -le 1) {
+        throw "Upgrade gate requires a Stable versionCode greater than 1; source is $($values.VERSION_CODE)."
     }
     return [pscustomobject]@{ Name = $values.VERSION_NAME; Code = [int] $values.VERSION_CODE }
 }
@@ -257,6 +257,26 @@ function Assert-ApkEvidence {
     if ($Evidence.Signer -ne $ExpectedSigner) { throw "$Label APK does not use the expected production signer." }
     if (-not $Evidence.V2Verified) { throw "$Label APK must verify with APK Signature Scheme v2." }
     if ($RequireNotDebuggable -and $Evidence.Debuggable) { throw "$Label APK must not be debuggable." }
+}
+
+function Assert-BaselineApkEvidence {
+    param(
+        [Parameter(Mandatory = $true)] $Evidence,
+        [Parameter(Mandatory = $true)][string] $ExpectedPackage,
+        [Parameter(Mandatory = $true)][string] $ExpectedVersionSuffix,
+        [Parameter(Mandatory = $true)][int] $StableVersionCode,
+        [Parameter(Mandatory = $true)][string] $ExpectedSigner
+    )
+
+    if ($Evidence.PackageName -ne $ExpectedPackage) { throw 'Baseline APK package does not match the role.' }
+    $expectedPattern = '^\d+\.\d+\.\d+-' + [regex]::Escape($ExpectedVersionSuffix) + '$'
+    if ($Evidence.VersionName -notmatch $expectedPattern) { throw 'Baseline APK versionName does not match the role.' }
+    if ($Evidence.VersionCode -le 0 -or $Evidence.VersionCode -ge $StableVersionCode) {
+        throw "Baseline APK versionCode must be lower than Stable versionCode=$StableVersionCode."
+    }
+    if ($Evidence.Signer -ne $ExpectedSigner) { throw 'Baseline APK does not use the expected production signer.' }
+    if (-not $Evidence.V2Verified) { throw 'Baseline APK must verify with APK Signature Scheme v2.' }
+    if ($Evidence.Debuggable) { throw 'Baseline APK must not be debuggable.' }
 }
 
 function Assert-DeviceOnline {
@@ -380,22 +400,22 @@ try {
     # All local APK evidence is fail-closed and completes before any ADB installation.
     $rc = Read-ApkEvidence -Path $RcApk -Label 'RC'
     $stable = Read-ApkEvidence -Path $StableApk -Label 'Stable'
-    Assert-ApkEvidence -Evidence $rc -Label 'RC' -ExpectedCode 61 `
-        -ExpectedPackage $expected.Package -ExpectedVersionName $expectedVersionName `
-        -ExpectedSigner $productionSigner -RequireNotDebuggable
-    Assert-ApkEvidence -Evidence $stable -Label 'Stable' -ExpectedCode 62 `
+    Assert-BaselineApkEvidence -Evidence $rc -ExpectedPackage $expected.Package `
+        -ExpectedVersionSuffix $expected.Suffix -StableVersionCode $version.Code `
+        -ExpectedSigner $productionSigner
+    Assert-ApkEvidence -Evidence $stable -Label 'Stable' -ExpectedCode $version.Code `
         -ExpectedPackage $expected.Package -ExpectedVersionName $expectedVersionName `
         -ExpectedSigner $productionSigner -RequireNotDebuggable
     if ($rc.Signer -ne $stable.Signer) { throw 'RC and Stable APK signers do not match.' }
 
     Assert-DeviceOnline
-    Install-ApkUpgradeOnly -Path $RcApk -Label 'RC code61'
-    $rcInstalled = Read-InstalledPackage -PackageName $expected.Package -ExpectedCode 61
-    if ($rcInstalled.VersionName -ne $expectedVersionName) { throw 'Installed RC versionName does not match.' }
+    Install-ApkUpgradeOnly -Path $RcApk -Label "baseline code$($rc.VersionCode)"
+    $rcInstalled = Read-InstalledPackage -PackageName $expected.Package -ExpectedCode $rc.VersionCode
+    if ($rcInstalled.VersionName -ne $rc.VersionName) { throw 'Installed baseline versionName does not match.' }
     Start-And-WaitForApp -PackageName $expected.Package
 
-    Install-ApkUpgradeOnly -Path $StableApk -Label 'Stable code62'
-    $stableInstalled = Read-InstalledPackage -PackageName $expected.Package -ExpectedCode 62
+    Install-ApkUpgradeOnly -Path $StableApk -Label "Stable code$($version.Code)"
+    $stableInstalled = Read-InstalledPackage -PackageName $expected.Package -ExpectedCode $version.Code
     if ($stableInstalled.VersionName -ne $expectedVersionName) { throw 'Installed Stable versionName does not match.' }
     if ($stableInstalled.PackageName -ne $rcInstalled.PackageName -or
         $stableInstalled.UserId -ne $rcInstalled.UserId -or
@@ -413,8 +433,9 @@ try {
         target = Get-SafeTargetLabel
         role = $Role
         packageName = $expected.Package
-        fromVersionCode = 61
-        toVersionCode = 62
+        fromVersionCode = $rc.VersionCode
+        fromVersionName = $rc.VersionName
+        toVersionCode = $version.Code
         versionName = $expectedVersionName
         signerSha256 = $productionSigner.ToLowerInvariant()
         signatureSchemeV2Verified = $true

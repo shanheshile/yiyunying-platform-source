@@ -333,8 +333,9 @@ def resolve_android_tool(name: str, override: str | None) -> str:
                     candidate = directory / executable
                     if candidate.is_file():
                         return str(candidate.resolve())
+    option_name = "aapt" if name == "aapt2" else name
     raise RuntimeError(
-        f"Android tool {name} was not found; pass --{name} or configure ANDROID_SDK_ROOT"
+        f"Android tool {name} was not found; pass --{option_name} or configure ANDROID_SDK_ROOT"
     )
 
 
@@ -1177,7 +1178,8 @@ def main() -> int:
     manifest_path = args.release_manifest or str(
         repository_root / "releases" / args.version_name / "release-manifest.json"
     )
-    aapt_path = resolve_android_tool("aapt", args.aapt)
+    # aapt.exe fails on non-ASCII Windows paths; aapt2 is the supported default.
+    aapt_path = resolve_android_tool("aapt2", args.aapt)
     apksigner_path = resolve_android_tool("apksigner", args.apksigner)
     releases, manifest = validate_release_plan(
         args.release,

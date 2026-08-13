@@ -1,6 +1,6 @@
 {
     "name":  "yiyunying-download-center",
-    "version":  "2.8.0",
+    "version":  "1.0.0",
     "private":  true,
     "engines":  {
                     "node":  "\u003e=22.13.0"

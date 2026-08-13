@@ -316,15 +316,15 @@ test("keeps full release metadata on the server and exports four public pages", 
   ]);
 
   if (packageMetadata.version !== releaseMetadata.versionName) {
-    assert.notEqual(
-      releaseMetadata.channel,
-      "Stable",
-      "formal Stable metadata and website package version must match",
-    );
     assert.equal(
       releaseMetadata.finalizationStatus,
       "pending",
       "a temporary version mismatch is only allowed before release metadata finalization",
+    );
+    assert.equal(
+      isFormalPublicRelease(releaseMetadata),
+      false,
+      "a superseded pending manifest must never be rendered as the formal release",
     );
   }
   assert.match(page, /import releaseMetadata from "\.\.\/release-metadata\.json"/);

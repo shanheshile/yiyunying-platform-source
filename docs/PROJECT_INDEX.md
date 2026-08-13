@@ -4,7 +4,8 @@
 
 ## 当前基线
 
-- Android 本地 Stable Build：`2.8.0`（`versionCode 62`）；已从 A `f08147a9546d3b4bb3539a2e68732e1f15c4b03b` 完成四端 production build、226/226 tasks、四端各 337/总 1,348、Lint 与独立 APK 审计；pending manifest SHA-256 为 `19C62DE18547E591238570C1211DAA81CB8A8731AF11AB181DCE06C63C802EF7`
+- Android 正式首发候选：`1.0.0`（`versionCode 63`）；新的源码 A、四端 Stable APK 和 pending manifest 尚未生成，当前不能称为已 Build 或已上线
+- 内部升级基线：`2.8.0`（`versionCode 62`）已隔离到外层 `.rc/superseded/2.8.0-code62-pending/`，只用于 62→63 设备门禁，禁止 Finalize、tag、部署或公开
 - 线上 Debug 测试版：`2.7.14`（`versionCode 59`）；四端非强制更新已上线，58→59 可更新、59→59 无更新
 - 客户端形态：用户端、管理员端、授权端、总控端
 - 服务端：PHP API、MySQL 数据库、WebSocket/TURN/推送等外部基础设施
@@ -27,7 +28,8 @@
 - [全量需求与实施总纲](MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)：唯一主需求索引、编号、真实状态、实施顺序与完成定义
 
 - [项目总览](../README.md)
-- [2.8.0 Stable Build-pending 说明：正式签名、官网闭环与设备门禁](releases/2.8.0.md)
+- [1.0.0 正式首发候选说明：新 Build、code63 与 62→63 设备门禁](releases/1.0.0.md)
+- [2.8.0 隔离内部基线说明：禁止公开与 Finalize](releases/2.8.0.md)
 - [2.7.15 本地候选说明：管理重构、身份链与功能闭环](releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](releases/2.7.14.md)
 - [2.7.13 Debug 测试版说明：聊天、媒体、资料与论坛收尾](releases/2.7.13.md)
@@ -72,9 +74,9 @@
 ## 阅读原则
 
 - “源码入口存在”不等于“生产环境已验收”。
-- 2.8.0 的设备升级门禁仍为 BLOCKED：固件虚拟化关闭、AVD 无 ADB、未安装 APK。设备升级证据出现前禁止提交 Finalize、公开部署、打 `v2.8.0` 标签或归档；线上仍为 2.7.14。
-- 设备门禁通过后，本次元数据/文档构成 B，随后 annotated tag → Finalize；精确 B 与有效 tag 只按 finalized manifest/Git refs 回读。本地 Build 不等于迁移、部署、推送或归档完成。
+- 1.0.0 尚未形成新 Build 源码 A、APK 或 manifest；固件虚拟化关闭、AVD 无 ADB、未安装 APK。完成 `2.8.0/code62 → 1.0.0/code63` 设备证据前禁止 Finalize、公开部署、打 `v1.0.0` 标签或归档；线上仍为 2.7.14。
+- 固定顺序为 A → Stable Build → 62→63 真机门禁 → 证据 B → annotated tag `v1.0.0` → Finalize；精确 A/B 与有效 tag 只按 manifest/Git refs 回读。
 - 历史归档用于追溯，当前可发布状态以当前源码、构建结果和发布清单为准。
 - 涉及资金、权限、隐私、通话、推送和升级的能力，必须经过服务端、数据库及真机联合验收。
 - 文档中的未来方向是规划，不应被解释为已经交付。
-- 2.8.0 已具备 production signer 与 HTTPS 配置，但缺少真实设备升级验收，仍不能称为正式商业 Release。
+- 1.0.0 具备 production signer 与 HTTPS 配置基础，但缺少新的 Stable Build 和真实设备升级验收，仍不能称为正式商业 Release。

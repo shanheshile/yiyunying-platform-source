@@ -11,4 +11,4 @@ corepack pnpm lint
 
 发布前必须确认 `release-metadata.json` 与 Android 源码和 APK manifest 的版本一致，并验证下载链接返回真实 APK 而非 HTML 错误页。Stable 网站只能公开用户、管理员、授权平台、平台总控四个 APK；源码、Git history、delivery 包和 project manifest 必须保持私有。
 
-`2.8.0 (62)` 当前仍是 Build-pending：设备升级因固件虚拟化关闭、AVD 无 ADB 而阻塞，未安装 APK，不能 Finalize 或切换正式下载。线上仍为 `2.7.14 (59)`。
+官网目标正式首发版本为 `1.0.0 (63)`，但新 Stable Build、pending manifest 和 code62→63 真机升级尚未完成，不能 Finalize 或切换正式下载。原 `2.8.0 (62)` pending 制品已隔离为 internal-only baseline，禁止公开。线上仍为 `2.7.14 (59)` Debug；在 1.0.0 finalized 证据就绪前，页面必须继续失败关闭并显示公开版本正在准备。
