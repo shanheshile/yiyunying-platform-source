@@ -147,19 +147,21 @@ final class AdminController
         $status = array_key_exists('status', $data)
             ? Validator::integer($data['status'], 'status', 0, 1)
             : (int) $admin['status'];
-        Database::execute(
-            'UPDATE admins SET account = ?, nickname = ?, avatar = ?, email = ?, phone = ?, status = ?, updated_at = NOW() WHERE id = ?',
-            [
-                $account, mb_substr((string) ($data['nickname'] ?? $admin['nickname']), 0, 100),
-                mb_substr((string) ($data['avatar'] ?? $admin['avatar']), 0, 500),
-                trim((string) ($data['email'] ?? $admin['email'])) ?: null,
-                mb_substr(trim((string) ($data['phone'] ?? $admin['phone'])), 0, 40) ?: null,
-                $status, (int) $admin['id'],
-            ]
-        );
-        if ($status !== 1) {
-            self::revoke((int) $admin['id']);
-        }
+        Database::transaction(static function () use ($account, $data, $admin, $status): void {
+            Database::execute(
+                'UPDATE admins SET account = ?, nickname = ?, avatar = ?, email = ?, phone = ?, status = ?, updated_at = NOW() WHERE id = ?',
+                [
+                    $account, mb_substr((string) ($data['nickname'] ?? $admin['nickname']), 0, 100),
+                    mb_substr((string) ($data['avatar'] ?? $admin['avatar']), 0, 500),
+                    trim((string) ($data['email'] ?? $admin['email'])) ?: null,
+                    mb_substr(trim((string) ($data['phone'] ?? $admin['phone'])), 0, 40) ?: null,
+                    $status, (int) $admin['id'],
+                ]
+            );
+            if ($status !== 1) {
+                self::revoke((int) $admin['id']);
+            }
+        });
         $after = AdminAccessService::context((int) $admin['id']);
         PlatformService::log($request, $actor, 'admin', 'update', 'admin', (int) $admin['id'], self::publicAdmin($admin), self::publicAdmin($after));
         return Response::success(['admin' => self::publicAdmin($after)], 'admin 信息已更新');
@@ -173,10 +175,12 @@ final class AdminController
         if (strlen($password) < 6 || strlen($password) > 72) {
             throw new HttpException('new_password 长度必须在 6-72 个字节之间', 0, 422);
         }
-        Database::execute('UPDATE admins SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
-            Password::hash($password), (int) $admin['id'],
-        ]);
-        self::revoke((int) $admin['id']);
+        Database::transaction(static function () use ($admin, $password): void {
+            Database::execute('UPDATE admins SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
+                Password::hash($password), (int) $admin['id'],
+            ]);
+            self::revoke((int) $admin['id']);
+        });
         PlatformService::log($request, $actor, 'admin', 'password_reset', 'admin', (int) $admin['id']);
         return Response::success([], 'admin 密码已重置');
     }
@@ -203,7 +207,10 @@ final class AdminController
         PlatformService::log($request, $actor, 'admin', 'hard_delete', 'admin', (int) $admin['id'], [
             'admin' => self::publicAdmin($admin), 'counts' => $counts,
         ]);
-        Database::execute('DELETE FROM admins WHERE id = ?', [(int) $admin['id']]);
+        Database::transaction(static function () use ($admin): void {
+            self::revoke((int) $admin['id']);
+            Database::execute('DELETE FROM admins WHERE id = ?', [(int) $admin['id']]);
+        });
         return Response::success(['deleted_counts' => $counts], 'admin 及全部附属数据已连带删除');
     }
 
@@ -325,10 +332,12 @@ final class AdminController
     {
         $actor = PlatformService::auth($request);
         $admin = PlatformService::ownedAdmin($actor, (int) $params['admin_id']);
-        Database::execute('UPDATE admins SET status = ?, updated_at = NOW() WHERE id = ?', [$enable ? 1 : 0, (int) $admin['id']]);
-        if (!$enable) {
-            self::revoke((int) $admin['id']);
-        }
+        Database::transaction(static function () use ($admin, $enable): void {
+            Database::execute('UPDATE admins SET status = ?, updated_at = NOW() WHERE id = ?', [$enable ? 1 : 0, (int) $admin['id']]);
+            if (!$enable) {
+                self::revoke((int) $admin['id']);
+            }
+        });
         PlatformService::log($request, $actor, 'admin', $enable ? 'unban' : 'ban', 'admin', (int) $admin['id'], null, [
             'reason' => (string) $request->input('reason', ''),
         ]);

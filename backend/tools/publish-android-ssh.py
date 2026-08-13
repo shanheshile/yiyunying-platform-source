@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import hashlib
+import hmac
 import json
 import os
 import posixpath
@@ -59,19 +61,45 @@ class Release:
     range_sha256: str = ""
 
 
+@dataclass(frozen=True, repr=False)
+class ConnectionIdentity:
+    api_base_url: str
+    app_key: str
+    platform_key: str
+    authorized_platform_key: str
+    app_key_sha256: str
+    platform_key_sha256: str
+    authorized_platform_key_sha256: str
+
+    def public_evidence(self) -> dict[str, str]:
+        return {
+            "apiBaseUrl": self.api_base_url,
+            "appKeySha256": self.app_key_sha256,
+            "platformKeySha256": self.platform_key_sha256,
+            "authorizedPlatformKeySha256": self.authorized_platform_key_sha256,
+        }
+
+
 def quote(value: str) -> str:
     return shlex.quote(value)
 
 
-def run(client: paramiko.SSHClient, command: str, label: str) -> str:
+def run(
+    client: paramiko.SSHClient,
+    command: str,
+    label: str,
+    *,
+    sensitive_output: bool = False,
+) -> str:
     stdin, stdout, stderr = client.exec_command(command, get_pty=False)
     del stdin
     output = stdout.read().decode("utf-8", errors="replace")
     error = stderr.read().decode("utf-8", errors="replace")
     status = stdout.channel.recv_exit_status()
     if status != 0:
-        raise RuntimeError(f"{label} failed ({status}): {error or output}")
-    if output.strip():
+        detail = "sensitive output redacted" if sensitive_output else (error or output)
+        raise RuntimeError(f"{label} failed ({status}): {detail}")
+    if output.strip() and not sensitive_output:
         print(f"[{label}] {output.strip()}")
     return output
 
@@ -464,6 +492,7 @@ def validate_release_plan(
     manifest_identity_sha256 = str(manifest.get("releaseIdentitySha256", "")).lower()
     if manifest_identity_sha256 != identity_sha256:
         raise RuntimeError("release manifest is not bound to the supplied release identity bytes")
+    validate_manifest_connection_identity(manifest)
 
     entries = manifest.get("releases")
     if not isinstance(entries, list) or len(entries) != len(EDITIONS):
@@ -578,6 +607,182 @@ def sql_string(value: str) -> str:
         .replace("\r", "\n")
     )
     return "'" + escaped + "'"
+
+
+def normalize_api_base_url(value: str) -> str:
+    raw = value.strip()
+    if not raw or raw != value:
+        raise RuntimeError("apiBaseUrl must be non-empty and have no surrounding whitespace")
+    parsed = urlsplit(raw)
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("apiBaseUrl contains an invalid port") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError(
+            "apiBaseUrl must be an absolute HTTP(S) URL without credentials, query or fragment"
+        )
+    del parsed_port
+    path = parsed.path or "/"
+    if not path.endswith("/"):
+        path += "/"
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, "", ""))
+
+
+def validate_manifest_connection_identity(manifest: dict) -> dict[str, str]:
+    value = manifest.get("connectionIdentity")
+    if not isinstance(value, dict):
+        raise RuntimeError("finalized release manifest must contain connectionIdentity")
+    api_base_url = value.get("apiBaseUrl")
+    if not isinstance(api_base_url, str):
+        raise RuntimeError("connectionIdentity.apiBaseUrl must be text")
+    normalized_api_base_url = normalize_api_base_url(api_base_url)
+    if normalized_api_base_url != api_base_url:
+        raise RuntimeError("connectionIdentity.apiBaseUrl must use canonical trailing-slash form")
+    evidence = {"apiBaseUrl": normalized_api_base_url}
+    for field in (
+        "appKeySha256",
+        "platformKeySha256",
+        "authorizedPlatformKeySha256",
+    ):
+        digest_value = value.get(field)
+        if not isinstance(digest_value, str) or SHA256_RE.fullmatch(digest_value) is None:
+            raise RuntimeError(f"connectionIdentity.{field} must be a SHA-256 digest")
+        evidence[field] = digest_value.lower()
+    return evidence
+
+
+def load_connection_identity_from_environment(
+    manifest_evidence: dict[str, str],
+    environment: Mapping[str, str] | None = None,
+) -> ConnectionIdentity:
+    source = os.environ if environment is None else environment
+    values: dict[str, str] = {}
+    for variable in (
+        "YY_API_BASE_URL",
+        "YY_APP_KEY",
+        "YY_PLATFORM_KEY",
+        "YY_AUTHORIZED_PLATFORM_KEY",
+    ):
+        value = source.get(variable, "")
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(character in value for character in ("\x00", "\r", "\n"))
+        ):
+            raise RuntimeError(f"{variable} is required and must be a single exact value")
+        values[variable] = value
+
+    api_base_url = normalize_api_base_url(values["YY_API_BASE_URL"])
+    if not hmac.compare_digest(api_base_url, manifest_evidence["apiBaseUrl"]):
+        raise RuntimeError("YY_API_BASE_URL does not match release manifest connectionIdentity")
+
+    hashed_values = {
+        "appKeySha256": hashlib.sha256(values["YY_APP_KEY"].encode("utf-8")).hexdigest(),
+        "platformKeySha256": hashlib.sha256(
+            values["YY_PLATFORM_KEY"].encode("utf-8")
+        ).hexdigest(),
+        "authorizedPlatformKeySha256": hashlib.sha256(
+            values["YY_AUTHORIZED_PLATFORM_KEY"].encode("utf-8")
+        ).hexdigest(),
+    }
+    for field, actual_digest in hashed_values.items():
+        if not hmac.compare_digest(actual_digest, manifest_evidence[field]):
+            raise RuntimeError(f"environment connection identity hash mismatch for {field}")
+
+    return ConnectionIdentity(
+        api_base_url=api_base_url,
+        app_key=values["YY_APP_KEY"],
+        platform_key=values["YY_PLATFORM_KEY"],
+        authorized_platform_key=values["YY_AUTHORIZED_PLATFORM_KEY"],
+        app_key_sha256=hashed_values["appKeySha256"],
+        platform_key_sha256=hashed_values["platformKeySha256"],
+        authorized_platform_key_sha256=hashed_values[
+            "authorizedPlatformKeySha256"
+        ],
+    )
+
+
+def url_origin(value: str, label: str) -> tuple[str, str, int]:
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError(f"{label} contains an invalid port") from exc
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError(f"{label} must be an absolute HTTP(S) URL")
+    return scheme, parsed.hostname.lower(), port or (443 if scheme == "https" else 80)
+
+
+def validate_connection_origins(
+    api_base_url: str,
+    urls: dict[str, str],
+) -> None:
+    expected_origin = url_origin(api_base_url, "connectionIdentity.apiBaseUrl")
+    for label, value in urls.items():
+        if url_origin(value, label) != expected_origin:
+            raise RuntimeError(
+                f"{label} scheme, host and port must match connectionIdentity.apiBaseUrl"
+            )
+
+
+def validate_remote_connection_identity(
+    identity: ConnectionIdentity,
+    root_platform_key: str,
+    authorized_platform_key: str,
+    app_keys: list[str],
+) -> None:
+    mismatches = []
+    if not hmac.compare_digest(root_platform_key, identity.platform_key):
+        mismatches.append("platformKey")
+    if not hmac.compare_digest(
+        authorized_platform_key, identity.authorized_platform_key
+    ):
+        mismatches.append("authorizedPlatformKey")
+    app_key_matches = sum(
+        1 for value in app_keys if hmac.compare_digest(value, identity.app_key)
+    )
+    if app_key_matches != 1:
+        mismatches.append("appKey")
+    if mismatches:
+        raise RuntimeError(
+            "remote database connection identity mismatch: " + ", ".join(mismatches)
+        )
+
+
+def select_platform_connection_context(
+    platforms: list[tuple[int, str, int, int]],
+    identity: ConnectionIdentity,
+) -> tuple[tuple[int, str, int, int], tuple[int, str, int, int]]:
+    roots = [
+        row
+        for row in platforms
+        if row[2] == 1 and hmac.compare_digest(row[1], identity.platform_key)
+    ]
+    if len(roots) != 1:
+        raise RuntimeError("release root platform identity must match exactly one active row")
+    root = roots[0]
+    authorized = [
+        row
+        for row in platforms
+        if row[2] == 2
+        and row[3] == root[0]
+        and hmac.compare_digest(row[1], identity.authorized_platform_key)
+    ]
+    if len(authorized) != 1:
+        raise RuntimeError(
+            "authorized platform identity must match exactly one active child row"
+        )
+    return root, authorized[0]
 
 
 def normalize_download_base_url(value: str) -> str:
@@ -844,7 +1049,7 @@ def validate_lifecycle_payload(
     payload: object,
 ) -> None:
     if not isinstance(payload, dict) or payload.get("code") != 1:
-        raise RuntimeError(f"lifecycle returned an error payload: {payload!r}")
+        raise RuntimeError("lifecycle returned an error payload")
     data = payload.get("data")
     if not isinstance(data, dict):
         raise RuntimeError("lifecycle response data must be an object")
@@ -887,6 +1092,7 @@ def verify_lifecycle_release(
         "curl -fsS --max-time 30 "
         + f"--proto {quote('=http,https')} {quote(url)}",
         f"lifecycle-after-activation-{release.edition}",
+        sensitive_output=True,
     )
     try:
         payload = json.loads(raw)
@@ -954,6 +1160,10 @@ def main() -> int:
         apksigner_path,
     )
     validate_git_release_evidence(repository_root, manifest)
+    manifest_connection_identity = validate_manifest_connection_identity(manifest)
+    connection_identity = load_connection_identity_from_environment(
+        manifest_connection_identity
+    )
     _, manifest_sha256 = digest(os.path.abspath(manifest_path))
     args.release = releases
     insecure_http_debug = enforce_transport_policy(
@@ -962,6 +1172,13 @@ def main() -> int:
         releases,
         args.allow_insecure_http_debug,
         args.insecure_http_confirmation,
+    )
+    validate_connection_origins(
+        connection_identity.api_base_url,
+        {
+            "base-url": base_url,
+            "lifecycle-url": lifecycle_url,
+        },
     )
     if insecure_http_debug:
         print(
@@ -1023,47 +1240,40 @@ def main() -> int:
             "preflight",
         )
 
-        root_output = run(
+        platform_output = run(
             client,
             mysql_command(
                 args,
                 db_password,
                 "--batch --raw --skip-column-names -e "
                 + quote(
-                    "SELECT id, level, platform_key FROM platform_accounts "
-                    "WHERE level = 1 AND status = 1 AND deleted_at IS NULL ORDER BY id LIMIT 1"
+                    "SELECT id, platform_key, level, COALESCE(parent_id, 0) "
+                    "FROM platform_accounts WHERE level IN (1, 2) AND status = 1 "
+                    "AND deleted_at IS NULL ORDER BY level, id"
                 ),
             ),
-            "root-platform",
-        ).strip()
-        root_parts = root_output.split("\t")
-        if (
-            len(root_parts) != 3
-            or not all(part.isdigit() for part in root_parts[:2])
-            or not root_parts[2].strip()
-        ):
-            raise RuntimeError("active level-1 platform account was not found")
-        issuer_id, issuer_level = (int(root_parts[0]), int(root_parts[1]))
-        root_platform_key = root_parts[2].strip()
+            "platform-context",
+            sensitive_output=True,
+        )
+        platforms: list[tuple[int, str, int, int]] = []
+        for line in platform_output.splitlines():
+            parts = line.split("\t")
+            if (
+                len(parts) != 4
+                or not parts[0].isdigit()
+                or not parts[1].strip()
+                or not parts[2].isdigit()
+                or not parts[3].isdigit()
+            ):
+                raise RuntimeError("platform context returned a malformed row")
+            platforms.append((int(parts[0]), parts[1].strip(), int(parts[2]), int(parts[3])))
+        root, authorized = select_platform_connection_context(
+            platforms, connection_identity
+        )
+        issuer_id, root_platform_key, issuer_level, _ = root
+        authorized_platform_key = authorized[1]
 
-        authorized_platform_key = run(
-            client,
-            mysql_command(
-                args,
-                db_password,
-                "--batch --raw --skip-column-names -e "
-                + quote(
-                    "SELECT platform_key FROM platform_accounts "
-                    f"WHERE level = 2 AND parent_id = {issuer_id} AND status = 1 "
-                    "AND deleted_at IS NULL ORDER BY id LIMIT 1"
-                ),
-            ),
-            "authorized-platform-context",
-        ).strip()
-        if not authorized_platform_key or "\n" in authorized_platform_key:
-            raise RuntimeError("an active level-2 platform context is required for lifecycle acceptance")
-
-        app_key = run(
+        app_key_output = run(
             client,
             mysql_command(
                 args,
@@ -1074,21 +1284,32 @@ def main() -> int:
                     "INNER JOIN admins a ON a.id = ap.admin_id "
                     "INNER JOIN platform_accounts p ON p.id = a.platform_id "
                     "WHERE ap.status = 1 AND ap.deleted_at IS NULL AND a.deleted_at IS NULL "
-                    "AND p.deleted_at IS NULL "
+                    "AND a.status = 1 AND p.status = 1 AND p.deleted_at IS NULL "
                     f"AND (CASE WHEN p.level = 1 THEN p.id ELSE p.parent_id END) = {issuer_id} "
-                    "ORDER BY ap.id LIMIT 1"
+                    "ORDER BY ap.id"
                 ),
             ),
             "application-context",
-        ).strip()
-        if not app_key or "\n" in app_key:
+            sensitive_output=True,
+        )
+        app_keys = [line.strip() for line in app_key_output.splitlines() if line.strip()]
+        if not app_keys or any("\t" in value for value in app_keys):
             raise RuntimeError("an active application context is required for lifecycle acceptance")
 
+        validate_remote_connection_identity(
+            connection_identity,
+            root_platform_key,
+            authorized_platform_key,
+            app_keys,
+        )
+
         lifecycle_contexts = {
-            "platform_owner": {"platform_key": root_platform_key},
-            "authorized_platform": {"platform_key": authorized_platform_key},
-            "admin": {"platform_key": root_platform_key},
-            "user": {"app_key": app_key},
+            "platform_owner": {"platform_key": connection_identity.platform_key},
+            "authorized_platform": {
+                "platform_key": connection_identity.authorized_platform_key
+            },
+            "admin": {"platform_key": connection_identity.platform_key},
+            "user": {"app_key": connection_identity.app_key},
         }
 
         edition_values = ", ".join(sql_string(edition) for edition in sorted(EDITIONS))
@@ -1228,6 +1449,7 @@ def main() -> int:
             "release_tag": str(manifest["releaseTag"]),
             "release_identity_sha256": str(manifest["releaseIdentitySha256"]).lower(),
             "release_manifest_sha256": manifest_sha256.lower(),
+            "connection_identity": connection_identity.public_evidence(),
             "activated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "releases": [
                 {

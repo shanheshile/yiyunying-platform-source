@@ -124,6 +124,7 @@ $required = @(
     'tools\test-bootstrap-credential-safety-contract.php',
     'tools\audit-default-credentials.php',
     'tools\test-default-credential-audit-contract.php',
+    'tools\test-auth-session-revocation-contract.php',
     'tools\test-purchase-history-foreign-key-contract.php',
     'tools\test-catalog-private-migration-contract.php',
     'tools\test-upload-library-reference-guards.php',
@@ -140,6 +141,8 @@ $required = @(
     'tools\requirements-release.txt',
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py',
     'tools\migrate-catalog-private-files.php',
     'tools\verify-catalog-migration-report.php',
@@ -228,6 +231,8 @@ $pythonFiles = @(
     'tools\verify-production-release-ssh.py',
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py'
 )
 & $python.Source -W error -m py_compile @($pythonFiles | ForEach-Object { Join-Path $root $_ })
@@ -237,6 +242,8 @@ if ($LASTEXITCODE -ne 0) {
 foreach ($testFile in @(
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
+    'tools\tests\test_connection_identity_release_gate.py',
+    'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_release_evidence_chain.py'
 )) {
     $testPath = Join-Path $root $testFile
@@ -392,6 +399,11 @@ exit($invalid === [] ? 0 : 1);
         throw "Default credential audit static contract failed.`n$defaultCredentialAuditOutput"
     }
     Write-Host "Default credential audit static contract: passed"
+    $authSessionRevocationOutput = & $php.Source (Join-Path $root 'tools\test-auth-session-revocation-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Auth/session revocation contract checks failed.`n$authSessionRevocationOutput"
+    }
+    Write-Host "Auth/session revocation contract checks: passed"
     $purchaseHistoryOutput = & $php.Source (Join-Path $root 'tools\test-purchase-history-foreign-key-contract.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Purchase-history foreign-key contract checks failed.`n$purchaseHistoryOutput"

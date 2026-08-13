@@ -42,7 +42,7 @@ function knownDemoSecretAppIds(\PDO $pdo): array
     $knownDemoSecretHash = 'f91c5f67d4576f675ad08233695845b790f7bc9549386f2a89777aa32f992170';
     $ids = [];
     $statement = $pdo->query(
-        'SELECT id, app_secret_hash FROM apps WHERE status = 1 AND deleted_at IS NULL ORDER BY id ASC'
+        'SELECT id, app_secret_hash FROM apps WHERE deleted_at IS NULL ORDER BY id ASC'
     );
     while (($row = $statement->fetch(\PDO::FETCH_ASSOC)) !== false) {
         $storedHash = strtolower(trim((string) ($row['app_secret_hash'] ?? '')));
@@ -66,15 +66,15 @@ try {
     $pdo = Database::connection();
     $platformIds = weakPasswordIds(
         $pdo,
-        'SELECT id, password_hash FROM platform_accounts WHERE status = 1 AND deleted_at IS NULL ORDER BY id ASC'
+        'SELECT id, password_hash FROM platform_accounts WHERE deleted_at IS NULL ORDER BY id ASC'
     );
     $adminIds = weakPasswordIds(
         $pdo,
-        'SELECT id, password_hash FROM admins WHERE status = 1 ORDER BY id ASC'
+        'SELECT id, password_hash FROM admins ORDER BY id ASC'
     );
     $userIds = weakPasswordIds(
         $pdo,
-        'SELECT id, password_hash FROM users WHERE status = 1 AND deleted_at IS NULL ORDER BY id ASC'
+        'SELECT id, password_hash FROM users WHERE deleted_at IS NULL ORDER BY id ASC'
     );
     $appIds = knownDemoSecretAppIds($pdo);
 } catch (\Throwable $exception) {
@@ -91,9 +91,9 @@ printAuditResult('旧演示应用密钥', $appIds);
 $total = count($platformIds) + count($adminIds) + count($userIds) + count($appIds);
 fwrite(STDOUT, "总命中：{$total}\n");
 if ($total > 0) {
-    fwrite(STDERR, "审计失败：仍有启用身份使用已知默认凭据，请先停用或轮换后再发布。\n");
+    fwrite(STDERR, "审计失败：仍有未删除身份使用已知默认凭据；停用不能绕过发布门禁，请轮换后再发布。\n");
     exit(1);
 }
 
-fwrite(STDOUT, "审计通过：未发现启用身份使用已知默认凭据。\n");
+fwrite(STDOUT, "审计通过：未发现未删除身份使用已知默认凭据。\n");
 exit(0);

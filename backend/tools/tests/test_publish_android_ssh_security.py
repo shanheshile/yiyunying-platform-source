@@ -90,6 +90,12 @@ class ReleaseFixture:
                     "releaseEvidenceCommit": "2" * 40,
                     "releaseTag": "v2.8.0-debug",
                     "finalizationStatus": "finalized",
+                    "connectionIdentity": {
+                        "apiBaseUrl": "https://release.example.test/api/",
+                        "appKeySha256": "3" * 64,
+                        "platformKeySha256": "4" * 64,
+                        "authorizedPlatformKeySha256": "5" * 64,
+                    },
                     "releaseNotes": ["安全发布"],
                     "releases": self.entries,
                 }

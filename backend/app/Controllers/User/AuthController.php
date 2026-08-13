@@ -11,6 +11,7 @@ use Yiyunying\Core\Request;
 use Yiyunying\Core\Response;
 use Yiyunying\Core\Token;
 use Yiyunying\Core\Validator;
+use Yiyunying\Services\AdminAccessService;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
 use Yiyunying\Services\LogService;
@@ -465,39 +466,63 @@ final class AuthController
         $data = $request->all();
         Validator::required($data, ['refresh_token']);
         $tokenHash = Token::hash((string) $data['refresh_token']);
-        $row = Database::one(
-            'SELECT r.*, u.status AS user_status, u.deleted_at AS user_deleted_at,
-                    a.id AS resolved_app_id, a.admin_id AS resolved_admin_id, a.app_key, a.status AS app_status
-             FROM user_refresh_tokens r
-             INNER JOIN users u ON u.id = r.user_id AND u.app_id = r.app_id AND u.admin_id = r.admin_id
-             INNER JOIN apps a ON a.id = r.app_id AND a.admin_id = r.admin_id
-             WHERE r.token_hash = ? AND r.revoked_at IS NULL AND r.expired_at > NOW()
-             LIMIT 1',
-            [$tokenHash]
-        );
-        if ($row === null || (int) $row['user_status'] !== 1 || $row['user_deleted_at'] !== null || (int) $row['app_status'] !== 1) {
-            throw new HttpException('刷新令牌无效或已过期', 401, 401);
-        }
-        $providedAppKey = trim((string) ($request->header('x-app-key') ?? $request->input('app_key', $row['app_key'])));
-        if (!hash_equals((string) $row['app_key'], $providedAppKey)) {
-            throw new HttpException('刷新令牌与应用不匹配', 403, 403);
-        }
-        $app = [
-            'id' => (int) $row['resolved_app_id'],
-            'admin_id' => (int) $row['resolved_admin_id'],
-            'app_key' => $row['app_key'],
-        ];
-        $newToken = Database::transaction(static function () use ($row, $request, $app): array {
-            Database::execute('UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE id = ?', [(int) $row['id']]);
-            if ($row['user_token_id'] !== null) {
-                Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE id = ?', [(int) $row['user_token_id']]);
+        $result = Database::transaction(static function () use ($tokenHash, $request): array {
+            $row = Database::one(
+                'SELECT r.*, u.status AS user_status, u.deleted_at AS user_deleted_at,
+                        a.id AS resolved_app_id, a.admin_id AS resolved_admin_id, a.app_key,
+                        a.status AS app_status, a.deleted_at AS app_deleted_at,
+                        ad.status AS admin_status,
+                        p.id AS resolved_platform_id, p.status AS platform_status,
+                        p.deleted_at AS platform_deleted_at
+                 FROM user_refresh_tokens r
+                 INNER JOIN users u ON u.id = r.user_id AND u.app_id = r.app_id AND u.admin_id = r.admin_id
+                 INNER JOIN apps a ON a.id = r.app_id AND a.admin_id = r.admin_id
+                 INNER JOIN admins ad ON ad.id = r.admin_id
+                 INNER JOIN platform_accounts p ON p.id = ad.platform_id
+                 WHERE r.token_hash = ? AND r.revoked_at IS NULL AND r.expired_at > NOW()
+                 LIMIT 1 FOR UPDATE',
+                [$tokenHash]
+            );
+            if ($row === null
+                || (int) $row['user_status'] !== 1 || $row['user_deleted_at'] !== null
+                || (int) $row['app_status'] !== 1 || $row['app_deleted_at'] !== null
+                || (int) $row['admin_status'] !== 1
+                || (int) $row['platform_status'] !== 1 || $row['platform_deleted_at'] !== null) {
+                throw new HttpException('刷新令牌无效或已过期', 401, 401);
             }
-            return self::issueUserToken($request, $app, (int) $row['user_id'], 'refresh');
+            $providedAppKey = trim((string) ($request->header('x-app-key') ?? $request->input('app_key', $row['app_key'])));
+            if (!hash_equals((string) $row['app_key'], $providedAppKey)) {
+                throw new HttpException('刷新令牌与应用不匹配', 403, 403);
+            }
+            $admin = AdminAccessService::context((int) $row['resolved_admin_id']);
+            AdminAccessService::assertDownstreamAccess($admin);
+            Database::execute(
+                'UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE id = ? AND revoked_at IS NULL',
+                [(int) $row['id']]
+            );
+            if ($row['user_token_id'] !== null) {
+                Database::execute(
+                    'UPDATE user_tokens SET revoked_at = NOW() WHERE id = ? AND revoked_at IS NULL',
+                    [(int) $row['user_token_id']]
+                );
+            }
+            $app = [
+                'id' => (int) $row['resolved_app_id'],
+                'admin_id' => (int) $row['resolved_admin_id'],
+                'app_key' => $row['app_key'],
+            ];
+            return [
+                'row' => $row,
+                'token' => self::issueUserToken($request, $app, (int) $row['user_id'], 'refresh'),
+            ];
         });
+        $row = $result['row'];
+        $newToken = $result['token'];
         $request->setAttribute('actor_type', 'user');
         $request->setAttribute('actor_id', (int) $row['user_id']);
         $request->setAttribute('admin_id', (int) $row['admin_id']);
         $request->setAttribute('app_id', (int) $row['app_id']);
+        $request->setAttribute('platform_id', (int) $row['resolved_platform_id']);
         return Response::success([
             'token_type' => 'Bearer',
             'access_token' => $newToken['access_token'],

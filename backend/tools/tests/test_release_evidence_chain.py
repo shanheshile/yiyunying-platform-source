@@ -7,7 +7,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -28,14 +30,26 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig")
 
 
+def fake_connection_identity() -> dict[str, str]:
+    return {
+        "apiBaseUrl": "https://api.example.invalid/",
+        "appKeySha256": "1" * 64,
+        "platformKeySha256": "2" * 64,
+        "authorizedPlatformKeySha256": "3" * 64,
+    }
+
+
 def load_verifier_module():
     previous = sys.modules.get("paramiko")
+    module_name = "release_verifier_under_test"
+    previous_module = sys.modules.get(module_name)
     sys.modules["paramiko"] = types.ModuleType("paramiko")
     try:
-        spec = importlib.util.spec_from_file_location("release_verifier_under_test", VERIFIER_PATH)
+        spec = importlib.util.spec_from_file_location(module_name, VERIFIER_PATH)
         if spec is None or spec.loader is None:
             raise AssertionError("cannot load production release verifier")
         module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
         return module
     finally:
@@ -43,9 +57,19 @@ def load_verifier_module():
             sys.modules.pop("paramiko", None)
         else:
             sys.modules["paramiko"] = previous
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
 
 
-def run(command: list[str], cwd: Path, *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run(
+    command: list[str],
+    cwd: Path,
+    *,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -55,6 +79,7 @@ def run(command: list[str], cwd: Path, *, check: bool = True) -> subprocess.Comp
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     if check and result.returncode != 0:
         raise AssertionError(
@@ -163,6 +188,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             "releaseTag": "v2.7.14-debug",
             "finalizationStatus": "finalized",
             "releaseIdentitySha256": identity_hash,
+            "connectionIdentity": fake_connection_identity(),
             "releases": releases,
         }
         with tempfile.TemporaryDirectory() as temporary:
@@ -173,6 +199,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             (
                 identity,
                 expected,
+                connection_identity,
                 actual_hash,
                 commit,
                 evidence_commit,
@@ -181,6 +208,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             ) = module.load_release_evidence(identity_path, manifest_path)
             self.assertEqual(identity["version_code"], 59)
             self.assertEqual(set(expected), module.REQUIRED_EDITIONS)
+            self.assertEqual(connection_identity, fake_connection_identity())
             self.assertEqual(actual_hash, identity_hash)
             self.assertEqual(commit, "c" * 40)
             self.assertEqual(evidence_commit, "d" * 40)
@@ -210,6 +238,13 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             'releaseTag = "v$($version.versionName)-debug"',
             "finalizationStatus = 'pending'",
             "releaseIdentitySha256 = $releaseIdentitySha256",
+            "Read-ReleaseConnectionIdentity",
+            "Assert-ReleaseConnectionKey",
+            "Assert-GeneratedConnectionIdentity -ConnectionIdentity $connectionIdentity",
+            "connectionIdentity = $connectionIdentity.evidence",
+            "appKeySha256 = Get-Utf8StringSha256 -Value $appKey",
+            "platformKeySha256 = Get-Utf8StringSha256 -Value $platformKey",
+            "authorizedPlatformKeySha256 = Get-Utf8StringSha256 -Value $authorizedPlatformKey",
             "Read-GitBlobBytes",
             "Get-ByteArraySha256 -Bytes $committedIdentityBytes",
             "发布身份文件工作树原始字节与 HEAD Git blob 不一致",
@@ -235,6 +270,12 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
         build_gate = source[build_gate_start:build_gate_end]
         self.assertNotIn("refs/tags", build_gate)
         self.assertNotIn("rev-list", build_gate)
+        self.assertIsNone(re.search(r"Write-(?:Host|Output).*\$(?:appKey|platformKey|authorizedPlatformKey)", source))
+        manifest_start = source.index("$manifest = [ordered]@{")
+        manifest_end = source.index("Write-Utf8JsonAtomic -Path $pendingManifestPath", manifest_start)
+        manifest_block = source[manifest_start:manifest_end]
+        for plaintext_field in ("appKey =", "platformKey =", "authorizedPlatformKey ="):
+            self.assertNotIn(plaintext_field, manifest_block)
 
     def test_build_rejects_crlf_identity_even_when_git_reports_clean(self) -> None:
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
@@ -264,12 +305,171 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             run([git, "add", "."], repository)
             run([git, "commit", "-m", "build source"], repository)
 
+            command = [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(repository / "android" / "tools" / "release.ps1"),
+                "-Phase",
+                "Build",
+                "-JavaHome",
+                str(repository),
+            ]
+            connection_names = {
+                "YIYUNYING_API_BASE_URL",
+                "YIYUNYING_APP_KEY",
+                "YIYUNYING_PLATFORM_KEY",
+                "YIYUNYING_AUTHORIZED_PLATFORM_KEY",
+            }
+            missing_environment = {
+                name: value for name, value in os.environ.items() if name not in connection_names
+            }
+            missing = run(command, repository, check=False, env=missing_environment)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("YIYUNYING_API_BASE_URL", missing.stdout)
+
+            secret_values = {
+                "YIYUNYING_API_BASE_URL": "https://api.example.invalid/",
+                "YIYUNYING_APP_KEY": "sensitive-app-key-9f34",
+                "YIYUNYING_PLATFORM_KEY": "sensitive-platform-key-7a21",
+                "YIYUNYING_AUTHORIZED_PLATFORM_KEY": "sensitive-authorized-key-5c18",
+            }
+            valid_environment = dict(missing_environment)
+            valid_environment.update(secret_values)
+            placeholder_environment = dict(valid_environment)
+            placeholder_environment["YIYUNYING_APP_KEY"] = "yiyunying-local"
+            placeholder = run(command, repository, check=False, env=placeholder_environment)
+            self.assertNotEqual(placeholder.returncode, 0)
+            self.assertIn("占位值", placeholder.stdout)
+
+            emulator_environment = dict(valid_environment)
+            emulator_environment["YIYUNYING_API_BASE_URL"] = "http://10.0.2.2:8788/"
+            emulator = run(command, repository, check=False, env=emulator_environment)
+            self.assertNotEqual(emulator.returncode, 0)
+            self.assertIn("Android 模拟器宿主地址", emulator.stdout)
+
+            relative_environment = dict(valid_environment)
+            relative_environment["YIYUNYING_API_BASE_URL"] = "/api/"
+            relative = run(command, repository, check=False, env=relative_environment)
+            self.assertNotEqual(relative.returncode, 0)
+            self.assertIn("绝对 HTTP/HTTPS 地址", relative.stdout)
+
+            noncanonical_outputs = []
+            for bad_url in (
+                "https://Example.INVALID/api/",
+                "https://api.example.invalid/api/?x=/",
+                "https://api.example.invalid/api/#fragment",
+            ):
+                noncanonical_environment = dict(valid_environment)
+                noncanonical_environment["YIYUNYING_API_BASE_URL"] = bad_url
+                noncanonical = run(
+                    command, repository, check=False, env=noncanonical_environment
+                )
+                self.assertNotEqual(noncanonical.returncode, 0)
+                self.assertIn("API_BASE_URL_CANONICAL_REQUIRED", noncanonical.stdout)
+                noncanonical_outputs.append(noncanonical.stdout)
             identity_path.write_bytes(b'{"version_name":"9.9.9","version_code":999}\r\n')
             run([git, "add", "backend/config/release-identity.json"], repository)
             self.assertEqual(
                 run([git, "status", "--porcelain", "--untracked-files=all"], repository).stdout,
                 "",
                 "fixture must reproduce a byte-different worktree that Git reports clean",
+            )
+            rejected = run(command, repository, check=False, env=valid_environment)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("HEAD Git blob", rejected.stdout)
+            combined_output = (
+                missing.stdout
+                + placeholder.stdout
+                + emulator.stdout
+                + relative.stdout
+                + "".join(noncanonical_outputs)
+                + rejected.stdout
+            )
+            for secret in secret_values.values():
+                self.assertNotIn(secret, combined_output)
+            self.assertFalse((repository / "releases" / "9.9.9").exists())
+
+    def test_build_rejects_generated_buildconfig_connection_mismatch_without_leaking_keys(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        git = shutil.which("git.exe") or shutil.which("git")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required")
+        self.assertIsNotNone(git, "Git is required")
+
+        version = "7.7.7"
+        code = 777
+        api_base_url = "https://api.example.invalid/"
+        app_key = "sensitive-app-key-generated-31"
+        platform_key = "sensitive-platform-key-generated-42"
+        authorized_key = "sensitive-authorized-key-generated-53"
+
+        def java_literal(value: str) -> str:
+            return value.replace("\\", "\\\\").replace('"', '\\"')
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "repository"
+            tools_directory = repository / "android" / "tools"
+            tools_directory.mkdir(parents=True)
+            (repository / "backend" / "config").mkdir(parents=True)
+            (repository / "download-site").mkdir(parents=True)
+            shutil.copy2(RELEASE_PATH, tools_directory / "release.ps1")
+            (tools_directory / "version.ps1").write_text(
+                "param([string] $Action, [switch] $Json)\n"
+                f"[pscustomobject]@{{ versionName = '{version}'; versionCode = {code}; changed = $false }} "
+                "| ConvertTo-Json -Compress\n",
+                encoding="utf-8-sig",
+            )
+            (repository / "backend" / "config" / "release-identity.json").write_bytes(
+                f'{{"version_name":"{version}","version_code":{code}}}\n'.encode()
+            )
+            (repository / "android" / "gradlew.bat").write_bytes(b"@echo off\r\nexit /b 0\r\n")
+
+            for flavor in ("platformOwner", "authorizedPlatform", "admin", "user"):
+                expected_platform = authorized_key if flavor == "authorizedPlatform" else platform_key
+                generated_app_key = "mismatched-generated-key" if flavor == "admin" else app_key
+                build_config = (
+                    "package xyz.jjmxg.yiyunying;\n"
+                    "public final class BuildConfig {\n"
+                    f'  public static final String DEFAULT_API_BASE_URL = "{java_literal(api_base_url)}";\n'
+                    f'  public static final String DEFAULT_APP_KEY = "{java_literal(generated_app_key)}";\n'
+                    f'  public static final String DEFAULT_PLATFORM_KEY = "{java_literal(expected_platform)}";\n'
+                    "}\n"
+                )
+                build_config_path = (
+                    repository
+                    / "android"
+                    / "app"
+                    / "build"
+                    / "generated"
+                    / "source"
+                    / "buildConfig"
+                    / flavor
+                    / "debug"
+                    / "xyz"
+                    / "jjmxg"
+                    / "yiyunying"
+                    / "BuildConfig.java"
+                )
+                build_config_path.parent.mkdir(parents=True, exist_ok=True)
+                build_config_path.write_text(build_config, encoding="utf-8")
+
+            run([git, "init", "-b", "main"], repository)
+            run([git, "config", "user.name", "Release Test"], repository)
+            run([git, "config", "user.email", "release-test@example.invalid"], repository)
+            run([git, "config", "core.autocrlf", "false"], repository)
+            run([git, "add", "."], repository)
+            run([git, "commit", "-m", "generated BuildConfig fixture"], repository)
+
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "YIYUNYING_API_BASE_URL": api_base_url,
+                    "YIYUNYING_APP_KEY": app_key,
+                    "YIYUNYING_PLATFORM_KEY": platform_key,
+                    "YIYUNYING_AUTHORIZED_PLATFORM_KEY": authorized_key,
+                }
             )
             rejected = run(
                 [
@@ -278,18 +478,22 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                     "-ExecutionPolicy",
                     "Bypass",
                     "-File",
-                    str(repository / "android" / "tools" / "release.ps1"),
+                    str(tools_directory / "release.ps1"),
                     "-Phase",
                     "Build",
+                    "-SkipVerification",
                     "-JavaHome",
                     str(repository),
                 ],
                 repository,
                 check=False,
+                env=environment,
             )
             self.assertNotEqual(rejected.returncode, 0)
-            self.assertIn("HEAD Git blob", rejected.stdout)
-            self.assertFalse((repository / "releases" / "9.9.9").exists())
+            self.assertIn("admin / DEFAULT_APP_KEY", rejected.stdout)
+            for secret in (app_key, platform_key, authorized_key):
+                self.assertNotIn(secret, rejected.stdout)
+            self.assertFalse((repository / "releases" / version).exists())
 
     def test_project_finalize_binds_distinct_ancestor_and_annotated_tag(self) -> None:
         source = read(PACKAGE_PATH)
@@ -309,6 +513,9 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             "releaseManifestSha256",
             "releaseIdentitySha256",
             "pendingManifestSha256",
+            "Assert-ConnectionIdentityEvidence",
+            "Test-ConnectionIdentityEvidenceEqual",
+            "connectionIdentity = $releaseManifest.connectionIdentity",
             "Get-ZipEntrySha256",
             "Build 源码 A 快照中的发布身份原始字节 SHA-256 与发布清单不一致",
             "buildSourceCommit",
@@ -397,6 +604,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 "releaseTag": tag,
                 "finalizationStatus": "pending",
                 "releaseIdentitySha256": hashlib.sha256(identity_crlf).hexdigest(),
+                "connectionIdentity": fake_connection_identity(),
                 "releases": releases,
                 "projectAssets": project_assets,
             }
@@ -520,6 +728,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 "releaseTag": tag,
                 "finalizationStatus": "pending",
                 "releaseIdentitySha256": hashlib.sha256(committed_identity_bytes).hexdigest(),
+                "connectionIdentity": fake_connection_identity(),
                 "releases": release_entries,
                 "projectAssets": project_assets,
             }
@@ -537,6 +746,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 json.dumps(download_metadata, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            download_metadata_bytes = download_metadata_path.read_bytes()
             (release_directory / "SHA256SUMS.txt").write_text(
                 "".join(f"{entry['sha256']}  {entry['fileName']}\n" for entry in release_entries),
                 encoding="utf-8",
@@ -560,6 +770,17 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 "-ExpectedTag",
                 tag,
             ]
+            tampered_metadata = json.loads(download_metadata_bytes.decode("utf-8"))
+            tampered_metadata["connectionIdentity"]["appKeySha256"] = "4" * 64
+            download_metadata_path.write_text(
+                json.dumps(tampered_metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            connection_rejected = run(command, repository, check=False)
+            self.assertNotEqual(connection_rejected.returncode, 0)
+            self.assertIn("pending", connection_rejected.stdout)
+            download_metadata_path.write_bytes(download_metadata_bytes)
+
             tampered_manifest = dict(manifest)
             tampered_manifest["releaseNotes"] = ["ignored release directory was modified"]
             (release_directory / "release-manifest.json").write_text(
@@ -586,6 +807,16 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
                 self.assertEqual(value["buildSourceCommit"], build_commit)
                 self.assertEqual(value["releaseEvidenceCommit"], evidence_commit)
                 self.assertEqual(value["releaseTag"], tag)
+                self.assertEqual(value["connectionIdentity"], fake_connection_identity())
+                self.assertEqual(
+                    set(value["connectionIdentity"]),
+                    {
+                        "apiBaseUrl",
+                        "appKeySha256",
+                        "platformKeySha256",
+                        "authorizedPlatformKeySha256",
+                    },
+                )
             self.assertEqual(final_manifest["finalizationStatus"], "finalized")
             self.assertEqual(
                 assets_manifest["releaseManifestSha256"],

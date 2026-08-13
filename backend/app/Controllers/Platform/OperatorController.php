@@ -344,6 +344,11 @@ final class OperatorController
                      WHERE admin_id IN (SELECT id FROM admins WHERE platform_id = ?)',
                     [(int) $operator['id']]
                 );
+                Database::execute(
+                    'UPDATE user_refresh_tokens SET revoked_at = NOW()
+                     WHERE admin_id IN (SELECT id FROM admins WHERE platform_id = ?)',
+                    [(int) $operator['id']]
+                );
             }
         });
         PlatformService::log($request, $actor, 'operator', $enable ? 'unban' : 'ban', 'platform', (int) $operator['id']);

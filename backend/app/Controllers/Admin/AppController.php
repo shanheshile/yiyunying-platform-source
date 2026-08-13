@@ -224,11 +224,14 @@ final class AppController
         if ($confirm !== 'DELETE' && $confirm !== (string) $app['name']) {
             throw new HttpException('请传 confirm=DELETE 或应用名称确认删除', 0, 422);
         }
-        Database::execute(
-            'UPDATE apps SET status = -1, deleted_at = NOW(), disabled_reason = ?, updated_at = NOW()
-             WHERE id = ? AND admin_id = ?',
-            ['管理员删除应用', $appId, (int) $admin['id']]
-        );
+        Database::transaction(static function () use ($admin, $appId): void {
+            Database::execute(
+                'UPDATE apps SET status = -1, deleted_at = NOW(), disabled_reason = ?, updated_at = NOW()
+                 WHERE id = ? AND admin_id = ?',
+                ['管理员删除应用', $appId, (int) $admin['id']]
+            );
+            self::revokeAppSessions((int) $admin['id'], $appId);
+        });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', 'delete', $appId, $app);
         return Response::success([], '应用已删除');
     }
@@ -430,14 +433,31 @@ final class AppController
         $appId = (int) $params['app_id'];
         $before = AppService::owned((int) $admin['id'], $appId);
         $reason = $status === 0 ? mb_substr(trim((string) $request->input('reason', '')), 0, 255) : null;
-        Database::execute(
-            'UPDATE apps SET status = ?, disabled_reason = ?, updated_at = NOW() WHERE id = ? AND admin_id = ?',
-            [$status, $reason, $appId, (int) $admin['id']]
-        );
+        Database::transaction(static function () use ($admin, $appId, $status, $reason): void {
+            Database::execute(
+                'UPDATE apps SET status = ?, disabled_reason = ?, updated_at = NOW() WHERE id = ? AND admin_id = ?',
+                [$status, $reason, $appId, (int) $admin['id']]
+            );
+            if ($status !== 1) {
+                self::revokeAppSessions((int) $admin['id'], $appId);
+            }
+        });
         $after = AppService::owned((int) $admin['id'], $appId);
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'app', $action, $appId, $before, $after);
         unset($after['app_secret_hash']);
         return Response::success(['app' => $after], $status === 1 ? '应用已启用' : '应用已停用');
+    }
+
+    private static function revokeAppSessions(int $adminId, int $appId): void
+    {
+        Database::execute(
+            'UPDATE user_tokens SET revoked_at = NOW() WHERE admin_id = ? AND app_id = ? AND revoked_at IS NULL',
+            [$adminId, $appId]
+        );
+        Database::execute(
+            'UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE admin_id = ? AND app_id = ? AND revoked_at IS NULL',
+            [$adminId, $appId]
+        );
     }
 
     private static function uniqueAppKey(): string

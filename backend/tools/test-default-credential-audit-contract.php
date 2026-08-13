@@ -29,12 +29,20 @@ $assert(
 $assert(str_contains($auditor, "PHP_SAPI !== 'cli'"), '默认凭据审计必须仅允许 CLI');
 $assert(str_contains($auditor, 'Database::connection()'), '默认凭据审计必须读取当前部署数据库');
 foreach ([
-    'platform_accounts WHERE status = 1 AND deleted_at IS NULL',
+    'platform_accounts WHERE deleted_at IS NULL',
+    'SELECT id, password_hash FROM admins ORDER BY id ASC',
+    'users WHERE deleted_at IS NULL',
+    'apps WHERE deleted_at IS NULL',
+] as $identityScope) {
+    $assert(str_contains($auditor, $identityScope), '默认凭据审计缺少未删除身份范围：' . $identityScope);
+}
+foreach ([
+    'platform_accounts WHERE status = 1',
     'admins WHERE status = 1',
-    'users WHERE status = 1 AND deleted_at IS NULL',
-    'apps WHERE status = 1 AND deleted_at IS NULL',
-] as $activeScope) {
-    $assert(str_contains($auditor, $activeScope), '默认凭据审计缺少启用范围：' . $activeScope);
+    'users WHERE status = 1',
+    'apps WHERE status = 1',
+] as $statusBypass) {
+    $assert(!str_contains($auditor, $statusBypass), '停用身份不得绕过默认凭据审计：' . $statusBypass);
 }
 $assert(str_contains($auditor, "password_verify('123456', \$hash)"), '现代密码哈希必须验证已知默认密码');
 $assert(str_contains($auditor, "Password::verify('123456', \$hash)"), '历史 PBKDF2 哈希必须验证已知默认密码');

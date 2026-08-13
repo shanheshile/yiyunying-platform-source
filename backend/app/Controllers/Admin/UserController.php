@@ -337,6 +337,7 @@ final class UserController
         $data = $request->all();
         $accountFields = [];
         $accountValues = [];
+        $disableRequested = false;
         foreach (['email' => 190, 'phone' => 40] as $field => $max) {
             if (array_key_exists($field, $data)) {
                 $value = mb_substr(trim((string) $data[$field]), 0, $max);
@@ -348,8 +349,10 @@ final class UserController
             }
         }
         if (array_key_exists('status', $data)) {
+            $status = Validator::integer($data['status'], 'status', 0, 1);
             $accountFields[] = 'status = ?';
-            $accountValues[] = Validator::integer($data['status'], 'status', 0, 1);
+            $accountValues[] = $status;
+            $disableRequested = $status === 0;
         }
         $profileFields = [];
         $profileValues = [];
@@ -367,7 +370,8 @@ final class UserController
             throw new HttpException('没有可修改的字段', 0, 422);
         }
         Database::transaction(static function () use (
-            $accountFields, $accountValues, $profileFields, $profileValues, $admin, $appId, $userId
+            $accountFields, $accountValues, $profileFields, $profileValues, $admin, $appId, $userId,
+            $disableRequested
         ): void {
             if ($accountFields !== []) {
                 $values = array_merge($accountValues, [$userId, (int) $admin['id'], $appId]);
@@ -384,6 +388,9 @@ final class UserController
                      WHERE user_id = ? AND admin_id = ? AND app_id = ?',
                     $values
                 );
+            }
+            if ($disableRequested) {
+                self::revokeUserSessions($userId, $appId);
             }
         });
         $after = self::ownedUser((int) $admin['id'], $appId, $userId);
@@ -406,16 +413,7 @@ final class UserController
                 'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
                 [Password::hash($password), $userId, (int) $admin['id'], $appId]
             );
-            Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
-            Database::execute('UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
-            Database::execute("DELETE FROM identity_bindings WHERE subject_type = 'user' AND subject_id = ?", [$userId]);
-            Database::execute(
-                "UPDATE identity_unbind_requests
-                 SET status = 'cancelled', review_remark = '账号已被管理员删除', reviewed_by_type = 'admin',
-                     reviewed_by_id = ?, review_mode = 'direct', reviewed_at = NOW(), updated_at = NOW()
-                 WHERE subject_type = 'user' AND subject_id = ? AND status = 'pending'",
-                [(int) $admin['id'], $userId]
-            );
+            self::revokeUserSessions($userId, $appId);
         });
         LogService::adminOperation($request, (int) $admin['id'], $appId, 'user', 'password_reset', $userId);
         return Response::success([], '用户密码已重置');
@@ -439,7 +437,7 @@ final class UserController
             );
             if (in_array($banType, ['all', 'login'], true)) {
                 Database::execute('UPDATE users SET status = 0, updated_at = NOW() WHERE id = ? AND app_id = ?', [$userId, $appId]);
-                Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
+                self::revokeUserSessions($userId, $appId);
             }
             if (in_array($banType, ['all', 'resource'], true)) {
                 self::freezeCatalogSubmissions((int) $admin['id'], $appId, $userId, 'resource', '发布者账号已被封禁，资源暂定并停止新购买');
@@ -487,8 +485,7 @@ final class UserController
                  WHERE id = ? AND admin_id = ? AND app_id = ?',
                 [$userId, (int) $admin['id'], $appId]
             );
-            Database::execute('UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
-            Database::execute('UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ?', [$userId, $appId]);
+            self::revokeUserSessions($userId, $appId);
             self::freezeCatalogSubmissions(
                 (int) $admin['id'], $appId, $userId, 'resource', '发布者账号已删除，资源暂定并停止新购买'
             );
@@ -536,9 +533,14 @@ final class UserController
                 continue;
             }
             $account = trim((string) ($item['account'] ?? ''));
-            $password = (string) ($item['password'] ?? '123456');
-            if (preg_match('/^[A-Za-z0-9_.-]{3,32}$/', $account) !== 1 || strlen($password) < 6) {
-                $failed[] = ['index' => $index, 'account' => $account, 'reason' => '账号或密码格式错误'];
+            $password = (string) ($item['password'] ?? '');
+            if (preg_match('/^[A-Za-z0-9_.-]{3,32}$/', $account) !== 1
+                || strlen($password) < 6 || strlen($password) > 72
+                || hash_equals('123456', $password)) {
+                $failed[] = [
+                    'index' => $index, 'account' => $account,
+                    'reason' => '账号格式错误，或密码未显式提供 6-72 字节且不能使用已知默认密码',
+                ];
                 continue;
             }
             if (Database::one('SELECT id FROM users WHERE app_id = ? AND account = ? AND deleted_at IS NULL', [$appId, $account])) {
@@ -849,6 +851,18 @@ final class UserController
             throw new HttpException('用户不存在', 404, 404);
         }
         return $user;
+    }
+
+    private static function revokeUserSessions(int $userId, int $appId): void
+    {
+        Database::execute(
+            'UPDATE user_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ? AND revoked_at IS NULL',
+            [$userId, $appId]
+        );
+        Database::execute(
+            'UPDATE user_refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND app_id = ? AND revoked_at IS NULL',
+            [$userId, $appId]
+        );
     }
 
     private static function publicUser(array $user): array

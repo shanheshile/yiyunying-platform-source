@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
+from dataclasses import dataclass
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -47,18 +50,44 @@ SIGNER_PATTERN = re.compile(
 INSECURE_HTTP_CONFIRMATION = "DEBUG_HTTP_NON_PRODUCTION_CONFIRMED"
 
 
+@dataclass(frozen=True, repr=False)
+class ConnectionIdentity:
+    api_base_url: str
+    app_key: str
+    platform_key: str
+    authorized_platform_key: str
+    app_key_sha256: str
+    platform_key_sha256: str
+    authorized_platform_key_sha256: str
+
+    def public_evidence(self) -> dict[str, str]:
+        return {
+            "apiBaseUrl": self.api_base_url,
+            "appKeySha256": self.app_key_sha256,
+            "platformKeySha256": self.platform_key_sha256,
+            "authorizedPlatformKeySha256": self.authorized_platform_key_sha256,
+        }
+
+
 def quote(value: str) -> str:
     return shlex.quote(value)
 
 
-def run(client: paramiko.SSHClient, command: str, label: str) -> str:
+def run(
+    client: paramiko.SSHClient,
+    command: str,
+    label: str,
+    *,
+    sensitive_output: bool = False,
+) -> str:
     stdin, stdout, stderr = client.exec_command(command, get_pty=False)
     del stdin
     output = stdout.read().decode("utf-8", errors="replace")
     error = stderr.read().decode("utf-8", errors="replace")
     status = stdout.channel.recv_exit_status()
     if status != 0:
-        raise RuntimeError(f"{label} failed ({status}): {error or output}")
+        detail = "sensitive output redacted" if sensitive_output else (error or output)
+        raise RuntimeError(f"{label} failed ({status}): {detail}")
     return output
 
 
@@ -68,6 +97,8 @@ def mysql_query(
     db_password: str,
     query: str,
     label: str,
+    *,
+    sensitive_output: bool = False,
 ) -> str:
     command = (
         "MYSQL_BIN=$(command -v mysql || true); "
@@ -79,7 +110,7 @@ def mysql_query(
         f"-h {quote(args.db_host)} -P {args.db_port} -u {quote(args.db_user)} "
         f"{quote(args.db_name)} -e {quote(query)}"
     )
-    return run(client, command, label)
+    return run(client, command, label, sensitive_output=sensitive_output)
 
 
 def load_json_bytes(path: Path, label: str) -> tuple[bytes, dict[str, object]]:
@@ -108,10 +139,193 @@ def require_positive_int(value: object, field: str) -> int:
     return value
 
 
+def normalize_api_base_url(value: str) -> str:
+    raw = value.strip()
+    if not raw or raw != value:
+        raise RuntimeError("apiBaseUrl must be non-empty and have no surrounding whitespace")
+    parsed = urllib.parse.urlsplit(raw)
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("apiBaseUrl contains an invalid port") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError(
+            "apiBaseUrl must be an absolute HTTP(S) URL without credentials, query or fragment"
+        )
+    del parsed_port
+    path = parsed.path or "/"
+    if not path.endswith("/"):
+        path += "/"
+    return urllib.parse.urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc.lower(), path, "", "")
+    )
+
+
+def validate_manifest_connection_identity(manifest: dict[str, object]) -> dict[str, str]:
+    value = manifest.get("connectionIdentity")
+    if not isinstance(value, dict):
+        raise RuntimeError("finalized release manifest must contain connectionIdentity")
+    api_base_url = value.get("apiBaseUrl")
+    if not isinstance(api_base_url, str):
+        raise RuntimeError("connectionIdentity.apiBaseUrl must be text")
+    normalized_api_base_url = normalize_api_base_url(api_base_url)
+    if normalized_api_base_url != api_base_url:
+        raise RuntimeError("connectionIdentity.apiBaseUrl must use canonical trailing-slash form")
+    evidence = {"apiBaseUrl": normalized_api_base_url}
+    for field in (
+        "appKeySha256",
+        "platformKeySha256",
+        "authorizedPlatformKeySha256",
+    ):
+        digest_value = value.get(field)
+        if not isinstance(digest_value, str) or SHA256_PATTERN.fullmatch(digest_value) is None:
+            raise RuntimeError(f"connectionIdentity.{field} must be a SHA-256 digest")
+        evidence[field] = digest_value.lower()
+    return evidence
+
+
+def load_connection_identity_from_environment(
+    manifest_evidence: dict[str, str],
+    environment: Mapping[str, str] | None = None,
+) -> ConnectionIdentity:
+    source = os.environ if environment is None else environment
+    values: dict[str, str] = {}
+    for variable in (
+        "YY_API_BASE_URL",
+        "YY_APP_KEY",
+        "YY_PLATFORM_KEY",
+        "YY_AUTHORIZED_PLATFORM_KEY",
+    ):
+        value = source.get(variable, "")
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(character in value for character in ("\x00", "\r", "\n"))
+        ):
+            raise RuntimeError(f"{variable} is required and must be a single exact value")
+        values[variable] = value
+
+    api_base_url = normalize_api_base_url(values["YY_API_BASE_URL"])
+    if not hmac.compare_digest(api_base_url, manifest_evidence["apiBaseUrl"]):
+        raise RuntimeError("YY_API_BASE_URL does not match release manifest connectionIdentity")
+    hashed_values = {
+        "appKeySha256": hashlib.sha256(values["YY_APP_KEY"].encode("utf-8")).hexdigest(),
+        "platformKeySha256": hashlib.sha256(
+            values["YY_PLATFORM_KEY"].encode("utf-8")
+        ).hexdigest(),
+        "authorizedPlatformKeySha256": hashlib.sha256(
+            values["YY_AUTHORIZED_PLATFORM_KEY"].encode("utf-8")
+        ).hexdigest(),
+    }
+    for field, actual_digest in hashed_values.items():
+        if not hmac.compare_digest(actual_digest, manifest_evidence[field]):
+            raise RuntimeError(f"environment connection identity hash mismatch for {field}")
+    return ConnectionIdentity(
+        api_base_url=api_base_url,
+        app_key=values["YY_APP_KEY"],
+        platform_key=values["YY_PLATFORM_KEY"],
+        authorized_platform_key=values["YY_AUTHORIZED_PLATFORM_KEY"],
+        app_key_sha256=hashed_values["appKeySha256"],
+        platform_key_sha256=hashed_values["platformKeySha256"],
+        authorized_platform_key_sha256=hashed_values[
+            "authorizedPlatformKeySha256"
+        ],
+    )
+
+
+def url_origin(value: str, label: str) -> tuple[str, str, int]:
+    parsed = urllib.parse.urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError(f"{label} contains an invalid port") from exc
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError(f"{label} must be an absolute HTTP(S) URL")
+    return scheme, parsed.hostname.lower(), port or (443 if scheme == "https" else 80)
+
+
+def validate_connection_origins(
+    api_base_url: str,
+    urls: dict[str, str],
+) -> None:
+    expected_origin = url_origin(api_base_url, "connectionIdentity.apiBaseUrl")
+    for label, value in urls.items():
+        if url_origin(value, label) != expected_origin:
+            raise RuntimeError(
+                f"{label} scheme, host and port must match connectionIdentity.apiBaseUrl"
+            )
+
+
+def validate_remote_connection_identity(
+    identity: ConnectionIdentity,
+    root_platform_key: str,
+    authorized_platform_key: str,
+    app_keys: list[str],
+) -> None:
+    mismatches = []
+    if not hmac.compare_digest(root_platform_key, identity.platform_key):
+        mismatches.append("platformKey")
+    if not hmac.compare_digest(
+        authorized_platform_key, identity.authorized_platform_key
+    ):
+        mismatches.append("authorizedPlatformKey")
+    app_key_matches = sum(
+        1 for value in app_keys if hmac.compare_digest(value, identity.app_key)
+    )
+    if app_key_matches != 1:
+        mismatches.append("appKey")
+    if mismatches:
+        raise RuntimeError(
+            "remote database connection identity mismatch: " + ", ".join(mismatches)
+        )
+
+
+def select_platform_connection_context(
+    platforms: list[tuple[int, str, int, int]],
+    identity: ConnectionIdentity,
+) -> tuple[tuple[int, str, int, int], tuple[int, str, int, int]]:
+    roots = [
+        row
+        for row in platforms
+        if row[2] == 1 and hmac.compare_digest(row[1], identity.platform_key)
+    ]
+    if len(roots) != 1:
+        raise RuntimeError("release root platform identity must match exactly one active row")
+    root = roots[0]
+    authorized = [
+        row
+        for row in platforms
+        if row[2] == 2
+        and row[3] == root[0]
+        and hmac.compare_digest(row[1], identity.authorized_platform_key)
+    ]
+    if len(authorized) != 1:
+        raise RuntimeError(
+            "authorized platform identity must match exactly one active child row"
+        )
+    return root, authorized[0]
+
+
 def load_release_evidence(
     identity_path: Path, manifest_path: Path
 ) -> tuple[
-    dict[str, object], dict[str, dict[str, object]], str, str, str, str, str
+    dict[str, object],
+    dict[str, dict[str, object]],
+    dict[str, str],
+    str,
+    str,
+    str,
+    str,
+    str,
 ]:
     identity_bytes, identity = load_json_bytes(identity_path, "release identity")
     manifest_bytes, manifest = load_json_bytes(manifest_path, "release manifest")
@@ -134,6 +348,7 @@ def load_release_evidence(
 
     if manifest.get("schemaVersion") != 4 or manifest.get("finalizationStatus") != "finalized":
         raise RuntimeError("release manifest must be finalized schemaVersion 4 evidence")
+    connection_identity = validate_manifest_connection_identity(manifest)
     build_commit = str(manifest.get("buildSourceCommit", "")).lower()
     evidence_commit = str(manifest.get("releaseEvidenceCommit", "")).lower()
     release_tag = str(manifest.get("releaseTag", ""))
@@ -191,6 +406,7 @@ def load_release_evidence(
     return (
         identity,
         expected,
+        connection_identity,
         identity_sha256,
         build_commit,
         evidence_commit,
@@ -213,7 +429,7 @@ def validate_https_url(
     ):
         requirement = "HTTP(S) Debug" if allow_insecure_http_debug else "HTTPS"
         raise RuntimeError(
-            f"{label} must be a {requirement} URL without credentials or fragment: {value!r}"
+            f"{label} must be a {requirement} URL without credentials or fragment"
         )
     return parsed
 
@@ -293,6 +509,7 @@ def verify_remote_release_state(
     identity: dict[str, object],
     identity_sha256: str,
     expected: dict[str, dict[str, object]],
+    manifest_connection_identity: dict[str, str],
     build_commit: str,
     evidence_commit: str,
     release_tag: str,
@@ -446,6 +663,8 @@ def verify_remote_release_state(
         "release_tag": publication.get("release_tag") == release_tag,
         "release_identity_sha256": publication.get("release_identity_sha256") == identity_sha256,
         "release_manifest_sha256": publication.get("release_manifest_sha256") == manifest_sha256,
+        "connection_identity": publication.get("connection_identity")
+        == manifest_connection_identity,
         "activated_at_utc": isinstance(publication.get("activated_at_utc"), str)
         and bool(publication.get("activated_at_utc")),
     }
@@ -468,6 +687,10 @@ def verify_remote_release_state(
             download_url,
             f"{edition} receipt download_url",
             allow_insecure_http_debug,
+        )
+        validate_connection_origins(
+            manifest_connection_identity["apiBaseUrl"],
+            {f"{edition} receipt download_url": download_url},
         )
         checks = {
             "version_name": entry.get("version_name") == release["version_name"],
@@ -500,14 +723,23 @@ def verify_remote_release_state(
 
 
 class HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, allow_insecure_http_debug: bool = False):
+    def __init__(
+        self,
+        allow_insecure_http_debug: bool = False,
+        api_base_url: str = "",
+    ):
         super().__init__()
         self.allow_insecure_http_debug = allow_insecure_http_debug
+        self.api_base_url = api_base_url
 
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):
         validate_https_url(
             new_url, "redirect target", self.allow_insecure_http_debug
         )
+        if self.api_base_url:
+            validate_connection_origins(
+                self.api_base_url, {"redirect target": new_url}
+            )
         return super().redirect_request(
             request, file_pointer, code, message, headers, new_url
         )
@@ -515,9 +747,10 @@ class HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def build_https_opener(
     allow_insecure_http_debug: bool = False,
+    api_base_url: str = "",
 ) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(
-        HttpsOnlyRedirectHandler(allow_insecure_http_debug)
+        HttpsOnlyRedirectHandler(allow_insecure_http_debug, api_base_url)
     )
 
 
@@ -578,13 +811,20 @@ def fetch_lifecycle_json(
         url,
         headers={"Accept": "application/json", "Accept-Encoding": "identity"},
     )
-    with opener.open(request, timeout=60) as response:
-        validate_https_url(
-            response.geturl(), f"{label} final URL", allow_insecure_http_debug
-        )
-        if response.getcode() != 200:
-            raise RuntimeError(f"{label} returned HTTP {response.getcode()}")
-        payload = response.read(1024 * 1024 + 1)
+    try:
+        with opener.open(request, timeout=60) as response:
+            validate_https_url(
+                response.geturl(), f"{label} final URL", allow_insecure_http_debug
+            )
+            if response.getcode() != 200:
+                raise RuntimeError(f"{label} returned HTTP {response.getcode()}")
+            payload = response.read(1024 * 1024 + 1)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"{label} request failed with HTTP {exc.code}") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            f"{label} request failed: {type(exc).__name__}"
+        ) from None
     if len(payload) > 1024 * 1024:
         raise RuntimeError(f"{label} response is too large")
     try:
@@ -739,6 +979,7 @@ def main() -> int:
     (
         identity,
         expected,
+        manifest_connection_identity,
         identity_sha256,
         build_commit,
         evidence_commit,
@@ -747,6 +988,9 @@ def main() -> int:
     ) = load_release_evidence(
         Path(args.release_identity), Path(args.release_manifest)
     )
+    connection_identity = load_connection_identity_from_environment(
+        manifest_connection_identity
+    )
     allow_insecure_http_debug = authorize_insecure_http_debug(
         expected,
         args.allow_insecure_http_debug,
@@ -754,6 +998,10 @@ def main() -> int:
     )
     validate_https_url(
         args.lifecycle_url, "lifecycle-url", allow_insecure_http_debug
+    )
+    validate_connection_origins(
+        connection_identity.api_base_url,
+        {"lifecycle-url": args.lifecycle_url},
     )
     if allow_insecure_http_debug:
         print(
@@ -777,7 +1025,9 @@ def main() -> int:
     if not ssh_password or not db_password:
         raise RuntimeError("YY_SSH_PASSWORD and YY_DB_PASSWORD are required")
 
-    opener = build_https_opener(allow_insecure_http_debug)
+    opener = build_https_opener(
+        allow_insecure_http_debug, connection_identity.api_base_url
+    )
     client = connect_ssh(args, ssh_password)
     try:
         transport = client.get_transport()
@@ -798,6 +1048,7 @@ def main() -> int:
             identity,
             identity_sha256,
             expected,
+            manifest_connection_identity,
             build_commit,
             evidence_commit,
             release_tag,
@@ -812,6 +1063,7 @@ def main() -> int:
             "SELECT id, platform_key, level, COALESCE(parent_id, 0) FROM platform_accounts "
             "WHERE deleted_at IS NULL AND status = 1 ORDER BY level, id",
             "platform-context",
+            sensitive_output=True,
         )
         platforms: list[tuple[int, str, int, int]] = []
         for line in platform_rows.splitlines():
@@ -823,17 +1075,12 @@ def main() -> int:
                 or not parts[2].isdigit()
                 or not parts[3].isdigit()
             ):
-                raise RuntimeError(f"platform context returned a malformed row: {line!r}")
+                raise RuntimeError("platform context returned a malformed row")
             platforms.append((int(parts[0]), parts[1].strip(), int(parts[2]), int(parts[3])))
-        root = next((row for row in platforms if row[2] == 1), None)
-        if root is None:
-            raise RuntimeError("an active level-1 platform context is required")
-        root_id, root_platform_key, _, _ = root
-        authorized = next(
-            (row for row in platforms if row[2] == 2 and row[3] == root_id), None
+        root, authorized = select_platform_connection_context(
+            platforms, connection_identity
         )
-        if authorized is None:
-            raise RuntimeError("an active level-2 context under the release root is required")
+        root_id, root_platform_key, _, _ = root
 
         edition_values = ", ".join(
             "'" + edition.replace("'", "''") + "'"
@@ -901,20 +1148,30 @@ def main() -> int:
             "INNER JOIN admins a ON a.id = ap.admin_id "
             "INNER JOIN platform_accounts p ON p.id = a.platform_id "
             "WHERE ap.deleted_at IS NULL AND ap.status = 1 AND a.deleted_at IS NULL "
-            "AND p.deleted_at IS NULL "
+            "AND a.status = 1 AND p.status = 1 AND p.deleted_at IS NULL "
             f"AND (CASE WHEN p.level = 1 THEN p.id ELSE p.parent_id END) = {root_id} "
-            "ORDER BY ap.id LIMIT 1",
+            "ORDER BY ap.id",
             "app-context",
+            sensitive_output=True,
         )
-        app_key = app_rows.strip().splitlines()[0].strip() if app_rows.strip() else ""
-        if not app_key:
+        app_keys = [line.strip() for line in app_rows.splitlines() if line.strip()]
+        if not app_keys or any("\t" in value for value in app_keys):
             raise RuntimeError("an active application context under the release root is required")
 
+        validate_remote_connection_identity(
+            connection_identity,
+            root_platform_key,
+            authorized[1],
+            app_keys,
+        )
+
         contexts = {
-            "platform_owner": {"platform_key": root_platform_key},
-            "authorized_platform": {"platform_key": authorized[1]},
-            "admin": {"platform_key": root_platform_key},
-            "user": {"app_key": app_key},
+            "platform_owner": {"platform_key": connection_identity.platform_key},
+            "authorized_platform": {
+                "platform_key": connection_identity.authorized_platform_key
+            },
+            "admin": {"platform_key": connection_identity.platform_key},
+            "user": {"app_key": connection_identity.app_key},
         }
         if set(contexts) != REQUIRED_EDITIONS:
             raise RuntimeError("internal error: lifecycle contexts are not exactly four editions")
@@ -934,7 +1191,7 @@ def main() -> int:
                 allow_insecure_http_debug,
             )
             if int(response.get("code", 0)) != 1:
-                raise RuntimeError(f"{edition} lifecycle returned an error: {response}")
+                raise RuntimeError(f"{edition} lifecycle returned an error payload")
             data = response.get("data") or {}
             update = data.get("update") or {}
             download_url = str(update.get("download_url", ""))
@@ -942,6 +1199,10 @@ def main() -> int:
                 download_url,
                 f"{edition} download_url",
                 allow_insecure_http_debug,
+            )
+            validate_connection_origins(
+                connection_identity.api_base_url,
+                {f"{edition} download_url": download_url},
             )
             checks = {
                 "edition_code": data.get("edition_code") == edition,

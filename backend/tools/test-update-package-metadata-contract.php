@@ -67,6 +67,14 @@ $checks = [
     'public lifecycle excludes incomplete active rows' =>
         substr_count($source['service'], "size_bytes > 0 AND CHAR_LENGTH") >= 2
         && str_contains($source['service'], 'updatePackageMetadataComplete'),
+    'public lifecycle rejects disabled app admin and platform identities' =>
+        str_contains($source['service'], 'ap.status = 1 AND ap.deleted_at IS NULL')
+        && str_contains($source['service'], 'a.status = 1 AND a.deleted_at IS NULL')
+        && str_contains($source['service'], 'p.status = 1 AND p.deleted_at IS NULL')
+        && str_contains($source['service'], 'PlatformService::byId')
+        && str_contains($source['service'], 'PlatformService::byKey')
+        && str_contains($source['service'], 'AdminAccessService::assertDownstreamAccess')
+        && str_contains($source['service'], 'AdminAccessService::accessState'),
     'platform creation uses the fail-closed validator' =>
         str_contains($source['service'], 'createPlatformUpdate')
         && str_contains($source['service'], 'requireUpdatePackageMetadata($data)'),

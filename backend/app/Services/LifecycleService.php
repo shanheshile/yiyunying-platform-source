@@ -21,10 +21,15 @@ final class LifecycleService
                         CASE WHEN p.level = 1 THEN p.id ELSE p.parent_id END AS root_platform_id
                  FROM apps ap INNER JOIN admins a ON a.id = ap.admin_id
                  INNER JOIN platform_accounts p ON p.id = a.platform_id
-                 WHERE ap.app_key = ? AND ap.deleted_at IS NULL',
+                 WHERE ap.app_key = ? AND ap.status = 1 AND ap.deleted_at IS NULL
+                   AND a.status = 1 AND a.deleted_at IS NULL
+                   AND p.status = 1 AND p.deleted_at IS NULL',
                 [$appKey]
             );
             if ($row === null) throw new HttpException('应用不存在', 404, 404);
+            PlatformService::byId((int) $row['platform_id']);
+            $admin = AdminAccessService::context((int) $row['admin_id']);
+            AdminAccessService::assertDownstreamAccess($admin);
             return [
                 'edition_code' => $edition, 'target_level' => 4,
                 'root_platform_id' => (int) $row['root_platform_id'],
@@ -32,12 +37,17 @@ final class LifecycleService
                 'app_id' => (int) $row['app_id'], 'app_key' => (string) $row['app_key'],
             ];
         }
-        $platform = Database::one('SELECT * FROM platform_accounts WHERE platform_key = ? AND deleted_at IS NULL', [$platformKey]);
-        if ($platform === null) throw new HttpException('平台入口不存在', 404, 404);
+        $platform = PlatformService::byKey($platformKey);
         $level = match ($edition) { 'platform_owner' => 1, 'authorized_platform' => 2, default => 3 };
         if ($edition === 'platform_owner' && (int) $platform['level'] !== 1) throw new HttpException('当前入口不是 1 级平台', 0, 422);
         if ($edition === 'authorized_platform' && (int) $platform['level'] !== 2) throw new HttpException('当前入口不是 2 级授权平台', 0, 422);
-        if ($adminId !== null && $edition === 'admin') PlatformService::ownedAdmin($platform, $adminId);
+        if ($adminId !== null && $edition === 'admin') {
+            $admin = PlatformService::ownedAdmin($platform, $adminId);
+            $state = AdminAccessService::accessState($admin, false);
+            if ($state['mode'] === 'blocked') {
+                throw new HttpException((string) $state['reason'], 403, 403, $state);
+            }
+        }
         return [
             'edition_code' => $edition, 'target_level' => $level,
             'root_platform_id' => (int) $platform['level'] === 1 ? (int) $platform['id'] : (int) $platform['parent_id'],

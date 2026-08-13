@@ -41,6 +41,40 @@ function Get-ZipEntrySha256 {
     }
 }
 
+function Assert-ConnectionIdentityEvidence($Value, [string] $Source) {
+    if ($null -eq $Value) {
+        throw "$Source 缺少 connectionIdentity。"
+    }
+    $apiBaseUrl = [string] $Value.apiBaseUrl
+    $uri = $null
+    if (-not [Uri]::TryCreate($apiBaseUrl, [UriKind]::Absolute, [ref] $uri) -or
+        $uri.Scheme -notin @('http', 'https') -or
+        $uri.IsLoopback -or
+        $uri.Host.Trim('[', ']').ToLowerInvariant() -in @('localhost', '0.0.0.0', '::', '::1', '10.0.2.2')) {
+        throw "$Source 的 connectionIdentity.apiBaseUrl 不是合法的非本机绝对地址。"
+    }
+    foreach ($field in @('appKeySha256', 'platformKeySha256', 'authorizedPlatformKeySha256')) {
+        if ([string] $Value.$field -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw "$Source 的 connectionIdentity.$field 不是有效 SHA-256。"
+        }
+    }
+    foreach ($forbidden in @('appKey', 'platformKey', 'authorizedPlatformKey')) {
+        if ($null -ne $Value.PSObject.Properties[$forbidden]) {
+            throw "$Source 的 connectionIdentity 不得包含 KEY 明文。"
+        }
+    }
+}
+
+function Test-ConnectionIdentityEvidenceEqual($Left, $Right) {
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    return (
+        [string] $Left.apiBaseUrl -ceq [string] $Right.apiBaseUrl -and
+        ([string] $Left.appKeySha256).ToLowerInvariant() -ceq ([string] $Right.appKeySha256).ToLowerInvariant() -and
+        ([string] $Left.platformKeySha256).ToLowerInvariant() -ceq ([string] $Right.platformKeySha256).ToLowerInvariant() -and
+        ([string] $Left.authorizedPlatformKeySha256).ToLowerInvariant() -ceq ([string] $Right.authorizedPlatformKeySha256).ToLowerInvariant()
+    )
+}
+
 function Write-Utf8JsonAtomic([string] $Path, $Value) {
     $json = $Value | ConvertTo-Json -Depth 20
     $temporary = "$Path.$([Guid]::NewGuid().ToString('N')).tmp"
@@ -134,6 +168,7 @@ if ($releaseManifest.versionName -ne $version -or [int] $releaseManifest.version
 if (([string] $releaseManifest.releaseIdentitySha256).ToLowerInvariant() -ne $identitySha256) {
     throw '发布清单未绑定到当前后端发布身份文件。'
 }
+Assert-ConnectionIdentityEvidence -Value $releaseManifest.connectionIdentity -Source 'Build 发布清单'
 if ([string] $releaseManifest.finalizationStatus -ne 'pending' -or
     -not [string]::IsNullOrWhiteSpace([string] $releaseManifest.releaseEvidenceCommit)) {
     throw '发布目录不是未收口的 Build 产物；拒绝覆盖或二次生成同版本项目资产。'
@@ -153,6 +188,7 @@ if ([int] $downloadMetadata.schemaVersion -ne 4 -or
     [string] $downloadMetadata.releaseTag -ne "v$version-debug" -or
     [string] $downloadMetadata.finalizationStatus -ne 'pending' -or
     -not [string]::IsNullOrWhiteSpace([string] $downloadMetadata.releaseEvidenceCommit) -or
+    -not (Test-ConnectionIdentityEvidenceEqual -Left $downloadMetadata.connectionIdentity -Right $releaseManifest.connectionIdentity) -or
     ([string] $downloadMetadata.pendingManifestSha256).ToLowerInvariant() -ne $pendingManifestSha256) {
     throw 'B 提交中的下载元数据未精确绑定当前 pending 发布清单、Build 提交或发布身份；拒绝 Finalize。'
 }
@@ -336,6 +372,7 @@ try {
         releaseEvidenceCommit = $evidenceCommit
         releaseTag = $tag
         releaseIdentitySha256 = $identitySha256
+        connectionIdentity = $releaseManifest.connectionIdentity
         releaseManifestSha256 = Get-Sha256 $stagedManifestPath
         generatedAt = [DateTimeOffset]::Now.ToString('o')
         bundleRefs = @('refs/heads/main', "refs/tags/$tag")

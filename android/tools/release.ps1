@@ -318,6 +318,157 @@ function Get-ByteArraySha256 {
     }
 }
 
+function Get-Utf8StringSha256 {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    return Get-ByteArraySha256 -Bytes $utf8.GetBytes($Value)
+}
+
+function Read-RequiredReleaseEnvironment([string] $Name) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "Build 缺少必需的连接身份环境变量：$Name"
+    }
+    if ($value -cne $value.Trim()) {
+        throw "连接身份环境变量包含首尾空白，拒绝 Build：$Name"
+    }
+    foreach ($character in $value.ToCharArray()) {
+        if ([char]::IsControl($character)) {
+            throw "连接身份环境变量包含控制字符，拒绝 Build：$Name"
+        }
+    }
+    return $value
+}
+
+function Assert-ReleaseConnectionKey([string] $Name, [string] $Value) {
+    $normalized = $Value.ToLowerInvariant()
+    $knownPlaceholders = @(
+        'yiyunying-local',
+        'local-platform',
+        'local-authorized-platform',
+        'changeme',
+        'change-me',
+        'placeholder',
+        'default',
+        'example',
+        'test',
+        'demo'
+    )
+    if ($normalized -in $knownPlaceholders -or
+        $normalized -match '^(local|test|demo|example|placeholder)([-_].*)?$' -or
+        $normalized -match '^your[-_].*') {
+        throw "连接身份环境变量仍是占位值，拒绝 Build：$Name"
+    }
+}
+
+function Read-ReleaseConnectionIdentity {
+    $apiBaseUrl = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_API_BASE_URL'
+    $appKey = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_APP_KEY'
+    $platformKey = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_PLATFORM_KEY'
+    $authorizedPlatformKey = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_AUTHORIZED_PLATFORM_KEY'
+
+    $uri = $null
+    if (-not [Uri]::TryCreate($apiBaseUrl, [UriKind]::Absolute, [ref] $uri) -or
+        $uri.Scheme -notin @('http', 'https')) {
+        throw 'YIYUNYING_API_BASE_URL 必须是绝对 HTTP/HTTPS 地址。'
+    }
+    $normalizedHost = $uri.Host.Trim('[', ']').ToLowerInvariant()
+    if ($uri.IsLoopback -or
+        $normalizedHost -in @('localhost', '0.0.0.0', '::', '::1', '10.0.2.2') -or
+        $normalizedHost -match '^127(?:\.\d{1,3}){3}$') {
+        throw 'YIYUNYING_API_BASE_URL 不能指向本机、通配监听地址或 Android 模拟器宿主地址。'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($uri.UserInfo)) {
+        throw 'YIYUNYING_API_BASE_URL 不能包含用户名或密码。'
+    }
+    if (-not [string]::IsNullOrEmpty($uri.Query) -or
+        -not [string]::IsNullOrEmpty($uri.Fragment)) {
+        throw 'API_BASE_URL_CANONICAL_REQUIRED: YIYUNYING_API_BASE_URL 不能包含查询参数或片段。'
+    }
+    if ($apiBaseUrl -cne $uri.AbsoluteUri) {
+        throw 'API_BASE_URL_CANONICAL_REQUIRED: YIYUNYING_API_BASE_URL 必须使用规范的小写 scheme/host、标准路径与端口形式。'
+    }
+    if (-not $apiBaseUrl.EndsWith('/')) {
+        throw 'YIYUNYING_API_BASE_URL 必须以 / 结尾，确保 BuildConfig 与环境变量逐字一致。'
+    }
+
+    Assert-ReleaseConnectionKey -Name 'YIYUNYING_APP_KEY' -Value $appKey
+    Assert-ReleaseConnectionKey -Name 'YIYUNYING_PLATFORM_KEY' -Value $platformKey
+    Assert-ReleaseConnectionKey -Name 'YIYUNYING_AUTHORIZED_PLATFORM_KEY' -Value $authorizedPlatformKey
+
+    return [pscustomobject]@{
+        apiBaseUrl = $apiBaseUrl
+        appKey = $appKey
+        platformKey = $platformKey
+        authorizedPlatformKey = $authorizedPlatformKey
+        evidence = [ordered]@{
+            apiBaseUrl = $apiBaseUrl
+            appKeySha256 = Get-Utf8StringSha256 -Value $appKey
+            platformKeySha256 = Get-Utf8StringSha256 -Value $platformKey
+            authorizedPlatformKeySha256 = Get-Utf8StringSha256 -Value $authorizedPlatformKey
+        }
+    }
+}
+
+function Read-GeneratedBuildConfigString {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $FieldName,
+        [Parameter(Mandatory = $true)][string] $FlavorName
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Gradle 完成后缺少 $FlavorName 的 generated BuildConfig。"
+    }
+    $source = [System.IO.File]::ReadAllText($Path)
+    $pattern = '(?m)^\s*public\s+static\s+final\s+String\s+' + [regex]::Escape($FieldName) + '\s*=\s*"(?<Value>(?:\\[\\"]|[^"\\])*)";\s*$'
+    $matches = [regex]::Matches($source, $pattern, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if ($matches.Count -ne 1) {
+        throw "无法唯一读取 $FlavorName generated BuildConfig 字段：$FieldName"
+    }
+    $encoded = $matches[0].Groups['Value'].Value
+    $decoded = New-Object System.Text.StringBuilder
+    for ($index = 0; $index -lt $encoded.Length; $index++) {
+        $character = $encoded[$index]
+        if ($character -ne '\') {
+            [void] $decoded.Append($character)
+            continue
+        }
+        $index++
+        if ($index -ge $encoded.Length -or $encoded[$index] -notin @('\', '"')) {
+            throw "generated BuildConfig 包含不受支持的字符串转义：$FlavorName / $FieldName"
+        }
+        [void] $decoded.Append($encoded[$index])
+    }
+    return $decoded.ToString()
+}
+
+function Assert-GeneratedConnectionIdentity($ConnectionIdentity) {
+    $buildConfigRoot = Join-Path $projectRoot 'app\build\generated\source\buildConfig'
+    $flavors = @(
+        [pscustomobject]@{ name = 'platformOwner'; platformKey = $ConnectionIdentity.platformKey },
+        [pscustomobject]@{ name = 'authorizedPlatform'; platformKey = $ConnectionIdentity.authorizedPlatformKey },
+        [pscustomobject]@{ name = 'admin'; platformKey = $ConnectionIdentity.platformKey },
+        [pscustomobject]@{ name = 'user'; platformKey = $ConnectionIdentity.platformKey }
+    )
+    foreach ($flavor in $flavors) {
+        $buildConfigPath = Join-Path $buildConfigRoot "$($flavor.name)\debug\xyz\jjmxg\yiyunying\BuildConfig.java"
+        $actualApiBaseUrl = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_API_BASE_URL' -FlavorName $flavor.name
+        $actualAppKey = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_APP_KEY' -FlavorName $flavor.name
+        $actualPlatformKey = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_PLATFORM_KEY' -FlavorName $flavor.name
+        if ($actualApiBaseUrl -cne $ConnectionIdentity.apiBaseUrl) {
+            throw "generated BuildConfig 与环境连接身份不一致：$($flavor.name) / DEFAULT_API_BASE_URL"
+        }
+        if ($actualAppKey -cne $ConnectionIdentity.appKey) {
+            throw "generated BuildConfig 与环境连接身份不一致：$($flavor.name) / DEFAULT_APP_KEY"
+        }
+        if ($actualPlatformKey -cne $flavor.platformKey) {
+            throw "generated BuildConfig 与环境连接身份不一致：$($flavor.name) / DEFAULT_PLATFORM_KEY"
+        }
+    }
+}
+
 function Read-CommittedReleaseEvidence($Version) {
     if (-not (Test-Path -LiteralPath $releaseIdentityFile)) {
         throw "缺少后端发布身份文件：$releaseIdentityFile"
@@ -412,6 +563,10 @@ if ($Phase -eq 'Finalize') {
         [string] $projectAssetsManifest.releaseEvidenceCommit -ne $evidenceCommit -or
         [string] $projectAssetsManifest.releaseTag -ne $expectedTag -or
         [string] $projectAssetsManifest.releaseIdentitySha256 -ne [string] $finalManifest.releaseIdentitySha256 -or
+        [string] $projectAssetsManifest.connectionIdentity.apiBaseUrl -cne [string] $finalManifest.connectionIdentity.apiBaseUrl -or
+        ([string] $projectAssetsManifest.connectionIdentity.appKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.appKeySha256).ToLowerInvariant() -or
+        ([string] $projectAssetsManifest.connectionIdentity.platformKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.platformKeySha256).ToLowerInvariant() -or
+        ([string] $projectAssetsManifest.connectionIdentity.authorizedPlatformKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.authorizedPlatformKeySha256).ToLowerInvariant() -or
         ([string] $projectAssetsManifest.releaseManifestSha256).ToLowerInvariant() -ne $finalManifestSha256) {
         throw '项目资产清单未同时绑定 Build 源码提交与 Finalize 证据提交。'
     }
@@ -444,6 +599,7 @@ if ($Phase -eq 'Finalize') {
 $releaseEvidence = Read-CommittedReleaseEvidence -Version $version
 $buildSourceCommit = [string] $releaseEvidence.buildSourceCommit
 $releaseIdentitySha256 = [string] $releaseEvidence.releaseIdentitySha256
+$connectionIdentity = Read-ReleaseConnectionIdentity
 
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw 'JAVA_HOME 未配置，请通过 -JavaHome 指定 JDK 17。'
@@ -485,6 +641,7 @@ try {
             throw "四端验证失败，退出码：$LASTEXITCODE"
         }
     }
+    Assert-GeneratedConnectionIdentity -ConnectionIdentity $connectionIdentity
 
     $aapt = Resolve-AndroidBuildTool -FileName 'aapt.exe'
     $apksigner = Resolve-AndroidBuildTool -FileName 'apksigner.bat'
@@ -617,6 +774,7 @@ try {
         releaseTag = "v$($version.versionName)-debug"
         finalizationStatus = 'pending'
         releaseIdentitySha256 = $releaseIdentitySha256
+        connectionIdentity = $connectionIdentity.evidence
         releaseDate = (Get-Date -Format 'yyyy-MM-dd')
         generatedAt = [DateTimeOffset]::Now.ToString('o')
         downloadRootBase = $DownloadRootBase
