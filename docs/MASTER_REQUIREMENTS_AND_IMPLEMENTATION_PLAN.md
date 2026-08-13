@@ -1,6 +1,6 @@
 # 易云盈平台全量需求与实施总纲
 
-更新基线：本地源码候选 `2.7.15 (60)`；线上非强制 Debug 测试版 `2.7.14 (59)`
+更新基线：本地 Stable Build `2.8.0 (62)`（设备升级门禁 BLOCKED）；线上非强制 Debug 测试版 `2.7.14 (59)`
 建立日期：2026-08-01
 适用范围：Android 用户端（4）、三级管理端（1/2/3）、PHP API、MySQL、下载站、更新链路与运维平台
 
@@ -269,16 +269,17 @@
 7. 版本、安装包、签名、更新接口、下载站、GitHub、数据库迁移和回滚资料一致。
 8. 发布后存在指标、告警、审计和可执行回滚方案。
 
-## 16. 2.7.15 候选与 2.7.14 线上基线
+## 16. 2.8.0 Stable Build 与 2.7.14 线上基线
 
-### 2.7.15 本地源码候选
+### 2.8.0 本地 Stable Build-pending
 
-- Android、后端发布身份和下载中心的本地版本已统一为 `2.7.15 (60)`；四个本地 Debug APK 已生成，但不代表 Finalize 或生产发布存在。
-- 管理端四栏、多应用控制、BuildConfig 登录身份链、用户快捷模块、三态审核、短视频、相机确认/重拍与录像聚焦、论坛线程/排序/分页、主题弹窗/底部弹层、群管理、资源商店私有审核、默认凭据和发布门禁已进入源码闭环。
-- 后端检查通过 212 个 PHP 文件、221 张表、811 条路由、444 个文档端点及合同检查。
-- 旧 CRLF/本地回退配置资产已撤销隔离，exact Git blob/worktree identity 字节一致并重新 Build PASS：226/226 tasks，四端各 337 项/合计 1,348 项测试均 0 失败、0 错误、0 跳过，四端 Lint 与独立 APK 审计通过。
-- Build 源码提交 A 为 `432d2768f333e433661af0a5ae448177d8bc163b`；pending manifest SHA-256 为 `BE2A8FCB2AE1E12D5583E87C5B48D19CC7F34DAB77A5DE16A05D019BE3DA2294`；identity SHA-256 为 `9AC4EFDF7AC8DF8743D7D32ACFBD98A5723D687CC8B2E33BE2B7C8A4ECBFAC9C`。
-- 本次待提交的构建元数据/文档构成证据提交 B，精确 B 不预写；顺序为 B → annotated tag → Finalize，最终状态只按 finalized manifest 与 Git refs 回读。当前尚未 Finalize、迁移/部署、推送或归档。
+- Android、后端发布身份和下载中心官网版本已统一为 `2.8.0 (62)`；四个 production APK 已生成，均为非 Debug 包名、`debuggable=false`、HTTPS-only，统一 signer SHA-256 为 `6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`。
+- 管理端四栏、多应用控制、源码内登录身份、用户快捷模块、三态审核、短视频、相机、论坛线程、群管理、资源私有审核、维护身份冲突保护和发布门禁已进入源码与自动化闭环。
+- 官网覆盖四角色下载、13 个系统接入示例、58 条精确路由，以及复制、分享、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开和 APK 安装/校验指引。
+- 后端检查通过 214 个 PHP 文件、221 张表、811 条路由、444 个文档端点、27 个 PowerShell 脚本及合同；Android 226/226 tasks，四端各 337 项/合计 1,348 项测试，四端 Lint 与独立 APK 审计通过；网站 build、rendered HTML、静态导出、ESLint、敏感信息和原子部署合同通过。
+- Build 源码提交 A 为 `f08147a9546d3b4bb3539a2e68732e1f15c4b03b`；pending manifest SHA-256 为 `19C62DE18547E591238570C1211DAA81CB8A8731AF11AB181DCE06C63C802EF7`；identity SHA-256 为 `B4062E6CCDC320625F327DAD5E2A8DDD554862E37BFD64B8BFE2ECA6C487ED72`。
+- 设备升级验收为 BLOCKED：固件虚拟化关闭，AVD 无法进入 ADB，没有安装 RC 或 Stable APK。设备证据出现前禁止 Finalize、部署、公开发布、创建 `v2.8.0` 标签或归档。
+- 设备门禁通过后，本次构建元数据/文档构成证据提交 B，精确 B 不预写；顺序为 B → annotated tag → Finalize → 备份/部署/公网回读 → 推送/归档，最终状态只按 finalized manifest 与 Git refs 回读。
 
 ### 2.7.14 已发布恢复基线
 
@@ -292,8 +293,8 @@
 - 四角色 `2.7.14 (59)` Debug APK 已生成并通过版本、文件大小、SHA-256 和同一签名指纹校验；制品事实以 [2.7.14 Debug 测试版说明](releases/2.7.14.md) 和 `releases/2.7.14/release-manifest.json` 为准。
 - 生产已上线 2.7.14 (59)：后端与审核迁移成功，四包和四条非强制策略已发布；服务器四包完整 SHA/MIME/长度/ETag/Range 206 为 4/4，本机独立生命周期八项回读证明四端 58→59 可更新、59→无更新，健康状态和静态下载中心通过。
 - 真机覆盖安装、断点恢复和自动清理仍待验收；最终证据已由 `v2.7.14-debug` 固定，并完成 E 盘非覆盖归档与恢复演练。
-- 当前安装包仍是验证签名包；在生产 release 密钥与覆盖安装验证完成前，不得称为正式商用发布。
+- 2.8.0 已具备独立 production signer 和 HTTPS 配置，但覆盖安装验证未完成，仍不得称为正式商用发布。
 
-线上当前仍为 `2.7.14 (59)`，四端生命周期事实为 `58 -> 59` 可更新、`59 -> 59` 无更新。`v2.7.14-debug`、既有制品、策略、恢复点和 E 盘归档必须完整保留；2.7.15 不得覆盖 versionCode 59 的任何已公开事实。当前链路仍是 Debug/HTTP，HTTPS 尚未配置，不是正式商业 Release。
+线上当前仍为 `2.7.14 (59)`，四端生命周期事实为 `58 -> 59` 可更新、`59 -> 59` 无更新。`v2.7.14-debug`、既有制品、策略、恢复点和 E 盘归档必须完整保留；2.8.0 不得覆盖 versionCode 59 的任何已公开事实。
 
 本总纲的后续更新必须同步修改 [需求追踪表](REQUIREMENTS_TRACEABILITY.md)、[路线图](ROADMAP.md)、对应版本发布说明和自动化验证证据。

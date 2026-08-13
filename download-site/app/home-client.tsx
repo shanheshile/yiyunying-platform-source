@@ -56,6 +56,7 @@ export type PublicReleaseMetadata = {
   downloadRootBase: string;
   finalizationStatus: string;
   channel: string;
+  releaseEvidenceCommit: string;
   releaseTag: string;
   releaseNotes: string[];
   releases: PublicRelease[];

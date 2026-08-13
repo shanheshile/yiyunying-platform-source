@@ -17,7 +17,7 @@
 
 ## 已确认事实
 
-- 当前本地源码候选为 `2.7.15`，Android `versionCode` 为 `60`；线上非强制 Debug 测试版本仍为 `2.7.14`、`versionCode=59`。
+- 当前本地 Stable Build 为 `2.8.0`，Android `versionCode=62`；线上非强制 Debug 测试版本仍为 `2.7.14`、`versionCode=59`。
 - 仓库包含用户端、管理员端、授权端、总控端四种 Android 构建形态。
 - 后端采用 PHP API 与 MySQL，客户端依赖推送、WebSocket、TURN/STUN、地图、天气、语音识别等外部能力。
 - 本仓库只有从 `2.7.2` 建立的真实 Git 历史；更早历史由本机归档和发布证据重建，未伪造旧提交。
@@ -34,9 +34,28 @@
 - 下载站发布元数据只在全部校验通过后生成；
 - 发布目录采用暂存后切换，失败时回滚版本与元数据。
 
-线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线；本地 `2.7.15 (60)` 已完成 exact identity 四端 Debug Build，但尚未 Finalize、部署或发布。候选边界见 [2.7.15 本地候选说明](releases/2.7.15.md)，线上历史证据见 [2.7.14 Debug 测试版说明](releases/2.7.14.md)。
+线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线；本地 `2.8.0 (62)` 已完成四端生产签名 Stable Build，但设备升级门禁阻塞，尚未 Finalize、部署或发布。当前边界见 [2.8.0 Stable Build-pending 说明](releases/2.8.0.md)，线上历史证据见 [2.7.14 Debug 测试版说明](releases/2.7.14.md)。
 
-## 2026-08-13 2.7.15 本地源码候选
+## 2026-08-13 2.8.0 Stable Build-pending
+
+### 已完成
+
+- Build 源码提交 A 为 `f08147a9546d3b4bb3539a2e68732e1f15c4b03b`；版本为 `2.8.0 (62)`，渠道为 `Stable`。
+- schema 4 pending manifest SHA-256 为 `19C62DE18547E591238570C1211DAA81CB8A8731AF11AB181DCE06C63C802EF7`，`finalizationStatus=pending`、`releaseEvidenceCommit=null`；release identity SHA-256 为 `B4062E6CCDC320625F327DAD5E2A8DDD554862E37BFD64B8BFE2ECA6C487ED72`。
+- 四端 production APK 使用非 Debug 包名、code 62、单一 production signer `6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`，`debuggable=false`、仅 HTTPS、无用户 CA 信任；大小与 SHA-256 见 [2.8.0 说明](releases/2.8.0.md)。
+- 后端完整检查通过：214 个 PHP 文件、221 张表、811 条路由、444 个文档端点、27 个 PowerShell 脚本及全部合同。Android 226/226 Gradle tasks、四端共 1,348 项测试、四端 Lint 与独立 APK 审计通过。
+- 官网与接口文档完成四角色下载、13 个系统接入示例和 58 条精确路由；复制、分享/复制 canonical URL 降级、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开、APK 安装和 SHA-256 校验说明已通过 build、rendered HTML、静态导出、ESLint、敏感信息及原子部署合同测试。
+- 生产 HTTPS 只读 HEAD 复核显示 2.7.14/2.7.15 的 source ZIP、Git bundle、delivery ZIP 和 project manifest 共 8 个历史私有资产 URL 全为 HTTP 404，未公开旧私有项目资产。
+- 生产维护已完成独立随机密码、本机 DPAPI 恢复材料、应用 secret 轮换与全部 access/refresh Token 撤销；无已验证恢复渠道账号只停用、不删除数据；平台 KEY、应用唯一 ID、卡密和 API key 未修改。
+
+### 唯一发布阻塞
+
+- 本机固件虚拟化关闭，Windows hypervisor 能力未启用，`Yiyunying_API35` AVD 无法启动到 ADB；软件加速也没有产生可连接设备。
+- 当前 ADB 设备列表为空，没有 APK 被安装，没有执行 code 61 → code 62 覆盖升级，也没有应用启动、登录、网络和数据保留证据。
+- 因此严禁 Finalize、部署、公开下载、激活更新策略、创建 `v2.8.0` 标签或归档。线上仍是 `2.7.14 (59)`。
+- 下一步只能先在 BIOS/UEFI 开启虚拟化并重启，或连接真实 Android 调试设备；完成同角色 RC → Stable 覆盖升级后，才可继续证据提交 B → annotated tag → Finalize → 备份/部署/公网回读 → 推送/归档。
+
+## 历史快照：2026-08-13 2.7.15 本地源码候选（已由 2.8.0 取代）
 
 ### 已进入源码与自动化闭环
 

@@ -1,5 +1,7 @@
 export function isFormalPublicRelease(metadata) {
   const channel = String(metadata?.channel ?? "Debug");
+  const finalizationStatus = String(metadata?.finalizationStatus ?? "pending");
+  const releaseEvidenceCommit = String(metadata?.releaseEvidenceCommit ?? "");
   const releaseTag = String(metadata?.releaseTag ?? "").toLowerCase();
   const releases = Array.isArray(metadata?.releases) ? metadata.releases : [];
   const hasDebugMarker =
@@ -9,5 +11,11 @@ export function isFormalPublicRelease(metadata) {
         (value) => String(value ?? "").toLowerCase().includes("debug"),
       ),
     );
-  return channel === "Stable" && !hasDebugMarker;
+  return (
+    channel === "Stable" &&
+    finalizationStatus === "finalized" &&
+    /^[0-9a-f]{40}$/.test(releaseEvidenceCommit.toLowerCase()) &&
+    /^v\d+\.\d+\.\d+$/.test(releaseTag) &&
+    !hasDebugMarker
+  );
 }

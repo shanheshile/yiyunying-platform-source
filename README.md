@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-当前本地 `2.7.15 (60)` Debug 候选已从源码提交 A `432d2768f333e433661af0a5ae448177d8bc163b` 完成四包 Build；线上仍是 `2.7.14 (59)`。旧 CRLF/本地回退配置资产已撤销隔离，本次 exact Git blob/worktree identity 字节一致并重新 Build 通过。本次待提交的构建元数据与文档将构成证据提交 B，精确 B 不自指预写；流程为 B → annotated tag → Finalize，权威状态以 finalized manifest 与 Git refs 回读为准。当前尚未 Finalize、部署、推送或归档，仍是 Debug/HTTP，不是正式商用 Release。
+当前本地 `2.8.0 (62)` Stable Build 已从源码提交 A `f08147a9546d3b4bb3539a2e68732e1f15c4b03b` 生成四个生产签名 APK；schema 4 pending manifest SHA-256 为 `19C62DE18547E591238570C1211DAA81CB8A8731AF11AB181DCE06C63C802EF7`。完整源码检查、四端构建审计和下载中心官网闭环测试已经通过，但 Android 设备升级验收因本机固件虚拟化关闭、AVD 无法进入 ADB 而阻塞：没有 APK 被安装，不能 Finalize、部署、公开发布、打 `v2.8.0` 标签或归档。线上仍是既有 `2.7.14 (59)` Debug 测试版。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -38,7 +38,7 @@
 - AI 问答、天气、新闻、语音转写、应用内语音/视频通话
 - 更新、维护、公告、下载中心、审计、反馈和运行状态
 
-## 2.7.15 本地候选重点
+## 2.8.0 Stable Build（待设备验收）
 
 - 管理员端重构为“首页、源码示例、交流、我的”四栏，支持多应用切换、应用内功能入口、源码分类和管理员社区入口。
 - 登录页不再展示服务器地址、平台标识或应用标识；这些身份由开发者写入 `BuildConfig`，后端仍按角色校验账号、密码、KEY、应用唯一 ID、时效性 Token 与登录状态。
@@ -47,11 +47,12 @@
 - 软件内拍照/录像支持变焦和录像中聚焦；拍摄完成先在当前页面固定预览，确认后进入发送，取消后留在拍摄页重拍。
 - 论坛评论只直接展示主评论，子回复提供预览、更多、回复关系、只看相关以及时间/热度/综合排序和分页；同步完善群头像、群管理、主题字体、弹窗颜色、状态栏安全区、底部弹层手势和媒体堆叠跟随动画。
 - 默认登录凭据改为禁用占位并加入审计；发布链路增加固定主机密钥、备份/回滚、四包身份、完整下载、Range/ETag、策略原子激活与生产回读门禁。
-- 修正资产身份后重新完成 release Build：226/226 Gradle tasks、四端各 337 项/合计 1,348 项测试、四端 Lint 与独立 APK 审计全部通过；schema 4 pending manifest SHA-256 为 `BE2A8FCB2AE1E12D5583E87C5B48D19CC7F34DAB77A5DE16A05D019BE3DA2294`，release identity SHA-256 为 `9AC4EFDF7AC8DF8743D7D32ACFBD98A5723D687CC8B2E33BE2B7C8A4ECBFAC9C`。
+- 官方下载站覆盖四角色下载、十三个系统接入示例和 58 条精确后端路由；API 文档支持 cURL/Java/JavaScript 示例切换、复制、分享（Web Share 与复制链接降级）、打印样式、锚点/新窗口打开和 APK 安装与 SHA-256 校验指引。
+- 完整检查通过：后端 214 个 PHP 文件语法、221 张表、811 条路由、444 个文档端点、27 个 PowerShell 脚本解析及全部合同；Android 226/226 Gradle tasks、四端各 337 项/合计 1,348 项测试、四端 Lint 与独立 APK 审计；下载站 build、rendered HTML、静态导出、ESLint 和原子部署合同。
 
-APK 只嵌入公开的应用唯一 ID，不嵌入服务端 `app_secret`；轮换 secret 不会使 APK 失效。线上既有应用 ID 的历史命名为升级兼容暂时保留，若要改名必须另做兼容迁移。生产只读审计仍发现默认凭据和未过期会话，未获明确维护授权前禁止部署。
+APK 只嵌入公开的应用唯一 ID，不嵌入服务端 `app_secret`；轮换 secret 不会使 APK 失效。生产维护已完成独立随机密码、DPAPI 本机恢复材料、应用 secret 轮换和全部 access/refresh Token 撤销；无验证恢复渠道的账号只停用、不删除数据，平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 
-上述内容是已构建但未 Finalize 的本地候选，不代表真实数据库迁移、真机验收或生产部署已完成。阶段说明见 [2.7.15 本地候选说明](docs/releases/2.7.15.md)。
+上述内容只代表本地 Stable Build 与自动化证据，不代表设备升级、Finalize、生产部署或公开发布完成。阶段说明见 [2.8.0 Stable Build-pending 说明](docs/releases/2.8.0.md)。
 
 ## 快速开始
 
@@ -95,7 +96,8 @@ corepack pnpm export:static
 
 - [项目文档索引](docs/PROJECT_INDEX.md)
 - [全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)
-- [2.7.15 本地候选说明：管理重构、身份链与功能闭环](docs/releases/2.7.15.md)
+- [2.8.0 Stable Build-pending 说明：正式签名、官网闭环与设备门禁](docs/releases/2.8.0.md)
+- [2.7.15 Debug 候选说明：管理重构、身份链与功能闭环](docs/releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](docs/releases/2.7.14.md)
 - [2.7.13 Debug 测试版说明：聊天、媒体、资料与论坛收尾](docs/releases/2.7.13.md)
 - [2.7.12 发布说明：评论顶起与操作栏裁字修复](docs/releases/2.7.12.md)

@@ -18,6 +18,7 @@ const publicReleaseMetadata: PublicReleaseMetadata = {
   downloadRootBase: releaseMetadata.downloadRootBase,
   channel: String(releaseMetadata.channel ?? "Debug"),
   finalizationStatus: String(releaseMetadata.finalizationStatus ?? "pending"),
+  releaseEvidenceCommit: String(releaseMetadata.releaseEvidenceCommit ?? ""),
   releaseTag: String(releaseMetadata.releaseTag ?? ""),
   releaseNotes: Array.isArray(releaseMetadata.releaseNotes)
     ? releaseMetadata.releaseNotes.map(String)

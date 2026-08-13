@@ -104,7 +104,7 @@ test("publishes the release clients selected by the current public policy", asyn
   assert.doesNotMatch(html, /PROJECT_ASSETS|projectAssets/);
 });
 
-test("uses Stable channel without Debug markers as the formal UI state", async () => {
+test("requires finalized Stable evidence without Debug markers for the formal UI state", async () => {
   const html = await renderedHtml("/");
   const isFormal = isFormalPublicRelease(releaseMetadata);
 
@@ -121,7 +121,13 @@ test("uses Stable channel without Debug markers as the formal UI state", async (
     channel: "Stable",
     finalizationStatus: "pending",
     releaseTag: "v9.8.7",
+    releaseEvidenceCommit: null,
     releases: [{ fileName: "user.apk", packageName: "example.user", versionName: "9.8.7" }],
+  };
+  const stableFinalized = {
+    ...stablePending,
+    finalizationStatus: "finalized",
+    releaseEvidenceCommit: "0123456789abcdef0123456789abcdef01234567",
   };
   const debugPending = {
     channel: "Debug",
@@ -129,7 +135,8 @@ test("uses Stable channel without Debug markers as the formal UI state", async (
     releaseTag: "v9.8.7-debug",
     releases: [{ fileName: "user-debug.apk", packageName: "example.user.debug", versionName: "9.8.7-debug" }],
   };
-  assert.equal(isFormalPublicRelease(stablePending), true);
+  assert.equal(isFormalPublicRelease(stablePending), false);
+  assert.equal(isFormalPublicRelease(stableFinalized), true);
   assert.equal(isFormalPublicRelease(debugPending), false);
 });
 
@@ -175,8 +182,10 @@ test("renders audited four-role and per-system API guides", async () => {
   assert.match(html, /&quot;code&quot;:1/);
   assert.doesNotMatch(html, /&quot;code&quot;:0/);
   assert.doesNotMatch(html, /api\.internal|10\.\d+\.\d+\.\d+/i);
-  for (const value of Object.values(releaseMetadata.connectionIdentity ?? {})) {
-    assert.ok(!html.includes(String(value)), "connection identity leaked into API guide");
+  const { apiBaseUrl: publicApiBaseUrl, ...sensitiveIdentityEvidence } = releaseMetadata.connectionIdentity ?? {};
+  assert.ok(!publicApiBaseUrl || /^https:\/\//i.test(String(publicApiBaseUrl)), "formal API base URL must remain public HTTPS metadata");
+  for (const value of Object.values(sensitiveIdentityEvidence)) {
+    assert.ok(!html.includes(String(value)), "connection identity hash leaked into API guide");
   }
 });
 

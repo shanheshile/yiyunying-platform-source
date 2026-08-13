@@ -1,25 +1,25 @@
 # 后续开发路线图
 
-本路线图以线上 `2.7.14 (59)` 为恢复基线，并推进本地 `2.7.15 (60)` Debug 候选。四包 exact identity Build 已完成；本次待提交元数据/文档构成 B，随后 annotated tag → Finalize。当前尚未 Finalize、部署、推送或归档；候选边界见 [2.7.15 本地候选说明](releases/2.7.15.md)。
+本路线图以线上 `2.7.14 (59)` 为恢复基线，并推进本地 `2.8.0 (62)` Stable Build。四个生产签名 APK 和官网闭环已通过自动化，但固件虚拟化关闭导致 AVD 无 ADB，尚未安装或完成设备覆盖升级；因此不能 Finalize、部署、公开发布、打标签或归档。当前边界见 [2.8.0 Stable Build-pending 说明](releases/2.8.0.md)。
 
 ## 阶段 0：建立可信发布基线
 
 **目标：** 先证明版本、制品、迁移、策略和恢复证据彼此一致，再扩大功能范围。
 
-- 轮换历史暴露的面板、SSH、数据库和 API 凭据，改用密钥登录和密钥管理。
-- 固化 release 签名，记录证书指纹，禁止公开 debug APK。
+- 已完成生产维护窗口内的独立随机密码、本机 DPAPI 恢复材料、应用 secret 轮换、全部 access/refresh Token 撤销；无恢复渠道账号只停用，不删除数据或修改平台 KEY、应用唯一 ID、卡密、API key。
+- 已固化 production signer `6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`，禁止公开 debug APK。
 - 统一 `version.properties`、APK Manifest、更新接口、下载站与发布清单版本号。
 - 持续执行 `2.7.3` 建立并由 `2.7.4`、`2.7.5`、`2.7.6` 延续的 APK 包名、包内版本、签名、体积和 SHA-256 一致性校验。
 - 建立可重复构建、制品校验、签名验证、升级安装和回滚演练。
 - `2.7.14 (59)` 已按“备份、迁移、隐藏上传、四包校验、原子公开、策略事务、生产/公网回读”完成 Debug 测试部署；后续版本继续沿用同一失败停止、补偿回滚和幂等重跑门禁。
-- `2.7.15 (60)` 候选发布工具增加 pinned known_hosts、备份/停写/迁移报告/回滚、恰好四包、完整下载、Range/ETag 和策略原子激活；只有真实执行并独立回读后才能标记完成。
-- 旧 CRLF/本地回退配置资产已撤销隔离，exact Git blob/worktree identity 字节一致并重新 Build PASS：226/226 tasks、四端各 337 项/共 1,348 项测试、四端 Lint 与独立 APK 审计通过；A 为 `432d2768f333e433661af0a5ae448177d8bc163b`。
-- pending manifest SHA-256 为 `BE2A8FCB2AE1E12D5583E87C5B48D19CC7F34DAB77A5DE16A05D019BE3DA2294`，identity SHA-256 为 `9AC4EFDF7AC8DF8743D7D32ACFBD98A5723D687CC8B2E33BE2B7C8A4ECBFAC9C`。
-- 在真实设备验证 59→60 的断点续传、暂停恢复、未知来源授权恢复、安装完成识别、登录身份链、拍摄/录像、短视频、评论/群管理、历史安装包删除及自动清理；自动化与公网回读不能替代这一步。
+- `2.8.0 (62)` 发布工具要求 pinned known_hosts、备份/停写/迁移报告/回滚、恰好四包、完整下载、Range/ETag、Stable public whitelist 和策略原子激活；只有真实执行并独立回读后才能标记完成。
+- Stable Build PASS：226/226 tasks、四端各 337 项/共 1,348 项测试、四端 Lint 与独立 APK 审计；A 为 `f08147a9546d3b4bb3539a2e68732e1f15c4b03b`。
+- pending manifest SHA-256 为 `19C62DE18547E591238570C1211DAA81CB8A8731AF11AB181DCE06C63C802EF7`，identity SHA-256 为 `B4062E6CCDC320625F327DAD5E2A8DDD554862E37BFD64B8BFE2ECA6C487ED72`。
+- 官网已完成四角色下载、13 个接入示例、58 条精确路由和复制/分享/打印/cURL-Java-JavaScript 格式切换/打开安装说明的测试闭环；正式下载仍保持关闭。
+- 优先解除设备 BLOCKED：在 BIOS 开启固件虚拟化并重启，或连接真实设备；先安装同角色 code 61 RC，再用 code 62 Stable 覆盖升级，验证版本、签名连续、登录身份链、网络请求与数据保留。自动化和 APK 审计不能替代这一步。
 - 为数据库迁移增加版本号、备份、恢复测试和回滚说明。
 - 为四端建立最小冒烟测试，所有历史崩溃加入回归集。
-- 固定顺序为 B → 创建指向 B 的 annotated tag → Finalize；精确 B 与 tag 有效性只按 finalized manifest/Git refs 回读。之后才部署、推送和新归档，不得覆盖 2.7.14 恢复基线。
-- 本地 Finalize 不等于生产授权：线上默认凭据、未过期 access/refresh 会话与应用 secret 必须在可恢复维护窗口处置。公开 `app_key` 为兼容旧客户端暂时保留，不能把 secret 轮换误写成 app_key 改名。
+- 设备门禁通过后的固定顺序为 B → 创建指向 B 的 annotated tag → Finalize；精确 B 与 tag 有效性只按 finalized manifest/Git refs 回读。之后才备份、部署、公网回读、推送和新归档，不得覆盖 2.7.14 恢复基线。
 
 **完成标准：** 四端 release 包可安装升级；公网下载复算哈希一致；凭据扫描通过；数据库可从备份恢复；发布清单可追溯到提交。
 
