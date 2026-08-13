@@ -17,7 +17,7 @@
 
 ## 已确认事实
 
-- 当前正式首发候选为 `1.0.0`、Android `versionCode=63`；新的 Stable Build、pending manifest 和真机证据尚未生成。线上非强制 Debug 测试版本仍为 `2.7.14`、`versionCode=59`。
+- 当前 `1.0.0 (63)` 已完成本地 Stable Build 和 pending manifest；真机升级证据尚未生成。线上非强制 Debug 测试版本仍为 `2.7.14 (59)`。
 - 仓库包含用户端、管理员端、授权端、总控端四种 Android 构建形态。
 - 后端采用 PHP API 与 MySQL，客户端依赖推送、WebSocket、TURN/STUN、地图、天气、语音识别等外部能力。
 - 本仓库只有从 `2.7.2` 建立的真实 Git 历史；更早历史由本机归档和发布证据重建，未伪造旧提交。
@@ -34,16 +34,17 @@
 - 下载站发布元数据只在全部校验通过后生成；
 - 发布目录采用暂存后切换，失败时回滚版本与元数据。
 
-线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线。工作树正在准备 `1.0.0 (63)` 正式首发，但尚未形成新的源码 A 或四端制品；当前边界见 [1.0.0 正式首发候选说明](releases/1.0.0.md)，线上历史证据见 [2.7.14 Debug 测试版说明](releases/2.7.14.md)。
+线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线。本地 `1.0.0 (63)` 已完成 Stable Build，但尚未完成设备升级、Finalize 或发布；当前边界见 [1.0.0 Stable Build-pending 说明](releases/1.0.0.md)。
 
 ## 2026-08-13 1.0.0 正式首发候选
 
 ### 已完成
 
-- Android、后端发布身份和官网包版本已开始切换为 `1.0.0 (63)`；`versionName` 是客户看到的正式首发版本，`versionCode=63` 保持 Android 安装序号严格大于内部 code62。
-- 新的 Build 源码提交 A 尚未提交，`releases/1.0.0/`、四端 APK、pending manifest SHA-256、release identity SHA-256 和 APK 哈希均不得预写。
+- Android、后端发布身份和官网包版本已统一为 `1.0.0 (63)`；`versionName` 是客户看到的正式首发版本，`versionCode=63` 保持 Android 安装序号严格大于内部 code62。
+- Build 源码 A：`ac574ed7923b826c29ccef2a681bf61fc09fdbb1`；pending manifest SHA-256：`B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；release identity SHA-256：`365FC317E22DDDB95229BF9DD7A53C101CCD01B2933F9C01E76C6B3EF0C1B9F2`。
 - 生产 signer 保持 `6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`；正式 Build 必须从干净 A 重跑 Stable 验证并独立审计。
-- 后端完整检查通过：214 个 PHP 文件、221 张表、811 条路由、444 个文档端点、27 个 PowerShell 脚本及全部合同。Android 226/226 Gradle tasks、四端共 1,348 项测试、四端 Lint 与独立 APK 审计通过。
+- Android 四端各 338 项/合计 1,352 项单测均 0 failure、0 error、0 skipped；四端 Release Lint 0 error、assemble、production signer 与独立 APK 身份检查通过。
+- 四包实际 SHA-256：用户端 `482A296DDF668C87A2CD64E331A79C22C1E5D173BD4DA7E39FE4E0A78E603E54`，管理员 `1848E5F0EAFF980030509838D1B72463CE3D64E22FB502219087C2D4CA7B8857`，授权平台 `A5C575B57D71E3EEDC006CCCADC9941979399CBD8EE41FBE445EABE24CC7F673`，平台总控 `A4EC2CE9A9FDC8A1B4C21117D51B8EE895E071BB7F1FEC5EA596395DE9B82512`；统一 production signer 见 [1.0.0 说明](releases/1.0.0.md)。
 - 官网与接口文档完成四角色下载、13 个系统接入示例和 58 条精确路由；复制、分享/复制 canonical URL 降级、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开、APK 安装和 SHA-256 校验说明已通过 build、rendered HTML、静态导出、ESLint、敏感信息及原子部署合同测试。
 - 生产 HTTPS 只读 HEAD 复核显示 2.7.14/2.7.15 的 source ZIP、Git bundle、delivery ZIP 和 project manifest 共 8 个历史私有资产 URL 全为 HTTP 404，未公开旧私有项目资产。
 - 生产维护已完成独立随机密码、本机 DPAPI 恢复材料、应用 secret 轮换与全部 access/refresh Token 撤销；无已验证恢复渠道账号只停用、不删除数据；平台 KEY、应用唯一 ID、卡密和 API key 未修改。
@@ -52,9 +53,9 @@
 
 - 原 `2.8.0 (62)` pending 四包、manifest 与校验和已从 `releases/2.8.0/` 移到外层 `.rc/superseded/2.8.0-code62-pending/`，标记 `SUPERSEDED_INTERNAL_ONLY`；它只作同签名内部升级基线，禁止 Finalize、打 `v2.8.0` 标签、部署或公开。
 - 本机固件虚拟化关闭，`Yiyunying_API35` AVD 无法启动到 ADB，当前没有 APK 被安装。
-- 设备门禁已改为同角色 `2.8.0/code62 → 1.0.0/code63`，允许两端 `versionName` 不同但强制包名、production signer、UID、dataDir 和启动连续。1.0.0 尚未 Build，因此该门禁也尚未真实执行。
+- 设备门禁固定为同角色 `2.8.0/code62 → 1.0.0/code63`，允许两端 `versionName` 不同但强制包名、production signer、UID、dataDir 和启动连续；当前 ADB 为空，尚未真实执行。
 - 因此严禁 Finalize、部署、公开下载、激活正式更新策略、创建 `v1.0.0` 标签或归档。线上仍是 `2.7.14 (59)`。
-- 下一步顺序为：提交新源码 A → Stable Build 1.0.0/code63 → 真实设备 62→63 → 提交证据 B → annotated tag `v1.0.0` → Finalize → 备份/部署/公网回读 → 推送/归档。
+- 下一步顺序为：真实设备 62→63 → 提交证据 B → annotated tag `v1.0.0` → Finalize → 备份/部署/公网回读 → 推送/归档。
 
 ## 历史快照：2026-08-13 2.7.15 本地源码候选（已由 2.8.0 取代）
 

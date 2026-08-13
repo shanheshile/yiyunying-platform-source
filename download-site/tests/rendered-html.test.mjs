@@ -234,6 +234,10 @@ test("operation source contract keeps sharing, copying, formatting and print saf
   assert.ok(staticExporter.includes('typeof element.closest !== "function"'), "static status feedback must tolerate a missing async event target");
   assert.ok(staticExporter.includes("const button = event.currentTarget;"), "static copy action must retain its button before awaiting clipboard access");
   assert.ok(staticExporter.includes('if (!copied) throw new Error("copy_failed")'), "static clipboard fallback must report execCommand failure");
+  assert.ok(
+    staticExporter.includes("if (downloadButtonSize) downloadButtonSize.textContent = current.size"),
+    "static role switching must update the selected APK size inside the download button",
+  );
   assert.match(styles, /@media print[\s\S]*\.docs-header[\s\S]*display:\s*none !important/);
   assert.match(styles, /\.print-current-system \.docs-content > \.is-print-target/);
   assert.match(styles, /white-space:\s*pre-wrap !important/);

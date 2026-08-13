@@ -1,6 +1,6 @@
 # 易云盈平台全量需求与实施总纲
 
-更新基线：正式首发候选 `1.0.0 (63)`（待新 Build 与 62→63 设备门禁）；线上非强制 Debug 测试版 `2.7.14 (59)`
+更新基线：`1.0.0 (63)` Stable Build-pending（待 62→63 设备门禁）；线上非强制 Debug 测试版 `2.7.14 (59)`
 建立日期：2026-08-01
 适用范围：Android 用户端（4）、三级管理端（1/2/3）、PHP API、MySQL、下载站、更新链路与运维平台
 
@@ -273,10 +273,10 @@
 
 ### 1.0.0 本地正式首发候选
 
-- Android、后端发布身份和下载站包版本正在统一为 `1.0.0 (63)`；`versionName=1.0.0` 是客户看到的首发版本，`versionCode=63` 保持高于内部 code62，避免 Android 降级安装。
+- Android、后端发布身份和下载站包版本已统一为 `1.0.0 (63)`；`versionName=1.0.0` 是客户看到的首发版本，`versionCode=63` 保持高于内部 code62，避免 Android 降级安装。
 - 管理端四栏、多应用控制、源码内登录身份、用户快捷模块、三态审核、短视频、相机、论坛线程、群管理、资源私有审核、维护身份冲突保护和发布门禁已进入源码与自动化闭环。
 - 官网覆盖四角色下载、13 个系统接入示例、58 条精确路由，以及复制、分享、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开和 APK 安装/校验指引。
-- 既有后端、Android 与网站完整检查仅证明功能基线；1.0.0 必须从新的干净源码提交 A 重跑 Stable Build、全部自动化和四包审计。A、pending manifest、identity SHA 和 APK hash 尚未生成，不得预写或沿用 2.8.0 数值。
+- 1.0.0 已从 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成 Stable Build：四端各 338/总 1,352 项单测、Release Lint 0 error、assemble、production signer 与 APK 身份检查通过；pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。
 - 原 2.8.0/code62 pending 制品、manifest 与校验和已隔离到外层 `.rc/superseded/2.8.0-code62-pending/`，标记 internal-only，禁止 Finalize、tag、部署或公开。
 - 设备升级验收为 BLOCKED：固件虚拟化关闭，AVD 无法进入 ADB，没有安装 code62 基线或 code63 Stable。门禁固定验证同角色 `2.8.0/code62 → 1.0.0/code63`，包括包名、production signer、UID、dataDir、启动、登录和数据连续。
 - 固定顺序为新 A → Stable Build → 62→63 设备门禁 → 证据 B → annotated tag `v1.0.0` → Finalize → 备份/部署/公网回读 → 推送/归档，最终状态只按 finalized manifest 与 Git refs 回读。
@@ -293,7 +293,7 @@
 - 四角色 `2.7.14 (59)` Debug APK 已生成并通过版本、文件大小、SHA-256 和同一签名指纹校验；制品事实以 [2.7.14 Debug 测试版说明](releases/2.7.14.md) 和 `releases/2.7.14/release-manifest.json` 为准。
 - 生产已上线 2.7.14 (59)：后端与审核迁移成功，四包和四条非强制策略已发布；服务器四包完整 SHA/MIME/长度/ETag/Range 206 为 4/4，本机独立生命周期八项回读证明四端 58→59 可更新、59→无更新，健康状态和静态下载中心通过。
 - 真机覆盖安装、断点恢复和自动清理仍待验收；最终证据已由 `v2.7.14-debug` 固定，并完成 E 盘非覆盖归档与恢复演练。
-- 1.0.0 沿用独立 production signer 和 HTTPS 配置，但新 Build 与覆盖安装验证均未完成，仍不得称为正式商用发布。
+- 1.0.0 Stable Build 已完成，但覆盖安装、Finalize、生产部署和公网回读未完成，仍不得称为正式商用发布。
 
 线上当前仍为 `2.7.14 (59)`，四端生命周期事实为 `58 -> 59` 可更新、`59 -> 59` 无更新。`v2.7.14-debug`、既有制品、策略、恢复点和 E 盘归档必须完整保留；正式 1.0.0 发布不得把 Debug 包名直接冒充可原地升级的正式包。
 

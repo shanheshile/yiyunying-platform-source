@@ -1,13 +1,13 @@
 {
     "schemaVersion":  4,
     "channel":  "Stable",
-    "versionName":  "2.8.0",
-    "versionCode":  62,
-    "buildSourceCommit":  "f08147a9546d3b4bb3539a2e68732e1f15c4b03b",
+    "versionName":  "1.0.0",
+    "versionCode":  63,
+    "buildSourceCommit":  "ac574ed7923b826c29ccef2a681bf61fc09fdbb1",
     "releaseEvidenceCommit":  null,
-    "releaseTag":  "v2.8.0",
+    "releaseTag":  "v1.0.0",
     "finalizationStatus":  "pending",
-    "releaseIdentitySha256":  "b4062e6ccdc320625f327dad5e2a8ddd554862e37bfd64b8bfe2eca6c487ed72",
+    "releaseIdentitySha256":  "365fc317e22dddb95229bf9dd7a53c101ccd01b2933f9c01e76c6b3ef0c1b9f2",
     "connectionIdentity":  {
                                "apiBaseUrl":  "https://appht.jjmxg.xyz/",
                                "appKeySha256":  "05872e1f0465c7ab48df13e37dfefa3a95c882c268f3836264ed83f6c0b9f264",
@@ -15,8 +15,8 @@
                                "authorizedPlatformKeySha256":  "9d300ae4617dc8f0ebc22444733ab3b8681636ac74ce2676059c7754eab7ff82"
                            },
     "releaseDate":  "2026-08-13",
-    "generatedAt":  "2026-08-13T20:48:10.2938971+08:00",
-    "downloadRootBase":  "https://appht.jjmxg.xyz/downloads",
+    "generatedAt":  "2026-08-13T22:07:39.6538593+08:00",
+    "downloadRootBase":  "/downloads",
     "releaseNotes":  [
                          "重构管理端主页、源码示例、交流与我的四栏，并完善多应用切换和权限管制",
                          "新增用户端短视频与快捷业务模块，完善群聊、论坛、资源、商城和审核闭环",
@@ -30,13 +30,13 @@
                          "shortName":  "用户端",
                          "audience":  "普通用户",
                          "description":  "聊天、动态、活动、商城与个人中心",
-                         "fileName":  "yiyunying-user-v2.8.0.apk",
+                         "fileName":  "yiyunying-user-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.user",
-                         "versionName":  "2.8.0-user",
-                         "versionCode":  62,
+                         "versionName":  "1.0.0-user",
+                         "versionCode":  63,
                          "sizeBytes":  85927093,
                          "size":  "81.95 MB",
-                         "sha256":  "E9EE171A60A3237A7B615A3E8F74E87A2D4E723FEE53A2A0B5B16870EAD690A7",
+                         "sha256":  "482A296DDF668C87A2CD64E331A79C22C1E5D173BD4DA7E39FE4E0A78E603E54",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "blue"
                      },
@@ -46,13 +46,13 @@
                          "shortName":  "管理员",
                          "audience":  "管理员",
                          "description":  "用户、内容、订单与运营功能管理",
-                         "fileName":  "yiyunying-admin-v2.8.0.apk",
+                         "fileName":  "yiyunying-admin-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.admin",
-                         "versionName":  "2.8.0-admin",
-                         "versionCode":  62,
+                         "versionName":  "1.0.0-admin",
+                         "versionCode":  63,
                          "sizeBytes":  22632645,
                          "size":  "21.58 MB",
-                         "sha256":  "679344074AB7D880B4F7D63FD4CF0CA817B7BE6525BBC295490CC9C016018742",
+                         "sha256":  "1848E5F0EAFF980030509838D1B72463CE3D64E22FB502219087C2D4CA7B8857",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "green"
                      },
@@ -62,13 +62,13 @@
                          "shortName":  "授权平台",
                          "audience":  "授权运营方",
                          "description":  "授权应用、下级管理员与业务数据管理",
-                         "fileName":  "yiyunying-authorized-platform-v2.8.0.apk",
+                         "fileName":  "yiyunying-authorized-platform-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.authorized",
-                         "versionName":  "2.8.0-authorized-platform",
-                         "versionCode":  62,
-                         "sizeBytes":  22632661,
+                         "versionName":  "1.0.0-authorized-platform",
+                         "versionCode":  63,
+                         "sizeBytes":  22632657,
                          "size":  "21.58 MB",
-                         "sha256":  "120A2C52B5574F1B18D9D2B8A1CEBFC1E35FB57C505EF7AD13A565710758FBC3",
+                         "sha256":  "A5C575B57D71E3EEDC006CCCADC9941979399CBD8EE41FBE445EABE24CC7F673",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "amber"
                      },
@@ -78,13 +78,13 @@
                          "shortName":  "平台总控",
                          "audience":  "平台所有者",
                          "description":  "全平台应用、权限、财务与审计总控",
-                         "fileName":  "yiyunying-platform-owner-v2.8.0.apk",
+                         "fileName":  "yiyunying-platform-owner-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner",
-                         "versionName":  "2.8.0-platform-owner",
-                         "versionCode":  62,
-                         "sizeBytes":  22632649,
+                         "versionName":  "1.0.0-platform-owner",
+                         "versionCode":  63,
+                         "sizeBytes":  22632645,
                          "size":  "21.58 MB",
-                         "sha256":  "7E54B715FC045920EE4A29E360C3D0F39CDB34D085821FF9E1D4E0E3943A4834",
+                         "sha256":  "A4EC2CE9A9FDC8A1B4C21117D51B8EE895E071BB7F1FEC5EA596395DE9B82512",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "charcoal"
                      }
@@ -92,19 +92,19 @@
     "projectAssets":  [
                           {
                               "id":  "source",
-                              "fileName":  "yiyunying-source-v2.8.0.zip",
+                              "fileName":  "yiyunying-source-v1.0.0.zip",
                               "label":  "APK 构建源码快照",
                               "description":  "精确对应四端 APK 的 Build 源码提交，不含构建缓存、密钥与本地凭据。"
                           },
                           {
                               "id":  "history",
-                              "fileName":  "yiyunying-git-history-v2.8.0.bundle",
+                              "fileName":  "yiyunying-git-history-v1.0.0.bundle",
                               "label":  "主线 Git 历史",
                               "description":  "可离线恢复 main 全部可达历史与本次最终注释标签；不包含未发布本地分支和 reflog。"
                           },
                           {
                               "id":  "delivery",
-                              "fileName":  "yiyunying-project-delivery-v2.8.0.zip",
+                              "fileName":  "yiyunying-project-delivery-v1.0.0.zip",
                               "label":  "项目交接总包",
                               "description":  "包含 Build 源码、最终主线 Git 历史、版本说明、架构与证据提交交接文档。"
                           },
@@ -115,5 +115,5 @@
                               "description":  "列出项目下载文件体积、SHA-256、Build 源码提交、证据提交和最终注释标签。"
                           }
                       ],
-    "pendingManifestSha256":  "19c62de18547e591238570c1211daa81cb8a8731af11ab181dce06c63c802ef7"
+    "pendingManifestSha256":  "b0fe890ba2f5d542d1a8c2db26611287482eb68385a49a0aee9f9640e0159ef9"
 }

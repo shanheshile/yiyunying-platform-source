@@ -4,23 +4,36 @@
 
 ## 0. 一句话结论
 
-工作树已切换为正式首发候选 `1.0.0 (63)`。新的源码提交 A、四端 Stable APK、pending manifest 和 `2.8.0/code62 → 1.0.0/code63` 真机覆盖升级尚未形成，因此当前不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或归档。原 `2.8.0 (62)` pending 制品已隔离到外层 `.rc/superseded/2.8.0-code62-pending/`，仅作内部同签名升级基线，禁止公开或 Finalize。线上仍是 `2.7.14 (59)` Debug 测试版。
+正式首发候选 `1.0.0 (63)` 已从源码 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端生产签名 Stable Build。pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；当前仍为 `pending`、`releaseEvidenceCommit=null`。`2.8.0/code62 → 1.0.0/code63` 真机覆盖升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或归档。线上仍是 `2.7.14 (59)` Debug 测试版。
 
 ## 1. 唯一源码与版本身份
 
 - 规范仓库：`C:\Users\Administrator\Documents\易云后台\github-source`
 - GitHub：`shanheshile/yiyunying-platform-source`
-- 当前已推送基线 HEAD：`c0e125c9e2e194fa5a4904ba1027dc395344769c`
-- 正式首发候选：`1.0.0`，`versionCode=63`；新的 Build 源码 A 尚未提交，不能预写
+- Build 源码 A/HEAD：`ac574ed7923b826c29ccef2a681bf61fc09fdbb1`
+- 正式首发候选：Stable `1.0.0`，`versionCode=63`
 - 线上版本：Debug `2.7.14`，`versionCode=59`
 - 目标 API：`https://appht.jjmxg.xyz/`
-- 目标 manifest：`releases/1.0.0/release-manifest.json`；当前尚不存在
+- pending manifest：`releases/1.0.0/release-manifest.json`
+- manifest SHA-256：`B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`
+- release identity SHA-256：`365FC317E22DDDB95229BF9DD7A53C101CCD01B2933F9C01E76C6B3EF0C1B9F2`
 - 目标 Stable tag：`v1.0.0`；只能在设备门禁通过并形成证据提交 B 后创建
 - production signer SHA-256：`6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`
 
 源码真相只在上述 Git 仓库。工作区根目录、旧 ZIP、`releases/` 制品、RC 目录、历史归档和 Codex 会话都不是可反向覆盖的源码来源。
 
-## 2. 已隔离的 2.8.0/code62 内部基线
+## 2. 1.0.0/code63 Stable 制品
+
+| 角色 | 文件 | 字节 | SHA-256 |
+| --- | --- | ---: | --- |
+| 用户端 | `yiyunying-user-v1.0.0.apk` | 85,927,093 | `482A296DDF668C87A2CD64E331A79C22C1E5D173BD4DA7E39FE4E0A78E603E54` |
+| 管理员 | `yiyunying-admin-v1.0.0.apk` | 22,632,645 | `1848E5F0EAFF980030509838D1B72463CE3D64E22FB502219087C2D4CA7B8857` |
+| 授权平台 | `yiyunying-authorized-platform-v1.0.0.apk` | 22,632,657 | `A5C575B57D71E3EEDC006CCCADC9941979399CBD8EE41FBE445EABE24CC7F673` |
+| 平台总控 | `yiyunying-platform-owner-v1.0.0.apk` | 22,632,645 | `A4EC2CE9A9FDC8A1B4C21117D51B8EE895E071BB7F1FEC5EA596395DE9B82512` |
+
+四包均为 code63、正式包名、`1.0.0-<role>`、统一 production signer。它们仍是 pending 制品，设备验收和 Finalize 前不得公开。
+
+## 2.1 已隔离的 2.8.0/code62 内部基线
 
 | 角色 | 包名 | 文件 | 字节 | SHA-256 |
 | --- | --- | --- | ---: | --- |
@@ -53,16 +66,16 @@
 - APK 下载说明覆盖正确角色选包、SHA-256 校验、Android 打开/安装、未知来源授权和下载失败；不把下载成功写成安装成功。
 - 源码 ZIP、Git history bundle、delivery 包和 project manifest 属于私有交付资产，不能放入客户公开下载目录。
 
-## 4. 已有基线证据与 1.0.0 重验要求
+## 4. 1.0.0 Build 证据
 
 - 后端 `backend/tools/check.ps1`：214 个 PHP 文件、221 张表、811 条路由、444 个文档端点、27 个 PowerShell 脚本解析和全部合同 PASS。
-- Android：226/226 Gradle tasks；四端各 337 项/总 1,348 项测试，0 failure、0 error、0 skipped；四端 Lint 与独立 APK 审计 PASS。
+- Android：四端各 338 项/总 1,352 项测试，0 failure、0 error、0 skipped；四端 Release Lint 0 error、assemble、production signer 与独立 APK 身份审计 PASS。
 - 发布证据链：12/12 PASS；Stable 渠道、版本、源码 A、production signer、tag 和 public whitelist 失败关闭。
 - 官网：build、rendered HTML、静态导出、ESLint、敏感信息扫描、无 JS 导航、打印 CSS、四角色/13 示例/58 路由、原子部署合同 PASS。
 - 生产 HTTPS 只读 HEAD 复核：2.7.14/2.7.15 的 source ZIP、Git bundle、delivery ZIP、project manifest 共 8 个历史私有资产 URL 全部 HTTP 404，旧私有项目资产未公开。
 - 仓库 `git diff --check` 与 secret/large-file scan PASS。
 
-这些结果属于功能基线和已隔离 2.8.0 制品，不是 1.0.0 的 Build 证据。`1.0.0 (63)` 必须从新的干净源码提交 A 重新执行 Stable Build、完整自动化、四包审计、设备升级和官网测试，任何旧哈希不得复用为首发制品哈希。
+上述结果证明 1.0.0 本地 Stable Build 可核验，但不证明设备升级、Finalize、生产部署或公网下载。
 
 ## 5. 生产安全维护已完成
 
@@ -86,10 +99,10 @@
 ### 尚未发生
 
 - 隔离的 code62 内部基线没有安装；
-- 1.0.0/code63 Stable APK 尚未 Build，也没有安装；
+- 1.0.0/code63 Stable APK 已 Build，但没有安装；
 - 没有 `adb install -r` 覆盖升级；
 - 没有启动应用、登录、联网或数据保留证据；
-- 没有 1.0.0 pending manifest、Finalize、`v1.0.0` tag、部署、官网正式下载、更新策略、公共回读或归档。
+- 已有 pending manifest，但没有设备证据、Finalize、`v1.0.0` tag、部署、官网正式下载、更新策略、公共回读或归档。
 
 解除方式只有两个：BIOS 开启虚拟化并重启后恢复 AVD，或连接真实 Android 调试设备。无论哪种方式，都必须先安装同角色 `2.8.0/code62` 隔离基线，再用新 Build 的 `1.0.0/code63` Stable APK 覆盖升级并记录包名、版本、签名连续、启动、登录、API、关键入口和数据保留。
 
@@ -107,16 +120,14 @@ powershell -File android/tools/verify-device-upgrade.ps1 `
 
 ## 7. 门禁解除后的固定顺序
 
-1. 提交 1.0.0/code63 版本、门禁、测试和文档形成新的 Build 源码 A；不要预写其哈希。
-2. 从干净 A 执行 Stable Build，生成 `releases/1.0.0/` 四包和 pending manifest。
-3. 完成 `2.8.0/code62 → 1.0.0/code63` 真实设备升级闭环并保存证据。
-4. 提交 1.0.0 release metadata 与设备证据形成 B；不要在文档里猜 B。
-5. 创建指向 B 的 annotated tag `v1.0.0`。
-6. 运行 Finalize，回读 manifest 的 `releaseEvidenceCommit`、tag、source A 与 Git refs 一致。
-7. 备份并验证生产恢复点；检查旧版本私有项目资产不能从公网下载。
-8. 部署数据库/私有资源、后端和四个 APK 到隐藏暂存位置，复算 hash、签名、MIME、长度、Range/ETag。
-9. 原子激活四条正式策略和官网；做服务器与公网下载、生命周期、HTTPS、健康和功能回读。
-10. 推送 B 与标签；最后创建新归档，做解压、逐文件哈希和 Git bundle 恢复演练。
+1. 完成 `2.8.0/code62 → 1.0.0/code63` 真实设备升级闭环并保存证据。
+2. 提交 1.0.0 release metadata 与设备证据形成 B；不要在文档里猜 B。
+3. 创建指向 B 的 annotated tag `v1.0.0`。
+4. 运行 Finalize，回读 manifest 的 `releaseEvidenceCommit`、tag、source A 与 Git refs 一致。
+5. 备份并验证生产恢复点；检查旧版本私有项目资产不能从公网下载。
+6. 部署数据库/私有资源、后端和四个 APK 到隐藏暂存位置，复算 hash、签名、MIME、长度、Range/ETag。
+7. 原子激活四条正式策略和官网；做服务器与公网下载、生命周期、HTTPS、健康和功能回读。
+8. 推送 B 与标签；最后创建新归档，做解压、逐文件哈希和 Git bundle 恢复演练。
 
 任何一步失败都保留线上 `2.7.14 (59)`，不得覆盖旧制品、策略、恢复点或归档。
 
@@ -150,4 +161,4 @@ Android 完整验证需要 JDK 17、Android SDK 与生产签名环境；不能�
 
 ## 10. 当前准确口径
 
-> 易运盈正式首发候选为 `1.0.0 (63)`，当前仅完成版本与 `2.8.0/code62 → 1.0.0/code63` 门禁源码调整；新的 Build 源码 A、四端 Stable APK、pending manifest 和真机升级证据尚未形成。2.8.0/code62 已隔离为 internal-only baseline，禁止 Finalize、打标签或公开。线上仍是 2.7.14 (59) Debug，1.0.0 不能称为已上线。
+> 易运盈 `1.0.0 (63)` 已从 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端 production Stable Build，pending manifest SHA 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。四端单测、Release Lint、assemble、签名与身份检查通过；但 code62→63 真机升级未执行，所以尚未 Finalize、tag、部署或上线。线上仍是 2.7.14 (59) Debug。

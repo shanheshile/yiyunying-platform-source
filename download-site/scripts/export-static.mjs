@@ -28,6 +28,7 @@ const browserScript = `(() => {
   const releaseDescription = document.querySelector(".selected-product p");
   const fileSize = document.querySelector(".selected-product > b");
   const downloadButton = document.querySelector(".download-button");
+  const downloadButtonSize = document.querySelector(".download-button span");
   const verificationCodes = document.querySelectorAll(".file-verification code");
   const verificationButtons = document.querySelectorAll(".file-verification button");
   const releaseFileReferences = document.querySelectorAll("[data-release-file]");
@@ -112,6 +113,7 @@ const browserScript = `(() => {
     if (releaseName) releaseName.textContent = current.name;
     if (releaseDescription) releaseDescription.textContent = current.description;
     if (fileSize) fileSize.textContent = current.size;
+    if (downloadButtonSize) downloadButtonSize.textContent = current.size;
     if (downloadButton) {
       downloadButton.href = currentDownloadUrl();
       downloadButton.download = current.fileName;

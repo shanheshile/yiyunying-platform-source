@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-当前工作树已切换为正式首发候选 `1.0.0 (63)`，但新的源码提交 A、四端 Stable APK、pending manifest 与真机升级证据尚未生成，因此不能称为已 Build、已 Finalize 或已上线。原 `2.8.0 (62)` pending 制品已完整移动到工作区外层 `.rc/superseded/2.8.0-code62-pending/`，只作为同签名内部升级基线，禁止 Finalize、打 `v2.8.0` 标签、部署或公开。线上仍是既有 `2.7.14 (59)` Debug 测试版。
+正式首发候选 `1.0.0 (63)` 已从源码提交 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端生产签名 Stable Build；schema 4 pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。四端完整单测、Release Lint、assemble 和签名/身份检查通过，但 code62→63 真实设备升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或称为已上线。原 `2.8.0 (62)` 制品仍只作为隔离的内部升级基线；线上仍是既有 `2.7.14 (59)` Debug 测试版。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -38,7 +38,7 @@
 - AI 问答、天气、新闻、语音转写、应用内语音/视频通话
 - 更新、维护、公告、下载中心、审计、反馈和运行状态
 
-## 1.0.0 正式首发候选（待新 Build 与设备验收）
+## 1.0.0 Stable Build-pending（待设备验收）
 
 - 管理员端重构为“首页、源码示例、交流、我的”四栏，支持多应用切换、应用内功能入口、源码分类和管理员社区入口。
 - 登录页不再展示服务器地址、平台标识或应用标识；这些身份由开发者写入 `BuildConfig`，后端仍按角色校验账号、密码、KEY、应用唯一 ID、时效性 Token 与登录状态。
@@ -48,12 +48,12 @@
 - 论坛评论只直接展示主评论，子回复提供预览、更多、回复关系、只看相关以及时间/热度/综合排序和分页；同步完善群头像、群管理、主题字体、弹窗颜色、状态栏安全区、底部弹层手势和媒体堆叠跟随动画。
 - 默认登录凭据改为禁用占位并加入审计；发布链路增加固定主机密钥、备份/回滚、四包身份、完整下载、Range/ETag、策略原子激活与生产回读门禁。
 - 官方下载站覆盖四角色下载、十三个系统接入示例和 58 条精确后端路由；API 文档支持 cURL/Java/JavaScript 示例切换、复制、分享（Web Share 与复制链接降级）、打印样式、锚点/新窗口打开和 APK 安装与 SHA-256 校验指引。
-- 已有功能基线曾通过后端、Android 四端与下载站完整检查；`1.0.0 (63)` 必须在新的干净源码提交 A 上重新执行 Stable Build、四包审计和全部自动化，不能沿用 2.8.0 的 Build 结果冒充首发证据。
+- `1.0.0 (63)` 已在干净源码 A 上重新完成 Stable Build：四端各 338 项/合计 1,352 项单测均 0 failure、0 error、0 skipped，四端 Release Lint 0 error、assemble、production signer 与 APK 身份检查通过。
 - Android 升级门禁已调整为同角色 `2.8.0/code62` 内部基线 → `1.0.0/code63` 正式候选，要求包名、production signer、UID、dataDir、启动、登录与数据连续；当前没有可用 ADB 设备，尚未执行安装。
 
 APK 只嵌入公开的应用唯一 ID，不嵌入服务端 `app_secret`；轮换 secret 不会使 APK 失效。生产维护已完成独立随机密码、DPAPI 本机恢复材料、应用 secret 轮换和全部 access/refresh Token 撤销；无验证恢复渠道的账号只停用、不删除数据，平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 
-上述内容是首发版本规划与源码候选，不代表 1.0.0 Stable Build、设备升级、Finalize、生产部署或公开发布完成。阶段说明见 [1.0.0 正式首发候选说明](docs/releases/1.0.0.md)；被隔离的历史内部基线见 [2.8.0 Build-pending 说明](docs/releases/2.8.0.md)。
+上述内容证明本地 Stable Build，不代表设备升级、Finalize、生产部署或公开发布完成。阶段说明见 [1.0.0 Stable Build-pending 说明](docs/releases/1.0.0.md)；被隔离的历史内部基线见 [2.8.0 Build-pending 说明](docs/releases/2.8.0.md)。
 
 ## 快速开始
 
@@ -97,7 +97,7 @@ corepack pnpm export:static
 
 - [项目文档索引](docs/PROJECT_INDEX.md)
 - [全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)
-- [1.0.0 正式首发候选说明：code63、新 Build 与 62→63 设备门禁](docs/releases/1.0.0.md)
+- [1.0.0 Stable Build-pending 说明：code63 制品与 62→63 设备门禁](docs/releases/1.0.0.md)
 - [2.8.0 隔离内部基线说明：禁止公开与 Finalize](docs/releases/2.8.0.md)
 - [2.7.15 Debug 候选说明：管理重构、身份链与功能闭环](docs/releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](docs/releases/2.7.14.md)
