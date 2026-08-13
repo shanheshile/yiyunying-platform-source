@@ -247,6 +247,30 @@
     },
     {
         "method":  "GET",
+        "path":  "/api/platform/mail-settings",
+        "scope":  "platform",
+        "handler":  "PlatformMailSettings::show"
+    },
+    {
+        "method":  "PUT",
+        "path":  "/api/platform/mail-settings",
+        "scope":  "platform",
+        "handler":  "PlatformMailSettings::update"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/mail-settings/test",
+        "scope":  "platform",
+        "handler":  "PlatformMailSettings::test"
+    },
+    {
+        "method":  "POST",
+        "path":  "/api/platform/mail-settings/reencrypt",
+        "scope":  "platform",
+        "handler":  "PlatformMailSettings::reencrypt"
+    },
+    {
+        "method":  "GET",
         "path":  "/api/platform/ip-statistics",
         "scope":  "platform",
         "handler":  "PlatformDashboard::ipStatistics"

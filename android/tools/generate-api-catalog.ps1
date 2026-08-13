@@ -1,5 +1,5 @@
 param(
-    [string]$BackendRoutes = "..\yiyunying-backend\routes\api.php",
+    [string]$BackendRoutes = "..\backend\routes\api.php",
     [string]$Output = "app\src\main\assets\api_catalog.json"
 )
 
@@ -42,6 +42,6 @@ foreach ($line in [System.IO.File]::ReadAllLines($routesPath, [System.Text.Encod
 
 $directory = Split-Path -Parent $outputPath
 [System.IO.Directory]::CreateDirectory($directory) | Out-Null
-$json = $items | ConvertTo-Json -Depth 4
-[System.IO.File]::WriteAllText($outputPath, $json, [System.Text.UTF8Encoding]::new($false))
+$json = (($items | ConvertTo-Json -Depth 4 | Out-String) -replace "`r`n?", "`n").TrimEnd([char[]] "`n")
+[System.IO.File]::WriteAllText($outputPath, $json + "`n", [System.Text.UTF8Encoding]::new($false))
 Write-Output "Generated $($items.Count) routes: $outputPath"

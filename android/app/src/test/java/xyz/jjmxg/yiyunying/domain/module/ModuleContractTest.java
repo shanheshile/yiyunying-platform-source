@@ -21,7 +21,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class ModuleContractTest {
-    private static final int EXPECTED_ROUTE_COUNT = 811;
+    private static final int EXPECTED_ROUTE_COUNT = 815;
 
     @Test
     public void modulesAreUniqueAndRoleScoped() {
