@@ -114,12 +114,13 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
         source = read(VERSION_PATH)
         for marker in (
             '$content = "VERSION_CODE=$Code`nVERSION_NAME=$Name`n"',
+            '-replace "`r`n?", "`n"',
             '$json + "`n"',
             '"$audit`n"',
         ):
             self.assertIn(marker, source)
         self.assertNotIn("[Environment]::NewLine", source)
-        self.assertNotIn("`r`n", source)
+
     def test_version_set_preserves_committed_stable_signer_identity(self) -> None:
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
         self.assertIsNotNone(powershell, "Windows PowerShell is required")
@@ -176,6 +177,10 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             self.assertEqual(identity["version_name"], "2.8.0")
             self.assertEqual(identity["version_code"], 61)
             self.assertEqual(identity["stable_signer_sha256"], signer)
+            self.assertNotIn(b"\r\n", identity_path.read_bytes())
+            self.assertNotIn(
+                b"\r\n", (repository / "download-site" / "package.json").read_bytes()
+            )
 
     def test_ssh_and_public_apk_verification_fail_closed(self) -> None:
         source = read(VERIFIER_PATH)

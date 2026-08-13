@@ -25,6 +25,7 @@ final class AppService
         }
         $owner = AdminAccessService::context((int) $app['admin_id']);
         AdminAccessService::assertDownstreamAccess($owner);
+        unset($app['app_secret_hash']);
         return $app;
     }
 
@@ -39,6 +40,7 @@ final class AppService
         if ($app === null) {
             throw new HttpException('应用不存在或不属于当前管理员', 403, 403);
         }
+        unset($app['app_secret_hash']);
         return $app;
     }
 

@@ -186,6 +186,7 @@ final class PlatformService
         if ($app === null) {
             throw new HttpException('应用不存在或不在当前平台管理范围内', 404, 404);
         }
+        unset($app['app_secret_hash']);
         return $app;
     }
 
@@ -608,7 +609,7 @@ final class PlatformService
             'balance_exchange_enabled' => true,
             'balance_exchange_max_quantity_per_order' => 100,
             'balance_exchange_admin_daily_limit' => 0,
-            'data_console_enabled' => true,
+            'data_console_enabled' => false,
             'balance_display_name' => '余额',
             'authorized_platform_membership_required' => true,
             'authorized_platform_vip_only' => false,

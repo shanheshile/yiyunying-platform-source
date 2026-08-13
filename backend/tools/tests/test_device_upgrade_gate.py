@@ -18,6 +18,17 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "android" / "tools" / "verify-device-upgrade.ps1"
 PACKAGE = "xyz.jjmxg.yiyunying.user"
 SERIAL = "EXAMPLE-DEVICE-01"
+VERSION_PROPERTIES = ROOT / "android" / "version.properties"
+
+
+def current_stable_code() -> int:
+    values: dict[str, str] = {}
+    for line in VERSION_PROPERTIES.read_text(encoding="utf-8").splitlines():
+        if "=" not in line or line.lstrip().startswith("#"):
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return int(values["VERSION_CODE"])
 
 
 class DeviceUpgradeGateStaticContractTest(unittest.TestCase):
@@ -124,8 +135,9 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="device-upgrade-gate-")
         self.root = Path(self.temp.name)
+        self.target_code = current_stable_code()
         self.rc_apk = self.root / "user-baseline-code62.apk"
-        self.stable_apk = self.root / "user-stable-code63.apk"
+        self.stable_apk = self.root / f"user-stable-code{self.target_code}.apk"
         self.rc_apk.write_bytes(b"R" * (1024 * 1024 + 1))
         self.stable_apk.write_bytes(b"S" * (1024 * 1024 + 1))
         self.state = self.root / "state.txt"
@@ -164,6 +176,7 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
             package = "xyz.jjmxg.yiyunying.user"
             baseline_version_name = "2.8.0-user"
             stable_version_name = "1.0.0-user"
+            stable_code = int(os.environ["FAKE_STABLE_CODE"])
             signer = os.environ["FAKE_SIGNER"]
 
             if tool == "aapt2":
@@ -171,7 +184,7 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
                     print("Authorization: Bearer EXAMPLE_SENSITIVE_VALUE token=EXAMPLE_SECOND_VALUE")
                     raise SystemExit(9)
                 baseline = "baseline-code62" in args[-1].lower()
-                code = 62 if baseline else 63
+                code = 62 if baseline else stable_code
                 version_name = baseline_version_name if baseline else stable_version_name
                 print(f"package: name='{package}' versionCode='{code}' versionName='{version_name}'")
                 raise SystemExit(0)
@@ -196,7 +209,7 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
             if command == ["get-state"]:
                 print(os.environ.get("FAKE_DEVICE_STATE", "device"))
             elif command[0:2] == ["install", "-r"]:
-                code = "62" if "baseline-code62" in command[-1].lower() else "63"
+                code = "62" if "baseline-code62" in command[-1].lower() else str(stable_code)
                 state_file.write_text(code, encoding="ascii")
                 print("Success")
             elif command[0:3] == ["shell", "dumpsys", "package"]:
@@ -236,6 +249,7 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
                 "FAKE_TOOL_LOG": str(self.log),
                 "FAKE_ADB_STATE": str(self.state),
                 "FAKE_SIGNER": identity["stable_signer_sha256"],
+                "FAKE_STABLE_CODE": str(self.target_code),
             }
         )
         env.update(overrides)
@@ -277,18 +291,18 @@ class DeviceUpgradeGateRuntimeContractTest(unittest.TestCase):
     def _calls(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
-    def test_full_fake_code62_to_code63_upgrade_passes(self) -> None:
+    def test_full_fake_code62_to_current_stable_upgrade_passes(self) -> None:
         completed = self._run()
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         payload = json.loads(next(line for line in completed.stdout.splitlines() if line.startswith("{")))
         self.assertEqual("PASS", payload["status"])
         self.assertEqual(62, payload["fromVersionCode"])
         self.assertEqual("2.8.0-user", payload["fromVersionName"])
-        self.assertEqual(63, payload["toVersionCode"])
+        self.assertEqual(self.target_code, payload["toVersionCode"])
         self.assertEqual("1.0.0-user", payload["versionName"])
         self.assertTrue(payload["uidPreserved"])
         self.assertTrue(payload["dataDirPreserved"])
-        self.assertEqual("63", self.state.read_text(encoding="ascii"))
+        self.assertEqual(str(self.target_code), self.state.read_text(encoding="ascii"))
         adb_calls = [entry["args"] for entry in self._calls() if entry["tool"] == "adb"]
         install_calls = [args for args in adb_calls if "install" in args]
         self.assertEqual(2, len(install_calls))

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { isFormalPublicRelease } from "../app/release-state.mjs";
 import { createPublicReleaseProjection } from "../scripts/public-release-projection.mjs";
 
@@ -84,6 +85,11 @@ test("renders an original customer-facing official website", async () => {
   assert.match(html, /href="\/api-docs\/"/);
   assert.match(html, /href="\/privacy\/"/);
   assert.match(html, /href="\/terms\/"/);
+  assert.match(html, /data-service-health/);
+  assert.match(html, /data-action="refresh-health"/);
+  assert.match(html, /同源公开健康检查/);
+  assert.match(html, /公开服务状态/);
+  assert.doesNotMatch(html, /1,286|3,492|99\.98%|实时在线 238|待审核 12/);
 });
 
 test("publishes the release clients selected by the current public policy", async () => {
@@ -132,6 +138,8 @@ test("requires finalized Stable evidence without Debug markers for the formal UI
   if (isFormal) {
     assert.match(html, /下载易云盈正式版/);
     assert.match(html, /已正式发布/);
+    assert.match(html, /Finalized · 四角色一致/);
+    assert.match(script, /fetch\("\/api\/health"/);
   } else {
     assert.match(html, /正式版准备中/);
     assert.match(html, /正式版尚未开放/);
@@ -386,6 +394,9 @@ test("operation source contract keeps sharing, copying, formatting and print saf
     '"curl"', '"java"', '"javascript"', "SAFE_BASE_URL",
   ]) assert.ok(actions.includes(contract), `client operation contract missing: ${contract}`);
   assert.ok(home.includes("navigator.share"), "homepage share must prefer Web Share");
+  assert.ok(home.includes('fetch("/api/health"'), "homepage must read only the same-origin public health endpoint");
+  assert.ok(home.includes('cache: "no-store"'), "live public health must bypass stale browser caches");
+  assert.ok(home.includes('credentials: "same-origin"'), "live public health must stay on the current origin");
   assert.ok(staticExporter.includes('typeof element.closest !== "function"'), "static status feedback must tolerate a missing async event target");
   assert.ok(staticExporter.includes("const button = event.currentTarget;"), "static copy action must retain its button before awaiting clipboard access");
   assert.ok(staticExporter.includes('if (!copied) throw new Error("copy_failed")'), "static clipboard fallback must report execCommand failure");
@@ -396,6 +407,28 @@ test("operation source contract keeps sharing, copying, formatting and print saf
   assert.match(styles, /@media print[\s\S]*\.docs-header[\s\S]*display:\s*none !important/);
   assert.match(styles, /\.print-current-system \.docs-content > \.is-print-target/);
   assert.match(styles, /white-space:\s*pre-wrap !important/);
+  assert.match(styles, /\.reveal-ready \[data-reveal\]/);
+  assert.match(styles, /@keyframes health-pulse/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\[data-reveal\][\s\S]*opacity:\s*1 !important/);
+
+  const sharedStatusScript = staticExporter.slice(
+    staticExporter.indexOf("const sharedBrowserScript"),
+    staticExporter.indexOf("const formalBrowserScript"),
+  );
+  for (const contract of [
+    'fetch("/api/health"',
+    'cache: "no-store"',
+    'credentials: "same-origin"',
+    'value.code === 1',
+    'value.data.status === "ok"',
+    'value.data.database === "connected"',
+    'IntersectionObserver',
+    'prefers-reduced-motion: reduce',
+  ]) assert.ok(sharedStatusScript.includes(contract), `static live-status contract missing: ${contract}`);
+  for (const forbidden of [
+    "platform_key", "app_key", "Authorization", "releaseMetadata",
+    "pendingManifestSha256", "/api/public/lifecycle", "/downloads/",
+  ]) assert.ok(!sharedStatusScript.includes(forbidden), `static live-status script leaked or requested forbidden data: ${forbidden}`);
 
   const catalog = [...docsSource.matchAll(/ep\("([A-Z]+)",\s*"([^"]+)"/g)];
   assert.equal(catalog.length, 58, "public API catalog must retain all 58 audited routes");
@@ -404,6 +437,94 @@ test("operation source contract keeps sharing, copying, formatting and print saf
   for (const value of Object.values(releaseMetadata.connectionIdentity ?? {})) {
     assert.ok(!examples.includes(String(value)), "real connection identity leaked into format source");
   }
+});
+
+test("static homepage health interaction updates only from the public same-origin response", async () => {
+  const exporter = await readFile(new URL("../scripts/export-static.mjs", import.meta.url), "utf8");
+  const source = exporter.match(/const sharedBrowserScript = `([\s\S]*?)`;\s*\n\s*const formalBrowserScript/)?.[1];
+  assert.ok(source, "shared static homepage interaction script missing");
+
+  const listeners = new Map();
+  const windowListeners = new Map();
+  const classNames = new Set();
+  const container = { dataset: {} };
+  const label = { textContent: "" };
+  const database = { textContent: "" };
+  const checkedAt = { textContent: "" };
+  const button = {
+    disabled: false,
+    attributes: new Map(),
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    setAttribute(name, value) { this.attributes.set(name, value); },
+  };
+  const reveal = {
+    classList: { add(name) { classNames.add(name); } },
+  };
+  let responseMode = "healthy";
+  const navigator = { onLine: true };
+  const document = {
+    hidden: false,
+    documentElement: { classList: { add() {} } },
+    querySelectorAll(selector) {
+      return {
+        "[data-service-health]": [container],
+        "[data-health-label]": [label],
+        "[data-health-database]": [database],
+        "[data-health-time]": [checkedAt],
+        '[data-action="refresh-health"]': [button],
+        "[data-reveal]": [reveal],
+      }[selector] ?? [];
+    },
+    addEventListener(type, listener) { listeners.set(type, listener); },
+  };
+  const window = {
+    setTimeout,
+    clearTimeout,
+    setInterval() { return 1; },
+    addEventListener(type, listener) { windowListeners.set(type, listener); },
+    matchMedia() { return { matches: false }; },
+  };
+  class IntersectionObserver {
+    constructor(callback) { this.callback = callback; }
+    observe(target) { this.callback([{ isIntersecting: true, target }]); }
+    unobserve() {}
+  }
+  const context = {
+    AbortController,
+    Date,
+    Error,
+    Intl,
+    IntersectionObserver,
+    document,
+    navigator,
+    window,
+    fetch: async () => ({
+      ok: true,
+      json: async () => responseMode === "healthy"
+        ? { code: 1, data: { status: "ok", database: "connected" } }
+        : { code: 1, data: { status: "maintenance", database: "connected" } },
+    }),
+  };
+
+  runInNewContext(source, context);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(container.dataset.healthState, "operational");
+  assert.equal(label.textContent, "服务正常");
+  assert.equal(database.textContent, "已连接");
+  assert.equal(button.disabled, false);
+  assert.equal(button.attributes.get("aria-busy"), "false");
+  assert.ok(classNames.has("is-visible"), "reveal interaction did not expose its target");
+
+  responseMode = "unhealthy";
+  await listeners.get("click")();
+  assert.equal(container.dataset.healthState, "degraded");
+  assert.equal(label.textContent, "暂时无法确认");
+  assert.equal(database.textContent, "无法确认");
+
+  navigator.onLine = false;
+  windowListeners.get("offline")();
+  assert.equal(container.dataset.healthState, "offline");
+  assert.equal(label.textContent, "网络已断开");
 });
 
 test("published API endpoint catalog exists in the generated route directory", async () => {

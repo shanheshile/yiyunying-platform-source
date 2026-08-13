@@ -67,10 +67,7 @@ final class OperatorController
         if (Database::one('SELECT id FROM platform_accounts WHERE account = ?', [$account])) {
             throw new HttpException('平台账号已存在', 0, 409);
         }
-        $password = (string) $data['password'];
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $data['password']);
         $days = max(1, (int) ($data['membership_days'] ?? PlatformService::setting(
             (int) $actor['id'], 'operator_free_trial_days', 3
         )));
@@ -187,10 +184,7 @@ final class OperatorController
     {
         $actor = PlatformService::auth($request);
         $operator = PlatformService::ownedOperator($actor, (int) $params['operator_id']);
-        $password = (string) $request->input('new_password', '');
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('new_password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $request->input('new_password', ''), 'new_password');
         Database::transaction(static function () use ($operator, $password): void {
             Database::execute('UPDATE platform_accounts SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
                 Password::hash($password), (int) $operator['id'],

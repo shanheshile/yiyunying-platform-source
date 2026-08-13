@@ -171,10 +171,7 @@ final class AdminController
     {
         $actor = PlatformService::auth($request);
         $admin = PlatformService::ownedAdmin($actor, (int) $params['admin_id']);
-        $password = (string) $request->input('new_password', '');
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('new_password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $request->input('new_password', ''), 'new_password');
         Database::transaction(static function () use ($admin, $password): void {
             Database::execute('UPDATE admins SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
                 Password::hash($password), (int) $admin['id'],

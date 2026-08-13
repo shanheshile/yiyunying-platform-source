@@ -15,12 +15,20 @@ use Yiyunying\Services\PlatformService;
 final class DataConsoleController
 {
     private const HIDDEN_TABLES = [
-        'platform_tokens', 'admin_tokens', 'user_tokens', 'user_refresh_tokens',
-        'captcha_challenges', 'password_reset_tokens', 'platform_mail_settings',
+        'platform_accounts', 'platform_tokens', 'platform_login_logs', 'platform_operation_logs',
+        'platform_mail_settings',
+        'admins', 'admin_tokens', 'admin_login_logs', 'admin_registration_logs', 'admin_operation_logs',
+        'apps', 'app_api_keys',
+        'users', 'user_tokens', 'user_refresh_tokens', 'user_login_logs', 'user_operation_logs',
+        'captcha_challenges', 'password_reset_tokens', 'verification_codes',
+        'identity_bindings', 'identity_unbind_requests',
+        'card_batches', 'cards', 'card_redeem_logs', 'card_login_bindings',
+        'document_shares', 'payment_channels', 'api_request_logs', 'system_error_logs',
     ];
     private const SENSITIVE_COLUMNS = [
         'password_hash', 'token_hash', 'app_secret_hash', 'secret', 'private_key',
-        'smtp_password_ciphertext',
+        'smtp_password_ciphertext', 'key_hash', 'code_hash', 'identity_value',
+        'identity_hash', 'device_hash', 'device_secret_hash',
     ];
 
     public static function tables(Request $request): \Yiyunying\Core\ApiResponse
@@ -36,14 +44,17 @@ final class DataConsoleController
         $items = [];
         foreach ($rows as $row) {
             $table = (string) $row['table_name'];
+            if (in_array($table, self::HIDDEN_TABLES, true)) {
+                continue;
+            }
             $items[] = [
                 'id' => $table,
                 'table' => $table,
                 'table_name' => $table,
                 'record_estimate' => (int) ($row['table_rows'] ?? 0),
                 'column_count' => (int) $row['column_count'],
-                'writable' => !in_array($table, self::HIDDEN_TABLES, true),
-                'sensitive' => in_array($table, self::HIDDEN_TABLES, true),
+                'writable' => true,
+                'sensitive' => false,
                 'updated_at' => $row['update_time'],
             ];
         }
@@ -55,15 +66,18 @@ final class DataConsoleController
     {
         $actor = self::actor($request); $table = self::table((string) $params['table']);
         if (in_array($table, self::HIDDEN_TABLES, true)) throw new HttpException('安全表不允许通过数据总控读取记录', 403, 403);
-        $columns = self::columns($table); $page = $request->page(); $limit = $request->limit(); $offset = ($page - 1) * $limit;
-        [$where, $query] = self::filters($request, $columns);
+        $columns = self::columns($table); $safeColumns = self::publicColumns($columns);
+        if ($safeColumns === []) throw new HttpException('该表没有允许通过数据总控读取的字段', 403, 403);
+        $page = $request->page(); $limit = $request->limit(); $offset = ($page - 1) * $limit;
+        [$where, $query] = self::filters($request, $safeColumns);
         $whereSql = $where === [] ? '1=1' : implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM `{$table}` WHERE {$whereSql}", $query)['total'] ?? 0);
-        $order = isset($columns['id']) ? '`id` DESC' : '`' . array_key_first($columns) . '` ASC';
-        $items = Database::all("SELECT * FROM `{$table}` WHERE {$whereSql} ORDER BY {$order} LIMIT {$limit} OFFSET {$offset}", $query);
+        $order = isset($safeColumns['id']) ? '`id` DESC' : '`' . array_key_first($safeColumns) . '` ASC';
+        $select = implode(', ', array_map(static fn(string $column): string => "`{$column}`", array_keys($safeColumns)));
+        $items = Database::all("SELECT {$select} FROM `{$table}` WHERE {$whereSql} ORDER BY {$order} LIMIT {$limit} OFFSET {$offset}", $query);
         foreach ($items as &$item) self::redact($item); unset($item);
         PlatformService::log($request, $actor, 'data_console', 'rows', $table, null);
-        return Response::success(array_merge(Pagination::data($items, $total, $page, $limit), ['columns' => array_values($columns)]));
+        return Response::success(array_merge(Pagination::data($items, $total, $page, $limit), ['columns' => array_values($safeColumns)]));
     }
 
     public static function create(Request $request, array $params): \Yiyunying\Core\ApiResponse
@@ -86,7 +100,7 @@ final class DataConsoleController
         $clean = self::cleanData($table, $data, true); unset($clean['id']);
         if ($table === 'platform_accounts' && $id === (int) $actor['id']) unset($clean['level'], $clean['parent_id'], $clean['deleted_at']);
         if ($clean === []) throw new HttpException('没有允许修改的字段', 0, 422);
-        $before = Database::one("SELECT * FROM `{$table}` WHERE id = ?", [$id]); if ($before === null) throw new HttpException('目标记录不存在', 404, 404);
+        $before = Database::one("SELECT id FROM `{$table}` WHERE id = ?", [$id]); if ($before === null) throw new HttpException('目标记录不存在', 404, 404);
         $sets = implode(', ', array_map(static fn(string $column): string => "`{$column}` = ?", array_keys($clean)));
         $changed = Database::execute("UPDATE `{$table}` SET {$sets} WHERE id = ?", array_merge(array_values($clean), [$id]));
         PlatformService::log($request, $actor, 'data_console', 'update', $table, $id, ['fields' => array_keys($before)], ['fields' => array_keys($clean)]);
@@ -98,7 +112,7 @@ final class DataConsoleController
         $actor = self::actor($request); self::confirmWrite($actor, $request); $table = self::writableTable((string) $params['table']); $id = (int) $params['row_id'];
         $columns = self::columns($table); if ($id <= 0 || !isset($columns['id'])) throw new HttpException('该表不支持按 id 删除', 0, 422);
         if ($table === 'platform_accounts' && $id === (int) $actor['id']) throw new HttpException('不能删除当前 1 级平台所有者', 403, 403);
-        $before = Database::one("SELECT * FROM `{$table}` WHERE id = ?", [$id]); if ($before === null) throw new HttpException('目标记录不存在', 404, 404);
+        $before = Database::one("SELECT id FROM `{$table}` WHERE id = ?", [$id]); if ($before === null) throw new HttpException('目标记录不存在', 404, 404);
         $hard = self::boolValue($request->input('hard_delete', false));
         if (!$hard && isset($columns['deleted_at'])) $changed = Database::execute("UPDATE `{$table}` SET deleted_at = NOW()" . (isset($columns['status']) ? ', status = -1' : '') . ' WHERE id = ?', [$id]);
         elseif (!$hard && isset($columns['status'])) $changed = Database::execute("UPDATE `{$table}` SET status = -1 WHERE id = ?", [$id]);
@@ -110,7 +124,11 @@ final class DataConsoleController
     private static function actor(Request $request): array
     {
         $actor = PlatformService::auth($request); PlatformService::requireLevelOne($actor);
-        if (!PlatformService::setting((int) $actor['id'], 'data_console_enabled', true)) throw new HttpException('数据总控已关闭', 403, 403); return $actor;
+        if (!(bool) config('security.data_console_enabled', false)
+            || !PlatformService::setting((int) $actor['id'], 'data_console_enabled', false)) {
+            throw new HttpException('数据总控已关闭', 403, 403);
+        }
+        return $actor;
     }
 
     private static function confirmWrite(array $actor, Request $request): void
@@ -141,7 +159,7 @@ final class DataConsoleController
     {
         $columns = self::columns($table); $clean = [];
         foreach ($data as $key => $value) {
-            $key = (string) $key; if (!isset($columns[$key]) || in_array($key, self::SENSITIVE_COLUMNS, true)) continue;
+            $key = (string) $key; if (!isset($columns[$key]) || self::isSensitiveColumn($key)) continue;
             if (!$updating && str_contains((string) $columns[$key]['extra'], 'auto_increment')) continue;
             $clean[$key] = is_array($value) || is_object($value) ? json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : $value;
         }
@@ -153,7 +171,7 @@ final class DataConsoleController
         $filters = $request->input('filters', []); if (is_string($filters) && trim($filters) !== '') $filters = json_decode($filters, true);
         if (!is_array($filters)) $filters = []; $where = []; $query = [];
         foreach (array_slice($filters, 0, 20, true) as $column => $value) {
-            if (!isset($columns[$column]) || in_array((string) $column, self::SENSITIVE_COLUMNS, true)) continue;
+            if (!isset($columns[$column]) || self::isSensitiveColumn((string) $column)) continue;
             $where[] = "`{$column}` = ?"; $query[] = $value;
         }
         return [$where, $query];
@@ -162,8 +180,23 @@ final class DataConsoleController
     private static function redact(array &$item): void
     {
         foreach (array_keys($item) as $column) {
-            if (in_array((string) $column, self::SENSITIVE_COLUMNS, true) || str_contains((string) $column, 'token')) $item[$column] = '[安全字段已隐藏]';
+            if (self::isSensitiveColumn((string) $column)) unset($item[$column]);
         }
+    }
+
+    private static function publicColumns(array $columns): array
+    {
+        return array_filter(
+            $columns,
+            static fn(array $metadata, string $column): bool => !self::isSensitiveColumn($column),
+            ARRAY_FILTER_USE_BOTH
+        );
+    }
+
+    private static function isSensitiveColumn(string $column): bool
+    {
+        if (in_array(strtolower($column), self::SENSITIVE_COLUMNS, true)) return true;
+        return preg_match('/(?:^|_)(?:password|token|secret|credential|api_key|private_key|ciphertext|encrypted)(?:_|$)|_hash$/i', $column) === 1;
     }
 
     private static function boolValue($value): bool { if (is_bool($value)) return $value; return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true); }

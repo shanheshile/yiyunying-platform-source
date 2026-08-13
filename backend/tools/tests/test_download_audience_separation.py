@@ -63,8 +63,11 @@ class DownloadAudienceSeparationTest(unittest.TestCase):
             self.assertNotIn(internal_route, source)
         self.assertNotIn("releaseMetadata.projectAssets", source)
         self.assertIn("const pendingBrowserScript", source)
+        self.assertIn("const sharedBrowserScript", source)
         self.assertIn(
-            "const browserScript = isFormalRelease\n  ? formalBrowserScript\n  : pendingBrowserScript;",
+            'const browserScript = sharedBrowserScript + "\\n" + (isFormalRelease\n'
+            "  ? formalBrowserScript\n"
+            "  : pendingBrowserScript);",
             source,
         )
 

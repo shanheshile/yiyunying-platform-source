@@ -115,10 +115,7 @@ final class AdminProvisionService
         }
         $appName = mb_substr(trim((string) ($data['app_name'] ?? '')), 0, 100);
         if ($appName === '') $appName = $account . '的应用';
-        $password = (string) $data['password'];
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $data['password']);
         $email = trim((string) ($data['email'] ?? ''));
         if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
             throw new HttpException('email 格式错误', 0, 422);

@@ -277,10 +277,7 @@ final class UserController
         if (Database::one('SELECT id FROM users WHERE app_id = ? AND account = ?', [$appId, $account])) {
             throw new HttpException('该应用下账号已存在', 0, 409);
         }
-        $password = (string) $data['password'];
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $data['password']);
         $nickname = mb_substr(trim((string) ($data['nickname'] ?? $account)), 0, 80);
         $email = IdentityService::normalize('email', (string) ($data['email'] ?? ''));
         $phone = mb_substr(IdentityService::normalize('phone', (string) ($data['phone'] ?? '')), 0, 40);
@@ -404,10 +401,7 @@ final class UserController
         $appId = (int) $params['app_id'];
         $userId = (int) $params['user_id'];
         self::ownedUser((int) $admin['id'], $appId, $userId);
-        $password = (string) $request->input('new_password', '');
-        if (strlen($password) < 6 || strlen($password) > 72) {
-            throw new HttpException('new_password 长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $password = Password::assertAcceptable((string) $request->input('new_password', ''), 'new_password');
         Database::transaction(static function () use ($admin, $appId, $userId, $password): void {
             Database::execute(
                 'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ? AND admin_id = ? AND app_id = ?',
@@ -535,8 +529,7 @@ final class UserController
             $account = trim((string) ($item['account'] ?? ''));
             $password = (string) ($item['password'] ?? '');
             if (preg_match('/^[A-Za-z0-9_.-]{3,32}$/', $account) !== 1
-                || strlen($password) < 6 || strlen($password) > 72
-                || hash_equals('123456', $password)) {
+                || !Password::isAcceptable($password)) {
                 $failed[] = [
                     'index' => $index, 'account' => $account,
                     'reason' => '账号格式错误，或密码未显式提供 6-72 字节且不能使用已知默认密码',

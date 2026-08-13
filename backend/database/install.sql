@@ -4574,7 +4574,7 @@ VALUES
   (@root_platform_id, 'balance_exchange_enabled', '1', 'bool', NOW(), NOW()),
   (@root_platform_id, 'balance_exchange_max_quantity_per_order', '100', 'int', NOW(), NOW()),
   (@root_platform_id, 'balance_exchange_admin_daily_limit', '0', 'int', NOW(), NOW())
-  ,(@root_platform_id, 'data_console_enabled', '1', 'bool', NOW(), NOW())
+  ,(@root_platform_id, 'data_console_enabled', '0', 'bool', NOW(), NOW())
   ,(@root_platform_id, 'balance_display_name', '余额', 'string', NOW(), NOW())
   ,(@root_platform_id, 'authorized_platform_membership_required', '1', 'bool', NOW(), NOW())
   ,(@root_platform_id, 'authorized_platform_vip_only', '0', 'bool', NOW(), NOW())

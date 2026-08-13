@@ -242,6 +242,10 @@ final class DashboardController
              WHERE {$whereSql} ORDER BY ap.id DESC LIMIT {$limit} OFFSET {$offset}",
             $query
         );
+        foreach ($items as &$item) {
+            unset($item['app_secret_hash']);
+        }
+        unset($item);
         return Response::success(Pagination::data($items, $total, $page, $limit));
     }
 
@@ -249,6 +253,7 @@ final class DashboardController
     {
         $actor = PlatformService::auth($request);
         $app = PlatformService::ownedApp($actor, (int) $params['app_id']);
+        unset($app['app_secret_hash']);
         $app['configured_settings'] = AppService::settings((int) $app['id']);
         $app['settings'] = AppService::effectiveSettings((int) $app['id']);
         $app['setting_descriptors'] = SettingDescriptorService::describe($app['settings']);

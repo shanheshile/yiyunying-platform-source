@@ -32,7 +32,13 @@ import {
   Users,
   UsersRound,
 } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 type PublicRelease = {
   id: "user" | "admin" | "authorized" | "owner";
@@ -94,6 +100,42 @@ const WORKFLOW = [
 
 const subscribeDevice = () => () => {};
 
+type PublicHealthState = {
+  state: "checking" | "operational" | "degraded" | "offline";
+  label: string;
+  database: string;
+  checkedAt: string;
+};
+
+const INITIAL_HEALTH: PublicHealthState = {
+  state: "checking",
+  label: "正在检测",
+  database: "等待检测",
+  checkedAt: "等待首次检测",
+};
+
+function isHealthyPublicResponse(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const response = value as {
+    code?: unknown;
+    data?: { status?: unknown; database?: unknown };
+  };
+  return (
+    response.code === 1 &&
+    response.data?.status === "ok" &&
+    response.data?.database === "connected"
+  );
+}
+
+function currentCheckTime() {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}
+
 function getIsAndroidSnapshot() {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 }
@@ -112,9 +154,9 @@ function copyText(value: string, onDone: (message: string) => void) {
   input.style.opacity = "0";
   document.body.appendChild(input);
   input.select();
-  document.execCommand("copy");
+  const copied = document.execCommand("copy");
   input.remove();
-  onDone("已复制到剪贴板");
+  onDone(copied ? "已复制到剪贴板" : "复制失败，请长按内容复制");
 }
 
 async function shareOfficialWebsite(onDone: (message: string) => void) {
@@ -174,6 +216,9 @@ export default function Home({
   const RELEASE_NOTES = releaseMetadata?.releaseNotes ?? [];
   const [selectedId, setSelectedId] = useState<PublicRelease["id"]>("user");
   const [toast, setToast] = useState("");
+  const [publicHealth, setPublicHealth] =
+    useState<PublicHealthState>(INITIAL_HEALTH);
+  const healthRequest = useRef<AbortController | null>(null);
   const isAndroid = useSyncExternalStore(
     subscribeDevice,
     getIsAndroidSnapshot,
@@ -185,6 +230,109 @@ export default function Home({
     const timer = window.setTimeout(() => setToast(""), 2400);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  const refreshPublicHealth = useCallback(async () => {
+    healthRequest.current?.abort();
+    const controller = new AbortController();
+    healthRequest.current = controller;
+    setPublicHealth((current) => ({
+      ...current,
+      state: "checking",
+      label: current.checkedAt === "等待首次检测" ? "正在检测" : "正在重新检测",
+    }));
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch("/api/health", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok || !isHealthyPublicResponse(payload)) {
+        throw new Error("public_health_not_ready");
+      }
+      setPublicHealth({
+        state: "operational",
+        label: "服务正常",
+        database: "已连接",
+        checkedAt: `${currentCheckTime()} 更新`,
+      });
+    } catch {
+      if (controller.signal.aborted && healthRequest.current !== controller) return;
+      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+      setPublicHealth({
+        state: isOffline ? "offline" : "degraded",
+        label: isOffline ? "网络已断开" : "暂时无法确认",
+        database: "无法确认",
+        checkedAt: `${currentCheckTime()} 检测`,
+      });
+    } finally {
+      window.clearTimeout(timeout);
+      if (healthRequest.current === controller) healthRequest.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => void refreshPublicHealth(), 0);
+    const interval = window.setInterval(() => {
+      if (!document.hidden) void refreshPublicHealth();
+    }, 60_000);
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void refreshPublicHealth();
+    };
+    const markOffline = () =>
+      setPublicHealth({
+        state: "offline",
+        label: "网络已断开",
+        database: "无法确认",
+        checkedAt: `${currentCheckTime()} 检测`,
+      });
+    window.addEventListener("online", refreshWhenVisible);
+    window.addEventListener("offline", markOffline);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+      const currentRequest = healthRequest.current;
+      healthRequest.current = null;
+      currentRequest?.abort();
+      window.removeEventListener("online", refreshWhenVisible);
+      window.removeEventListener("offline", markOffline);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshPublicHealth]);
+
+  useEffect(() => {
+    const targets = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-reveal]"),
+    );
+    if (
+      targets.length === 0 ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      !("IntersectionObserver" in window)
+    ) {
+      targets.forEach((target) => target.classList.add("is-visible"));
+      return;
+    }
+    document.documentElement.classList.add("reveal-ready");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        });
+      },
+      { rootMargin: "0px 0px -10%", threshold: 0.08 },
+    );
+    targets.forEach((target) => observer.observe(target));
+    return () => {
+      observer.disconnect();
+      document.documentElement.classList.remove("reveal-ready");
+    };
+  }, []);
 
   const selected =
     PUBLIC_RELEASES.find((release) => release.id === selectedId) ??
@@ -225,7 +373,7 @@ export default function Home({
           <div className="hero-glow hero-glow-one" />
           <div className="hero-glow hero-glow-two" />
           <div className="hero-layout">
-            <div className="hero-copy">
+            <div className="hero-copy" data-reveal>
               <p className="eyebrow"><span aria-hidden="true" />多应用 · 模块化 · 全链路运营</p>
               <h1 id="hero-title">让每一个应用，<span>都有自己的运营中枢</span></h1>
               <p className="hero-lead">
@@ -248,12 +396,26 @@ export default function Home({
               </div>
             </div>
 
-            <div className="console-preview" aria-label="易云盈多应用管理界面示意">
+            <div className="console-preview" aria-label="易云盈公开服务状态与多应用管理界面示意" data-reveal>
               <div className="console-bar">
                 <span className="console-brand">
                   <img src="/logo.svg" alt="" width="27" height="27" />易云盈
                 </span>
-                <span className="console-status"><i aria-hidden="true" />服务正常</span>
+                <button
+                  className="console-status"
+                  data-action="refresh-health"
+                  data-service-health
+                  data-health-state={publicHealth.state}
+                  type="button"
+                  onClick={() => void refreshPublicHealth()}
+                  disabled={publicHealth.state === "checking"}
+                  aria-busy={publicHealth.state === "checking"}
+                  aria-label="重新检测公开服务状态"
+                >
+                  <i aria-hidden="true" />
+                  <span data-health-label>{publicHealth.label}</span>
+                  <RefreshCw size={12} aria-hidden="true" />
+                </button>
               </div>
               <div className="console-body">
                 <aside>
@@ -268,17 +430,23 @@ export default function Home({
                     <code>APP-CLOUD-01</code>
                   </div>
                   <div className="metric-grid">
-                    <article><span>今日活跃</span><strong>1,286</strong><small>实时在线 238</small></article>
-                    <article><span>内容互动</span><strong>3,492</strong><small>待审核 12</small></article>
-                    <article><span>接口状态</span><strong>99.98%</strong><small>运行稳定</small></article>
+                    <article data-service-health data-health-state={publicHealth.state}>
+                      <span>公开 API</span><strong data-health-label>{publicHealth.label}</strong><small data-health-time>{publicHealth.checkedAt}</small>
+                    </article>
+                    <article data-service-health data-health-state={publicHealth.state}>
+                      <span>数据连接</span><strong data-health-database>{publicHealth.database}</strong><small>来自同源公开健康检查</small>
+                    </article>
+                    <article>
+                      <span>正式下载</span><strong>{IS_FORMAL_RELEASE ? `${PUBLIC_RELEASES.length} 个客户端` : "未开放"}</strong><small>{IS_FORMAL_RELEASE ? "Finalized 静态证据" : "验收完成后开放"}</small>
+                    </article>
                   </div>
                   <div className="console-lower">
                     <div className="trend-card">
-                      <span>近 7 日运营趋势</span>
-                      <div className="chart-bars" aria-hidden="true">
-                        {[42, 58, 50, 76, 67, 88, 94].map((height, index) => (
-                          <i key={index} style={{ height: String(height) + "%" }} />
-                        ))}
+                      <span>当前公开链路</span>
+                      <div className="health-chain" data-service-health data-health-state={publicHealth.state}>
+                        <i><Check aria-hidden="true" />HTTPS 官网</i>
+                        <i><Activity aria-hidden="true" /><span data-health-label>{publicHealth.label}</span></i>
+                        <i><PackageCheck aria-hidden="true" />{IS_FORMAL_RELEASE ? "正式证据已绑定" : "下载保持关闭"}</i>
                       </div>
                     </div>
                     <div className="quick-card">
@@ -297,7 +465,7 @@ export default function Home({
           </div>
         </section>
 
-        <section className="trust-strip" aria-label="平台运营范围">
+        <section className="trust-strip" aria-label="平台运营范围" data-reveal>
           <div><strong>1 个账号</strong><span>集中管理多个应用</span></div>
           <div><strong>12 组核心模块</strong><span>覆盖授权与日常运营</span></div>
           <div><strong>5 项内嵌治理</strong><span>伴随业务流程自然运转</span></div>
@@ -305,7 +473,7 @@ export default function Home({
         </section>
 
         <section className="section platform-section" id="platform">
-          <div className="section-heading centered">
+          <div className="section-heading centered" data-reveal>
             <p>ONE ACCOUNT, MULTIPLE APPS</p>
             <h2>不止管理软件，更管理每个应用的完整业务</h2>
             <span>
@@ -346,7 +514,7 @@ export default function Home({
         </section>
 
         <section className="section feature-section" id="features">
-          <div className="section-heading split-heading">
+          <div className="section-heading split-heading" data-reveal>
             <div><p>PRODUCT CAPABILITIES</p><h2>每个应用，都有一套完整能力</h2></div>
             <span>核心系统保持相对独立，又能通过统一身份、权限和数据上下文协同工作。</span>
           </div>
@@ -375,7 +543,7 @@ export default function Home({
         </section>
 
         <section className="section workflow-section" id="workflow">
-          <div className="section-heading centered light-heading">
+          <div className="section-heading centered light-heading" data-reveal>
             <p>GET STARTED</p>
             <h2>四步完成接入，开始持续运营</h2>
             <span>先完成一个可验证的小闭环，再按产品节奏开放更多能力。</span>
@@ -391,7 +559,7 @@ export default function Home({
         </section>
 
         <section className="section api-section" id="api-docs">
-          <div className="api-copy">
+          <div className="api-copy" data-reveal>
             <p>DEVELOPER FIRST</p>
             <h2>接口文档清楚，接入路径可验证</h2>
             <span>
@@ -401,7 +569,7 @@ export default function Home({
               打开接口文档 <ExternalLink size={17} aria-hidden="true" />
             </a>
           </div>
-          <div className="api-window" aria-label="安全接入流程示意">
+          <div className="api-window" aria-label="安全接入流程示意" data-reveal>
             <div className="api-window-bar"><span /><span /><span /><code>身份校验流程</code></div>
             <div className="api-window-body">
               <p><b>1</b><span>app_key / platform_key</span><Check /></p>
@@ -413,7 +581,7 @@ export default function Home({
         </section>
 
         <section className="section security-section" id="security">
-          <div className="section-heading centered">
+          <div className="section-heading centered" data-reveal>
             <p>SECURITY &amp; TRUST</p>
             <h2>把安全放进每一层，而不是留到最后</h2>
             <span>
@@ -429,7 +597,7 @@ export default function Home({
         </section>
 
         <section className="download-section" id="download">
-          <div className="section-heading centered download-heading">
+          <div className="section-heading centered download-heading" data-reveal>
             <p>OFFICIAL CLIENTS</p>
             <h2>{IS_FORMAL_RELEASE ? "下载易云盈正式版" : "易云盈正式版准备中"}</h2>
             <span>
@@ -439,8 +607,35 @@ export default function Home({
             </span>
           </div>
 
+          <div className="download-status-grid" data-reveal>
+            <article data-service-health data-health-state={publicHealth.state}>
+              <Activity aria-hidden="true" />
+              <span><small>公开服务</small><strong data-health-label>{publicHealth.label}</strong><b data-health-time>{publicHealth.checkedAt}</b></span>
+              <button
+                data-action="refresh-health"
+                type="button"
+                onClick={() => void refreshPublicHealth()}
+                disabled={publicHealth.state === "checking"}
+                aria-busy={publicHealth.state === "checking"}
+                aria-label="重新检测公开服务状态"
+              ><RefreshCw aria-hidden="true" /></button>
+            </article>
+            <article>
+              <PackageCheck aria-hidden="true" />
+              <span><small>发布证据</small><strong>{IS_FORMAL_RELEASE ? "Finalized · 四角色一致" : "正式验收中"}</strong><b>{IS_FORMAL_RELEASE ? "仅展示最终公开清单" : "候选信息保持私有"}</b></span>
+            </article>
+            <article>
+              <ShieldCheck aria-hidden="true" />
+              <span><small>下载保护</small><strong>{IS_FORMAL_RELEASE ? "HTTPS + SHA-256" : "下载通道未开放"}</strong><b>{IS_FORMAL_RELEASE ? "下载前后均可核验" : "完成验收后自动展示"}</b></span>
+            </article>
+          </div>
+
+          <span className="health-announcement" aria-live="polite" aria-atomic="true">
+            公开服务状态：<span data-health-label>{publicHealth.label}</span>；数据连接：<span data-health-database>{publicHealth.database}</span>；<span data-health-time>{publicHealth.checkedAt}</span>
+          </span>
+
           {IS_FORMAL_RELEASE && selected ? <>
-          <div className="download-shell">
+          <div className="download-shell" data-reveal>
             <div className="release-summary">
               <div>
                 <span className="release-badge is-formal">
@@ -456,13 +651,15 @@ export default function Home({
               <Smartphone aria-hidden="true" />
             </div>
 
-            <div className="public-role-tabs" role="group" aria-label="选择公开客户端">
+            <div className="public-role-tabs" role="tablist" aria-label="选择公开客户端">
               {PUBLIC_RELEASES.map((release) => (
                 <button
                   type="button"
                   className={selected.id === release.id ? "is-active" : ""}
                   onClick={() => setSelectedId(release.id)}
-                  aria-pressed={selected.id === release.id}
+                  aria-selected={selected.id === release.id}
+                  aria-controls="selected-client-panel"
+                  role="tab"
                   key={release.id}
                 >
                   <span>{release.shortName}</span><small>{release.audience}</small>
@@ -470,7 +667,7 @@ export default function Home({
               ))}
             </div>
 
-            <div className="selected-download">
+            <div className="selected-download" id="selected-client-panel" role="tabpanel" aria-live="polite" key={selected.id}>
               <div className="selected-product">
                 <span className="product-mark"><img src="/logo.svg" alt="" width="60" height="60" /></span>
                 <span><small>当前选择</small><strong>{selected.name}</strong><p>{selected.description}</p></span>
@@ -546,7 +743,7 @@ export default function Home({
             </ul>
           </div>
           </> : (
-            <div className="download-shell release-unavailable" aria-live="polite">
+            <div className="download-shell release-unavailable" aria-live="polite" data-reveal>
               <ShieldCheck aria-hidden="true" />
               <h3>正式版尚未开放</h3>
               <p>当前页面不会公开候选版本、安装包名称、校验值或下载地址。请先浏览完整功能介绍与接口文档，正式版通过验收后将在这里开放。</p>

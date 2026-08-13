@@ -18,6 +18,7 @@ use Yiyunying\Services\LogService;
 use Yiyunying\Services\ProfileAvatarService;
 use Yiyunying\Services\PlatformService;
 use Yiyunying\Services\RolePermissionService;
+use Yiyunying\Services\LoginAttemptService;
 
 final class AuthController
 {
@@ -60,6 +61,7 @@ final class AuthController
             'SELECT * FROM admins WHERE platform_id = ? AND account = ? LIMIT 1',
             [(int) $platform['id'], $account]
         );
+        LoginAttemptService::assertAdminAllowed((int) $platform['id'], $account, $request->clientIp());
 
         if ($rawAdmin === null || !Password::verify($password, (string) $rawAdmin['password_hash'])) {
             self::writeLoginLog((int) $platform['id'], $rawAdmin === null ? null : (int) $rawAdmin['id'], $account, $request, false, '账号或密码错误');
@@ -205,11 +207,7 @@ final class AuthController
         if (!Password::verify((string) $data['old_password'], (string) $admin['password_hash'])) {
             throw new HttpException('原密码错误', 0, 422);
         }
-        $newPassword = (string) $data['new_password'];
-        $min = (int) config('security.password_min_length', 6);
-        if (strlen($newPassword) < $min || strlen($newPassword) > 72) {
-            throw new HttpException("新密码长度必须在 {$min}-72 个字节之间", 0, 422);
-        }
+        $newPassword = Password::assertAcceptable((string) $data['new_password'], 'new_password');
         Database::transaction(static function () use ($admin, $newPassword): void {
             Database::execute('UPDATE admins SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
                 Password::hash($newPassword),

@@ -82,8 +82,7 @@ $assert(str_contains($userRevoke, 'UPDATE user_tokens SET revoked_at = NOW()')
     && substr_count($userRevoke, 'revoked_at IS NULL') === 2, '用户会话辅助方法必须幂等撤销两类令牌');
 $assert(!str_contains($userImport, "?? '123456'")
     && str_contains($userImport, "?? ''")
-    && str_contains($userImport, "hash_equals('123456', \$password)")
-    && str_contains($userImport, 'strlen($password) > 72'), '批量导入必须要求显式强密码并拒绝 123456');
+    && str_contains($userImport, 'Password::isAcceptable($password)'), '批量导入必须要求显式强密码并使用统一弱密码策略');
 
 $operatorStatus = $functionBody($platformOperator, 'status');
 $assert(str_contains($operatorStatus, 'Database::transaction')

@@ -23,6 +23,7 @@ use Yiyunying\Services\WalletLedgerService;
 use Yiyunying\Services\WalletService;
 use Yiyunying\Services\ContactVerificationService;
 use Yiyunying\Services\IdentityService;
+use Yiyunying\Services\LoginAttemptService;
 use Yiyunying\Services\UserSessionService;
 
 final class AuthController
@@ -225,6 +226,11 @@ final class AuthController
         $user = Database::one(
             'SELECT * FROM users WHERE admin_id = ? AND app_id = ? AND account = ? AND deleted_at IS NULL LIMIT 1',
             [(int) $app['admin_id'], (int) $app['id'], $account]
+        );
+        LoginAttemptService::assertUserAllowed(
+            (int) $app['id'],
+            $user === null ? null : (int) $user['id'],
+            $request->clientIp()
         );
         if ($user === null || !Password::verify((string) $data['password'], (string) $user['password_hash'])) {
             self::writeLoginLog($app, $user, $request, false, '账号或密码错误');
@@ -952,12 +958,7 @@ final class AuthController
 
     private static function validatePassword(string $password): string
     {
-        $min = (int) config('security.password_min_length', 6);
-        $length = strlen($password);
-        if ($length < $min || $length > 72) {
-            throw new HttpException("password 长度必须在 {$min}-72 个字节之间", 0, 422);
-        }
-        return $password;
+        return Password::assertAcceptable($password);
     }
 
     private static function issueUserToken(Request $request, array $app, int $userId, string $device): array

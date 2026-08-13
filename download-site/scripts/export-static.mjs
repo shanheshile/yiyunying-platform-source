@@ -33,6 +33,107 @@ const { publicRelease } = await loadPublicReleaseProjection(
 );
 const isFormalRelease = publicRelease !== null;
 
+const sharedBrowserScript = `(() => {
+  const healthContainers = Array.from(document.querySelectorAll("[data-service-health]"));
+  const healthLabels = Array.from(document.querySelectorAll("[data-health-label]"));
+  const healthDatabases = Array.from(document.querySelectorAll("[data-health-database]"));
+  const healthTimes = Array.from(document.querySelectorAll("[data-health-time]"));
+  const healthButtons = Array.from(document.querySelectorAll('[data-action="refresh-health"]'));
+  let healthController = null;
+  let healthSequence = 0;
+
+  function checkTime() {
+    return new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).format(new Date());
+  }
+
+  function updateHealth(state, label, database, checkedAt) {
+    healthContainers.forEach((container) => container.dataset.healthState = state);
+    healthLabels.forEach((element) => element.textContent = label);
+    healthDatabases.forEach((element) => element.textContent = database);
+    healthTimes.forEach((element) => element.textContent = checkedAt);
+    healthButtons.forEach((button) => {
+      button.disabled = state === "checking";
+      button.setAttribute("aria-busy", String(state === "checking"));
+    });
+  }
+
+  function healthyPayload(value) {
+    return value && typeof value === "object" && value.code === 1
+      && value.data && value.data.status === "ok" && value.data.database === "connected";
+  }
+
+  async function refreshHealth() {
+    const sequence = ++healthSequence;
+    if (healthController) healthController.abort();
+    healthController = new AbortController();
+    const controller = healthController;
+    updateHealth("checking", "正在检测", "等待检测", "正在连接同源公开接口");
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch("/api/health", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok || !healthyPayload(payload)) throw new Error("public_health_not_ready");
+      if (sequence !== healthSequence) return;
+      updateHealth("operational", "服务正常", "已连接", checkTime() + " 更新");
+    } catch {
+      if (sequence !== healthSequence) return;
+      const offline = !navigator.onLine;
+      updateHealth(
+        offline ? "offline" : "degraded",
+        offline ? "网络已断开" : "暂时无法确认",
+        "无法确认",
+        checkTime() + " 检测",
+      );
+    } finally {
+      window.clearTimeout(timeout);
+      if (sequence === healthSequence) healthController = null;
+    }
+  }
+
+  function enableReveals() {
+    const targets = Array.from(document.querySelectorAll("[data-reveal]"));
+    if (!targets.length) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+      targets.forEach((target) => target.classList.add("is-visible"));
+      return;
+    }
+    document.documentElement.classList.add("reveal-ready");
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        observer.unobserve(entry.target);
+      });
+    }, { rootMargin: "0px 0px -10%", threshold: 0.08 });
+    targets.forEach((target) => observer.observe(target));
+  }
+
+  healthButtons.forEach((button) => button.addEventListener("click", refreshHealth));
+  window.addEventListener("online", refreshHealth);
+  window.addEventListener("offline", () => {
+    healthSequence += 1;
+    if (healthController) healthController.abort();
+    healthController = null;
+    updateHealth("offline", "网络已断开", "无法确认", checkTime() + " 检测");
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshHealth();
+  });
+  window.setInterval(() => {
+    if (!document.hidden) refreshHealth();
+  }, 60000);
+  enableReveals();
+  refreshHealth();
+})();`;
+
 const formalBrowserScript = `(() => {
   const publicRelease = ${JSON.stringify(publicRelease)};
   const releases = publicRelease?.releases || [];
@@ -45,6 +146,7 @@ const formalBrowserScript = `(() => {
   const fileSize = document.querySelector(".selected-product > b");
   const downloadButton = document.querySelector(".download-button");
   const downloadButtonSize = document.querySelector(".download-button span");
+  const selectedDownload = document.querySelector(".selected-download");
   const verificationCodes = document.querySelectorAll(".file-verification code");
   const verificationButtons = document.querySelectorAll(".file-verification button");
   const releaseFileReferences = document.querySelectorAll("[data-release-file]");
@@ -126,7 +228,7 @@ const formalBrowserScript = `(() => {
     roleButtons.forEach((button, buttonIndex) => {
       const selected = buttonIndex === index;
       button.classList.toggle("is-active", selected);
-      button.setAttribute("aria-pressed", String(selected));
+      button.setAttribute("aria-selected", String(selected));
     });
     if (releaseName) releaseName.textContent = current.name;
     if (releaseDescription) releaseDescription.textContent = current.description;
@@ -144,6 +246,11 @@ const formalBrowserScript = `(() => {
     releaseFileReferences.forEach((reference) => {
       reference.textContent = current.fileName;
     });
+    if (selectedDownload) {
+      selectedDownload.classList.remove("is-switching");
+      void selectedDownload.offsetWidth;
+      selectedDownload.classList.add("is-switching");
+    }
   }
 
   roleButtons.forEach((button, index) => {
@@ -222,9 +329,9 @@ const pendingBrowserScript = `(() => {
   });
 })();`;
 
-const browserScript = isFormalRelease
+const browserScript = sharedBrowserScript + "\n" + (isFormalRelease
   ? formalBrowserScript
-  : pendingBrowserScript;
+  : pendingBrowserScript);
 
 const docsBrowserScript = `(() => {
   const SAFE_BASE_URL = "https://api.example.com";

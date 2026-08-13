@@ -108,7 +108,7 @@ function Read-DownloadPackageVersion {
 function Write-DownloadPackageVersion([string] $Name) {
     $package = Get-Content -LiteralPath $downloadPackageFile -Raw -Encoding UTF8 | ConvertFrom-Json
     $package.version = $Name
-    $json = $package | ConvertTo-Json -Depth 20
+    $json = (($package | ConvertTo-Json -Depth 20 | Out-String) -replace "`r`n?", "`n").TrimEnd([char[]] "`n")
     [System.IO.File]::WriteAllText(
         $downloadPackageFile,
         $json + "`n",
@@ -141,7 +141,7 @@ function Write-BackendReleaseIdentity([string] $Name, [int] $Code) {
     if (-not [string]::IsNullOrWhiteSpace($existing.stableSignerSha256)) {
         $identity.stable_signer_sha256 = $existing.stableSignerSha256
     }
-    $json = $identity | ConvertTo-Json
+    $json = (($identity | ConvertTo-Json | Out-String) -replace "`r`n?", "`n").TrimEnd([char[]] "`n")
     [System.IO.File]::WriteAllText(
         $backendReleaseFile,
         $json + "`n",

@@ -96,6 +96,11 @@ return [
         'user_token_ttl' => (int) $env('USER_TOKEN_TTL', 2592000),
         'user_refresh_token_ttl' => (int) $env('USER_REFRESH_TOKEN_TTL', 7776000),
         'password_min_length' => (int) $env('PASSWORD_MIN_LENGTH', 8),
+        'login_failure_window_seconds' => (int) $env('LOGIN_FAILURE_WINDOW_SECONDS', 900),
+        'login_failure_identity_ip_limit' => (int) $env('LOGIN_FAILURE_IDENTITY_IP_LIMIT', 5),
+        'login_failure_identity_limit' => (int) $env('LOGIN_FAILURE_IDENTITY_LIMIT', 15),
+        'login_failure_ip_limit' => (int) $env('LOGIN_FAILURE_IP_LIMIT', 30),
+        'data_console_enabled' => $envBool('DATA_CONSOLE_ENABLED', false),
         'qr_signing_key' => (string) $env('QR_SIGNING_KEY', 'local-development-only-change-me'),
         'media_signing_key' => (string) $env('MEDIA_SIGNING_KEY', ''),
         'trusted_proxies' => array_values(array_filter(array_map(

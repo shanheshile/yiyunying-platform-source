@@ -73,6 +73,9 @@ $required = @(
     'public\index.php',
     'public\router.php',
     'public\api-docs.html',
+    'public\control\index.php',
+    'public\control\control.css',
+    'public\control\control.js',
     'routes\api.php',
     'docs\API.md',
     'docs\API_FULL.md',
@@ -126,6 +129,8 @@ $required = @(
     'tools\audit-default-credentials.php',
     'tools\test-default-credential-audit-contract.php',
     'tools\test-auth-session-revocation-contract.php',
+    'tools\test-root-control-console-contract.php',
+    'tools\test-account-security-boundaries.php',
     'tools\test-maintenance-write-guard-contract.php',
     'tools\test-purchase-history-foreign-key-contract.php',
     'tools\test-catalog-private-migration-contract.php',
@@ -471,6 +476,16 @@ exit($invalid === [] ? 0 : 1);
         throw "Auth/session revocation contract checks failed.`n$authSessionRevocationOutput"
     }
     Write-Host "Auth/session revocation contract checks: passed"
+    $rootControlOutput = & $php.Source (Join-Path $root 'tools\test-root-control-console-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Root control console contract checks failed.`n$rootControlOutput"
+    }
+    Write-Host "Root control console contract checks: passed"
+    $accountSecurityOutput = & $php.Source (Join-Path $root 'tools\test-account-security-boundaries.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Account security boundary contract checks failed.`n$accountSecurityOutput"
+    }
+    Write-Host "Account security boundary contract checks: passed"
     $maintenanceWriteGuardOutput = & $php.Source (Join-Path $root 'tools\test-maintenance-write-guard-contract.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Maintenance write guard contract checks failed.`n$maintenanceWriteGuardOutput"

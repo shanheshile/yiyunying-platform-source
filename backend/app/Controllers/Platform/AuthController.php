@@ -14,6 +14,7 @@ use Yiyunying\Core\Validator;
 use Yiyunying\Services\PlatformService;
 use Yiyunying\Services\ProfileAvatarService;
 use Yiyunying\Services\RolePermissionService;
+use Yiyunying\Services\LoginAttemptService;
 
 final class AuthController
 {
@@ -27,6 +28,7 @@ final class AuthController
             'SELECT * FROM platform_accounts WHERE account = ? AND deleted_at IS NULL LIMIT 1',
             [$account]
         );
+        LoginAttemptService::assertPlatformAllowed($account, $request->clientIp());
         if ($platform === null
             || !hash_equals((string) $platform['platform_key'], $platformKey)
             || !Password::verify((string) $data['password'], (string) $platform['password_hash'])) {
@@ -139,10 +141,7 @@ final class AuthController
         if (!Password::verify((string) $data['old_password'], (string) $platform['password_hash'])) {
             throw new HttpException('原密码错误', 0, 422);
         }
-        $new = (string) $data['new_password'];
-        if (strlen($new) < 6 || strlen($new) > 72) {
-            throw new HttpException('新密码长度必须在 6-72 个字节之间', 0, 422);
-        }
+        $new = Password::assertAcceptable((string) $data['new_password'], 'new_password');
         Database::transaction(static function () use ($platform, $new): void {
             Database::execute('UPDATE platform_accounts SET password_hash = ?, updated_at = NOW() WHERE id = ?', [
                 Password::hash($new), (int) $platform['id'],
