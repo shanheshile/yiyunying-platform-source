@@ -4,15 +4,16 @@
 
 ## 0. 一句话结论
 
-正式首发候选 `1.0.0 (63)` 已从源码 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端生产签名 Stable Build。pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；当前仍为 `pending`、`releaseEvidenceCommit=null`。`2.8.0/code62 → 1.0.0/code63` 真机覆盖升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或归档。线上仍是 `2.7.14 (59)` Debug 测试版。
+正式首发候选 `1.0.0 (63)` 已从源码 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端生产签名 Stable Build。pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；当前仍为 `pending`、`releaseEvidenceCommit=null`。`2.8.0/code62 → 1.0.0/code63` 真机覆盖升级尚未执行，因此不能 Finalize、部署 APK、公开发布、创建 `v1.0.0` 标签或归档。生产生命周期策略仍是 `2.7.14 (59)` Debug 测试版；但 2026-08-13 已将客户官网原子切换为失败关闭状态，并在 Nginx 层将四个旧 Debug 直链全部封为 404，客户页不再展示或下载 Debug/候选包。
 
 ## 1. 唯一源码与版本身份
 
 - 规范仓库：`C:\Users\Administrator\Documents\易云后台\github-source`
 - GitHub：`shanheshile/yiyunying-platform-source`
-- Build 源码 A/HEAD：`ac574ed7923b826c29ccef2a681bf61fc09fdbb1`
+- Build 源码 A：`ac574ed7923b826c29ccef2a681bf61fc09fdbb1`
+- 下载分层实现与生产 Nginx 配置提交：`db1b58ffd6dae62909961196aa3dd031aa4ef40d`；当前 `main` / `origin/main` 必须现场用 `git rev-parse` 回读
 - 正式首发候选：Stable `1.0.0`，`versionCode=63`
-- 线上版本：Debug `2.7.14`，`versionCode=59`
+- 线上生命周期策略：Debug `2.7.14`，`versionCode=59`；客户下载入口已失败关闭，旧 Debug APK 公网 URL 为 404
 - 目标 API：`https://appht.jjmxg.xyz/`
 - pending manifest：`releases/1.0.0/release-manifest.json`
 - manifest SHA-256：`B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`

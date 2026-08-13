@@ -17,7 +17,7 @@
 
 ## 已确认事实
 
-- 当前 `1.0.0 (63)` 已完成本地 Stable Build 和 pending manifest；真机升级证据尚未生成。线上非强制 Debug 测试版本仍为 `2.7.14 (59)`。
+- 当前 `1.0.0 (63)` 已完成本地 Stable Build 和 pending manifest；真机升级证据尚未生成。线上生命周期策略仍为非强制 Debug `2.7.14 (59)`，但客户官网已失败关闭，旧 Debug 公网下载 URL 已全部返回 404。
 - 仓库包含用户端、管理员端、授权端、总控端四种 Android 构建形态。
 - 后端采用 PHP API 与 MySQL，客户端依赖推送、WebSocket、TURN/STUN、地图、天气、语音识别等外部能力。
 - 本仓库只有从 `2.7.2` 建立的真实 Git 历史；更早历史由本机归档和发布证据重建，未伪造旧提交。
@@ -46,6 +46,7 @@
 - Android 四端各 338 项/合计 1,352 项单测均 0 failure、0 error、0 skipped；四端 Release Lint 0 error、assemble、production signer 与独立 APK 身份检查通过。
 - 四包实际 SHA-256：用户端 `482A296DDF668C87A2CD64E331A79C22C1E5D173BD4DA7E39FE4E0A78E603E54`，管理员 `1848E5F0EAFF980030509838D1B72463CE3D64E22FB502219087C2D4CA7B8857`，授权平台 `A5C575B57D71E3EEDC006CCCADC9941979399CBD8EE41FBE445EABE24CC7F673`，平台总控 `A4EC2CE9A9FDC8A1B4C21117D51B8EE895E071BB7F1FEC5EA596395DE9B82512`；统一 production signer 见 [1.0.0 说明](releases/1.0.0.md)。
 - 官网与接口文档完成四角色下载、13 个系统接入示例和 58 条精确路由；复制、分享/复制 canonical URL 降级、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开、APK 安装和 SHA-256 校验说明已通过 build、rendered HTML、静态导出、ESLint、敏感信息及原子部署合同测试。
+- 2026-08-13 23:17（Asia/Shanghai）完成下载受众分层的生产安全切换：公开客户页只保留官网功能与接口文档，并对 pending 版本、文件名、包名、SHA、APK URL 和项目资产零输出；`/internal-downloads/` 不进入客户静态站；Nginx 仅允许目录版本与文件版本一致的四个 Stable APK 命名，其余 `/downloads/` 默认 404。四个 `2.7.14` Debug URL 独立公网回读均为 404，站点首页及脚本哈希与本地静态构建一致。
 - 生产 HTTPS 只读 HEAD 复核显示 2.7.14/2.7.15 的 source ZIP、Git bundle、delivery ZIP 和 project manifest 共 8 个历史私有资产 URL 全为 HTTP 404，未公开旧私有项目资产。
 - 生产维护已完成独立随机密码、本机 DPAPI 恢复材料、应用 secret 轮换与全部 access/refresh Token 撤销；无已验证恢复渠道账号只停用、不删除数据；平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 

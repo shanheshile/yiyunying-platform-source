@@ -24,7 +24,7 @@ python download-site/scripts/serve-internal-downloads.py `
 
 Debug 只能走本机或专用私有存储，`deploy-static.py` 会拒绝把 Debug 或项目资产发布到公网。Nginx `/downloads/` 默认返回 404，仅放行四个不含 `-debug` 的 Stable APK 命名；正式客户别名与生命周期发布器生成的不可变 token 目录都受该白名单限制。
 
-官网目标正式首发版本 `1.0.0 (63)` 已完成本地 Stable Build，pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；但 code62→63 真机升级、Finalize 和生产部署尚未完成，不能切换正式下载。线上仍为 `2.7.14 (59)` Debug；在 finalized 证据就绪前页面必须继续失败关闭。
+官网目标正式首发版本 `1.0.0 (63)` 已完成本地 Stable Build，pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；但 code62→63 真机升级、Finalize 和 APK 生产部署尚未完成，不能切换正式下载。生产生命周期策略仍为 `2.7.14 (59)` Debug；客户页已于 2026-08-13 原子切换为失败关闭状态，四个旧 Debug 公网 URL 已由 Nginx 封为 404。在 finalized 证据就绪前页面必须继续失败关闭。
 
 ## 客户页安全修复事务
 
