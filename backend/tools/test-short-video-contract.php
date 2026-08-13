@@ -66,6 +66,11 @@ $checks = [
             && str_contains($source['migration'], "'{$feature}'")
             && str_contains($source['app_service'], "'{$feature}'")
             && str_contains($source['install'], "'{$feature}'"), true),
+    'upgrade seed disambiguates insert-select upsert after the cross join' =>
+        preg_match(
+            '/\)\s+AS short_video_features\s+WHERE 1 = 1\s+ON DUPLICATE KEY UPDATE/s',
+            $source['migration']
+        ) === 1,
     'backend has a dedicated feed and immutable short-video content kind' =>
         str_contains($source['moments'], "content_kind = ?")
         && str_contains($source['moments'], "'short_video'")

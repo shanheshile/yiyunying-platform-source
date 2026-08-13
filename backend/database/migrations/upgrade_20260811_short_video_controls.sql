@@ -42,6 +42,7 @@ CROSS JOIN (
   UNION ALL SELECT 'short_video_favorites'
   UNION ALL SELECT 'short_video_forwards'
 ) AS short_video_features
+WHERE 1 = 1
 ON DUPLICATE KEY UPDATE feature_code = VALUES(feature_code);
 
 INSERT INTO schema_migrations (`version`, `description`, `applied_at`)

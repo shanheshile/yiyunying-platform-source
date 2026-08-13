@@ -5,11 +5,13 @@ import base64
 import hashlib
 import hmac
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import urllib.parse
@@ -118,10 +120,17 @@ class PrivateDownloadContractTests(unittest.TestCase):
         aapt2 = MODULE.resolve_android_tool(ROOT, "aapt2", None)
         apksigner = MODULE.resolve_android_tool(ROOT, "apksigner", None)
         artifacts = MODULE.validate_artifacts(ROOT, aapt2, apksigner)
+        candidate_manifest = json.loads(
+            (ROOT / MODULE.TRACKS["candidate"]["manifest"]).read_text(encoding="utf-8")
+        )
+        candidate_code = candidate_manifest["versionCode"]
         self.assertEqual(8, len(artifacts))
         self.assertEqual(
-            {("debug", "2.7.15", 60), ("candidate", "1.0.0", 63)},
+            {("debug", "2.7.15", 60), ("candidate", "1.0.0", candidate_code)},
             {(item.track, item.version, item.version_code) for item in artifacts},
+        )
+        self.assertGreaterEqual(
+            candidate_code, MODULE.TRACKS["candidate"]["minimum_code"]
         )
         self.assertTrue(
             all(item.package_name.endswith(".debug") for item in artifacts if item.track == "debug")
@@ -131,6 +140,66 @@ class PrivateDownloadContractTests(unittest.TestCase):
         )
         self.assertEqual(4, len({item.role for item in artifacts if item.track == "debug"}))
         self.assertEqual(4, len({item.role for item in artifacts if item.track == "candidate"}))
+
+    def test_candidate_version_code_follows_manifest_and_rejects_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for track, policy in MODULE.TRACKS.items():
+                manifest_path = root / policy["manifest"]
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                version_code = 60 if track == "debug" else 65
+                releases = []
+                for role, (file_stem, version_suffix, base_package) in MODULE.ROLES.items():
+                    debug_suffix = "-debug" if policy["debug"] else ""
+                    package_suffix = ".debug" if policy["debug"] else ""
+                    file_name = (
+                        f"yiyunying-{file_stem}-v{policy['version']}{debug_suffix}.apk"
+                    )
+                    payload = f"{track}-{role}".encode("ascii")
+                    (manifest_path.parent / file_name).write_bytes(payload)
+                    releases.append(
+                        {
+                            "id": role,
+                            "fileName": file_name,
+                            "packageName": base_package + package_suffix,
+                            "versionName": (
+                                f"{policy['version']}-{version_suffix}{debug_suffix}"
+                            ),
+                            "versionCode": version_code,
+                            "signerSha256": "AB" * 32,
+                            "sizeBytes": len(payload),
+                            "sha256": hashlib.sha256(payload).hexdigest().upper(),
+                        }
+                    )
+                manifest = {
+                    "channel": policy["channel"],
+                    "versionName": policy["version"],
+                    "versionCode": version_code,
+                    "finalizationStatus": policy["status"],
+                    "releases": releases,
+                }
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with mock.patch.object(MODULE, "validate_apk_with_tools"):
+                artifacts = MODULE.validate_artifacts(root, Path("aapt2"), Path("apksigner"))
+            self.assertEqual(
+                {65},
+                {
+                    artifact.version_code
+                    for artifact in artifacts
+                    if artifact.track == "candidate"
+                },
+            )
+
+            candidate_path = root / MODULE.TRACKS["candidate"]["manifest"]
+            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+            candidate["versionCode"] = 63
+            for release in candidate["releases"]:
+                release["versionCode"] = 63
+            candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+            with mock.patch.object(MODULE, "validate_apk_with_tools"):
+                with self.assertRaisesRegex(RuntimeError, "below the minimum 64"):
+                    MODULE.validate_artifacts(root, Path("aapt2"), Path("apksigner"))
 
 
 class DeploymentSafetyTests(unittest.TestCase):
@@ -151,7 +220,7 @@ class DeploymentSafetyTests(unittest.TestCase):
                 track=track,
                 role="user",
                 version="1.0.0",
-                version_code=63,
+                version_code=64,
                 file_name=f"{track}.apk",
                 package_name=f"example.{track}",
                 version_name=f"1.0.0-{track}",

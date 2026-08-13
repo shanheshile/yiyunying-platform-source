@@ -52,7 +52,11 @@ TRACKS = {
     "candidate": {
         "manifest": "releases/1.0.0/release-manifest.json",
         "version": "1.0.0",
-        "code": 63,
+        # Stable candidates are rebuilt under the same public version name
+        # until finalization. The validated release manifest is authoritative
+        # for versionCode, while this floor prevents an old candidate from
+        # being deployed after code 64 has entered the release line.
+        "minimum_code": 64,
         "channel": "Stable",
         "status": "pending",
         "debug": False,
@@ -218,6 +222,21 @@ def exact_positive_int(value: object, label: str) -> int:
     return value
 
 
+def track_version_code(manifest: dict, policy: dict, track: str) -> int:
+    version_code = exact_positive_int(
+        manifest.get("versionCode"), f"{track}.versionCode"
+    )
+    pinned_code = policy.get("code")
+    if pinned_code is not None and version_code != pinned_code:
+        raise RuntimeError(f"Release versionCode mismatch for {track}")
+    minimum_code = policy.get("minimum_code")
+    if minimum_code is not None and version_code < minimum_code:
+        raise RuntimeError(
+            f"Release versionCode for {track} is below the minimum {minimum_code}"
+        )
+    return version_code
+
+
 def validate_apk_with_tools(
     artifact: ApkArtifact, aapt2: Path, apksigner: Path
 ) -> None:
@@ -253,6 +272,7 @@ def validate_artifacts(
     for track, policy in TRACKS.items():
         manifest_path = repository_root / str(policy["manifest"])
         manifest = read_json(manifest_path, f"{track} release manifest")
+        version_code = track_version_code(manifest, policy, track)
         channel = manifest.get("channel")
         # The frozen 2.7.15 Debug schema predates the explicit channel field;
         # no other missing channel is accepted.
@@ -263,7 +283,6 @@ def validate_artifacts(
             raise RuntimeError("1.0.0 must remain Stable")
         if (
             manifest.get("versionName") != policy["version"]
-            or manifest.get("versionCode") != policy["code"]
             or manifest.get("finalizationStatus") != policy["status"]
         ):
             raise RuntimeError(f"Release state mismatch for {track}")
@@ -294,7 +313,7 @@ def validate_artifacts(
                 raw.get("fileName") != file_name
                 or raw.get("packageName") != package_name
                 or raw.get("versionName") != version_name
-                or raw.get("versionCode") != policy["code"]
+                or raw.get("versionCode") != version_code
             ):
                 raise RuntimeError(f"Manifest identity mismatch: {track}/{role}")
             apk_path = manifest_path.parent / file_name
@@ -307,7 +326,7 @@ def validate_artifacts(
                 track,
                 role,
                 str(policy["version"]),
-                int(policy["code"]),
+                version_code,
                 file_name,
                 package_name,
                 version_name,
@@ -947,8 +966,16 @@ def main() -> int:
     template, verifier = validate_deployment_sources(repository_root)
     artifacts = validate_artifacts(repository_root, aapt2, apksigner)
     if not args.execute:
+        track_versions = {
+            artifact.track: (artifact.version, artifact.version_code)
+            for artifact in artifacts
+        }
+        debug_version, debug_code = track_versions["debug"]
+        candidate_version, candidate_code = track_versions["candidate"]
         print(
-            "DRY RUN PASS: Debug 2.7.15/60 and Stable pending 1.0.0/63, eight APK identities, SHA-256 and signers verified; no SSH, secret read, upload, reload or public probe occurred."
+            f"DRY RUN PASS: Debug {debug_version}/{debug_code} and Stable pending "
+            f"{candidate_version}/{candidate_code}, eight APK identities, SHA-256 and "
+            "signers verified; no SSH, secret read, upload, reload or public probe occurred."
         )
         return 0
     deploy(

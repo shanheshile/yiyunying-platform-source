@@ -23,6 +23,8 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+CANDIDATE_VERSION_CODE = 64
+
 
 class Fixture:
     def __init__(self, root: Path) -> None:
@@ -41,7 +43,7 @@ class Fixture:
                     "fileName": file_name,
                     "versionName": f"1.0.0-{MODULE.ROLE_VERSION_SUFFIXES[role]}",
                     "packageName": MODULE.STABLE_PACKAGE_NAMES[role],
-                    "versionCode": 63,
+                    "versionCode": CANDIDATE_VERSION_CODE,
                     "sizeBytes": len(payload),
                     "sha256": hashlib.sha256(payload).hexdigest().upper(),
                 }
@@ -50,7 +52,7 @@ class Fixture:
             "schemaVersion": 4,
             "channel": "Stable",
             "versionName": "1.0.0",
-            "versionCode": 63,
+            "versionCode": CANDIDATE_VERSION_CODE,
             "finalizationStatus": "pending",
             "releases": releases,
             "projectAssets": [
@@ -116,7 +118,9 @@ class InternalDownloadServerTest(unittest.TestCase):
             page = body.decode("utf-8")
             self.assertEqual(status, 200)
             self.assertIn("Release candidate（待完成发布）", page)
-            self.assertIn("版本 1.0.0 · versionCode 63", page)
+            self.assertIn(
+                f"版本 1.0.0 · versionCode {CANDIDATE_VERSION_CODE}", page
+            )
             self.assertIn("覆盖升级", page)
             self.assertEqual(headers["Cache-Control"], "no-store, max-age=0")
             self.assertIn("noindex", headers["X-Robots-Tag"])
