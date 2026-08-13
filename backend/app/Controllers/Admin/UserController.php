@@ -532,7 +532,7 @@ final class UserController
                 || !Password::isAcceptable($password)) {
                 $failed[] = [
                     'index' => $index, 'account' => $account,
-                    'reason' => '账号格式错误，或密码未显式提供 6-72 字节且不能使用已知默认密码',
+                    'reason' => '账号格式错误，或密码未显式提供 12-72 字节且不能使用已知默认密码',
                 ];
                 continue;
             }

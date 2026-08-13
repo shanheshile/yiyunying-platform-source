@@ -14,6 +14,20 @@ use Yiyunying\Services\PlatformService;
 
 final class DataConsoleController
 {
+    /**
+     * The generic console is deliberately read-only and fail-closed. New tables
+     * never become visible merely because a migration created them; mutations
+     * must go through their typed controller/service invariants instead.
+     */
+    private const READABLE_TABLES = [
+        'platform_daily_statistics', 'statistics_daily',
+        'notices', 'banners',
+        'resource_categories', 'store_categories',
+        'forum_plates', 'forum_categories', 'forum_tags',
+        'software_update_policies', 'maintenance_policies', 'festival_theme_policies',
+    ];
+    private const WRITABLE_TABLES = [];
+
     private const HIDDEN_TABLES = [
         'platform_accounts', 'platform_tokens', 'platform_login_logs', 'platform_operation_logs',
         'platform_mail_settings',
@@ -44,7 +58,8 @@ final class DataConsoleController
         $items = [];
         foreach ($rows as $row) {
             $table = (string) $row['table_name'];
-            if (in_array($table, self::HIDDEN_TABLES, true)) {
+            if (!in_array($table, self::READABLE_TABLES, true)
+                || in_array($table, self::HIDDEN_TABLES, true)) {
                 continue;
             }
             $items[] = [
@@ -53,7 +68,7 @@ final class DataConsoleController
                 'table_name' => $table,
                 'record_estimate' => (int) ($row['table_rows'] ?? 0),
                 'column_count' => (int) $row['column_count'],
-                'writable' => true,
+                'writable' => in_array($table, self::WRITABLE_TABLES, true),
                 'sensitive' => false,
                 'updated_at' => $row['update_time'],
             ];
@@ -65,7 +80,10 @@ final class DataConsoleController
     public static function rows(Request $request, array $params): \Yiyunying\Core\ApiResponse
     {
         $actor = self::actor($request); $table = self::table((string) $params['table']);
-        if (in_array($table, self::HIDDEN_TABLES, true)) throw new HttpException('安全表不允许通过数据总控读取记录', 403, 403);
+        if (!in_array($table, self::READABLE_TABLES, true)
+            || in_array($table, self::HIDDEN_TABLES, true)) {
+            throw new HttpException('该表未列入数据总控只读白名单', 403, 403);
+        }
         $columns = self::columns($table); $safeColumns = self::publicColumns($columns);
         if ($safeColumns === []) throw new HttpException('该表没有允许通过数据总控读取的字段', 403, 403);
         $page = $request->page(); $limit = $request->limit(); $offset = ($page - 1) * $limit;
@@ -146,7 +164,11 @@ final class DataConsoleController
 
     private static function writableTable(string $table): string
     {
-        $table = self::table($table); if (in_array($table, self::HIDDEN_TABLES, true)) throw new HttpException('安全表禁止通过数据总控写入', 403, 403); return $table;
+        $table = self::table($table);
+        if (!in_array($table, self::WRITABLE_TABLES, true)) {
+            throw new HttpException('数据总控只读；请使用类型化业务接口修改数据', 403, 403);
+        }
+        return $table;
     }
 
     private static function columns(string $table): array

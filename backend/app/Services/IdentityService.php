@@ -44,7 +44,7 @@ final class IdentityService
             ],
             'password' => [
                 'required' => true,
-                'min_bytes' => max(6, min(72, (int) config('security.password_min_length', 8))),
+                'min_bytes' => max(12, min(72, (int) config('security.password_min_length', 12))),
                 'max_bytes' => 72,
             ],
             'password_confirmation_required' => true,

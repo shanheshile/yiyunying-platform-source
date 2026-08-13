@@ -63,8 +63,8 @@ public final class ForgotPasswordActivity extends SystemInsetActivity {
         if (contact.isEmpty()) { binding.contactLayout.setError("请输入绑定的邮箱或手机号"); return; }
         if (code.isEmpty()) { binding.codeLayout.setError("请输入验证码"); return; }
         int passwordBytes = password.getBytes(StandardCharsets.UTF_8).length;
-        if (passwordBytes < 8 || passwordBytes > 72) {
-            binding.passwordLayout.setError("新密码长度需为 8-72 个字节");
+        if (passwordBytes < 12 || passwordBytes > 72) {
+            binding.passwordLayout.setError("新密码长度需为 12-72 个字节");
             return;
         }
         if (!password.equals(confirmation)) { binding.confirmPasswordLayout.setError("两次输入的新密码不一致"); return; }

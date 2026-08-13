@@ -14,7 +14,7 @@ $assert = static function (bool $condition, string $message) use (&$failures): v
 };
 
 $originalSecurity = $GLOBALS['yiyunying_config']['security'] ?? [];
-$GLOBALS['yiyunying_config']['security']['password_min_length'] = 8;
+$GLOBALS['yiyunying_config']['security']['password_min_length'] = 12;
 $GLOBALS['yiyunying_config']['security']['login_failure_window_seconds'] = 900;
 $GLOBALS['yiyunying_config']['security']['login_failure_identity_ip_limit'] = 5;
 $GLOBALS['yiyunying_config']['security']['login_failure_identity_limit'] = 15;
@@ -26,6 +26,7 @@ try {
         $assert(!Password::isAcceptable($weakPassword), 'known weak password passed the new-password policy: ' . $weakPassword);
     }
     $assert(Password::isAcceptable('R4ndom!Pass-2026'), 'independent strong password was rejected');
+    $assert(!Password::isAcceptable('Pass-2026'), 'password shorter than 12 bytes was accepted');
     try {
         Password::assertAcceptable('123456');
         $assert(false, 'assertAcceptable did not reject 123456');
@@ -68,6 +69,10 @@ try {
     foreach (['publicColumns', 'isSensitiveColumn', '_hash$', 'api_key'] as $guard) {
         $assert(str_contains($dataConsole, $guard), 'data console sensitive-column guard missing: ' . $guard);
     }
+    $assert(str_contains($dataConsole, 'private const READABLE_TABLES'), 'data console lacks an explicit read table allowlist');
+    $assert(str_contains($dataConsole, 'private const WRITABLE_TABLES = []'), 'generic data console writes must remain disabled');
+    $assert(str_contains($dataConsole, '数据总控只读；请使用类型化业务接口修改数据'), 'generic data console does not fail closed for writes');
+    $assert(str_contains($envExample, 'PASSWORD_MIN_LENGTH=12'), 'production password minimum is not documented as 12 bytes');
 
     $passwordEntryPoints = [
         '/app/Controllers/Platform/AuthController.php',

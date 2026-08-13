@@ -10,9 +10,8 @@ if (!in_array($method, ['GET', 'HEAD'], true)) {
     exit;
 }
 
-$forwardedProto = strtolower(trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
 $https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-    || $forwardedProto === 'https';
+    || (int) ($_SERVER['SERVER_PORT'] ?? 0) === 443;
 $host = strtolower((string) ($_SERVER['SERVER_NAME'] ?? ''));
 $local = in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
 if (!$https && !$local) {

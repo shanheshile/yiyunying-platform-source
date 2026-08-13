@@ -95,7 +95,7 @@ return [
         'admin_token_ttl' => (int) $env('ADMIN_TOKEN_TTL', 86400),
         'user_token_ttl' => (int) $env('USER_TOKEN_TTL', 2592000),
         'user_refresh_token_ttl' => (int) $env('USER_REFRESH_TOKEN_TTL', 7776000),
-        'password_min_length' => (int) $env('PASSWORD_MIN_LENGTH', 8),
+        'password_min_length' => (int) $env('PASSWORD_MIN_LENGTH', 12),
         'login_failure_window_seconds' => (int) $env('LOGIN_FAILURE_WINDOW_SECONDS', 900),
         'login_failure_identity_ip_limit' => (int) $env('LOGIN_FAILURE_IDENTITY_IP_LIMIT', 5),
         'login_failure_identity_limit' => (int) $env('LOGIN_FAILURE_IDENTITY_LIMIT', 15),

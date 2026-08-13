@@ -42,6 +42,8 @@ foreach ([
 }
 $assert(str_contains($index, "['GET', 'HEAD']"), '入口必须拒绝回退表单 POST，避免凭据被页面处理');
 $assert(str_contains($index, 'type="password"') && str_contains($index, 'autocomplete="current-password"'), '登录密码框必须使用密码类型和正确 autocomplete');
+$assert(str_contains($index, 'minlength="12"'), 'Root 登录密码框必须与生产最短 12 字节策略一致');
+$assert(!str_contains($index, 'HTTP_X_FORWARDED_PROTO'), 'Root 入口不得无条件信任客户端可伪造的 X-Forwarded-Proto');
 $assert(str_contains($index, 'action="/control/" method="post"'), '无脚本回退不得把密码放入查询字符串');
 $assert(str_contains($index, 'src="/control/control.js"') && str_contains($index, 'href="/control/control.css"'), '总控必须使用同源外部脚本和样式');
 $assert(!preg_match('/<script(?![^>]*\bsrc=)[^>]*>/i', $index), 'CSP 页面不得包含内联脚本');

@@ -58,14 +58,14 @@ final class Password
 
     public static function isAcceptable(string $password): bool
     {
-        $minimum = max(8, (int) config('security.password_min_length', 8));
+        $minimum = max(12, (int) config('security.password_min_length', 12));
         $length = strlen($password);
         return $length >= $minimum && $length <= 72 && !self::isKnownWeak($password);
     }
 
     public static function assertAcceptable(string $password, string $field = 'password'): string
     {
-        $minimum = max(8, (int) config('security.password_min_length', 8));
+        $minimum = max(12, (int) config('security.password_min_length', 12));
         $length = strlen($password);
         if ($length < $minimum || $length > 72) {
             throw new HttpException("{$field} 长度必须在 {$minimum}-72 个字节之间", 0, 422);
