@@ -23,7 +23,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
-CANDIDATE_VERSION_CODE = 64
+CANDIDATE_VERSION_CODE = 65
 
 
 class Fixture:

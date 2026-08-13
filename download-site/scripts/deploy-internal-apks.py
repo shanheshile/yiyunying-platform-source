@@ -40,6 +40,7 @@ NGINX_CONFIRMATION = "INTERNAL_APK_NGINX_AUTH_REQUEST_CONFIRMED"
 SECRET_ENV = "YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET"
 EXPECTED_PRIVATE_ROOT = "/srv/yiyunying-internal-apks"
 EXPECTED_SECRET_INCLUDE = "/etc/nginx/private/yiyunying-internal-apks-secret.conf"
+RELEASE_IDENTITY_PATH = "backend/config/release-identity.json"
 TRACKS = {
     "debug": {
         "manifest": "releases/2.7.15/release-manifest.json",
@@ -115,6 +116,13 @@ class LocalFile:
     path: Path
     size: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class ReleaseIdentity:
+    version_name: str
+    version_code: int
+    stable_signer_sha256: str
 
 
 def quote(value: str) -> str:
@@ -237,6 +245,22 @@ def track_version_code(manifest: dict, policy: dict, track: str) -> int:
     return version_code
 
 
+def load_release_identity(repository_root: Path) -> ReleaseIdentity:
+    identity = read_json(
+        repository_root / RELEASE_IDENTITY_PATH, "release identity"
+    )
+    version_name = exact_text(identity.get("version_name"), "identity.version_name")
+    version_code = exact_positive_int(
+        identity.get("version_code"), "identity.version_code"
+    )
+    signer = exact_text(
+        identity.get("stable_signer_sha256"), "identity.stable_signer_sha256"
+    ).upper()
+    if not SHA256.fullmatch(signer):
+        raise RuntimeError("Invalid release identity Stable signer")
+    return ReleaseIdentity(version_name, version_code, signer)
+
+
 def validate_apk_with_tools(
     artifact: ApkArtifact, aapt2: Path, apksigner: Path
 ) -> None:
@@ -269,10 +293,16 @@ def validate_artifacts(
     repository_root: Path, aapt2: Path, apksigner: Path
 ) -> list[ApkArtifact]:
     artifacts: list[ApkArtifact] = []
+    release_identity = load_release_identity(repository_root)
+    if release_identity.version_name != TRACKS["candidate"]["version"]:
+        raise RuntimeError(
+            "Release identity version is incompatible with the reviewed candidate route"
+        )
     for track, policy in TRACKS.items():
         manifest_path = repository_root / str(policy["manifest"])
         manifest = read_json(manifest_path, f"{track} release manifest")
         version_code = track_version_code(manifest, policy, track)
+        expected_version = str(policy["version"])
         channel = manifest.get("channel")
         # The frozen 2.7.15 Debug schema predates the explicit channel field;
         # no other missing channel is accepted.
@@ -281,8 +311,15 @@ def validate_artifacts(
                 raise RuntimeError("2.7.15 must remain the frozen Debug track")
         elif channel != policy["channel"]:
             raise RuntimeError("1.0.0 must remain Stable")
+        if track == "candidate" and (
+            manifest.get("versionName") != release_identity.version_name
+            or version_code != release_identity.version_code
+        ):
+            raise RuntimeError(
+                "Candidate manifest version/code does not match release identity"
+            )
         if (
-            manifest.get("versionName") != policy["version"]
+            manifest.get("versionName") != expected_version
             or manifest.get("finalizationStatus") != policy["status"]
         ):
             raise RuntimeError(f"Release state mismatch for {track}")
@@ -301,14 +338,21 @@ def validate_artifacts(
             raw = by_role[role]
             debug_suffix = "-debug" if policy["debug"] else ""
             package_suffix = ".debug" if policy["debug"] else ""
-            file_name = f"yiyunying-{file_stem}-v{policy['version']}{debug_suffix}.apk"
+            file_name = f"yiyunying-{file_stem}-v{expected_version}{debug_suffix}.apk"
             package_name = base_package + package_suffix
-            version_name = f"{policy['version']}-{version_suffix}{debug_suffix}"
+            version_name = f"{expected_version}-{version_suffix}{debug_suffix}"
             signer = exact_text(raw.get("signerSha256"), f"{track}.{role}.signer").upper()
             declared_sha = exact_text(raw.get("sha256"), f"{track}.{role}.sha256").upper()
             declared_size = exact_positive_int(raw.get("sizeBytes"), f"{track}.{role}.size")
             if not SHA256.fullmatch(signer) or not SHA256.fullmatch(declared_sha):
                 raise RuntimeError(f"Invalid digest in {track}/{role}")
+            if (
+                track == "candidate"
+                and signer != release_identity.stable_signer_sha256
+            ):
+                raise RuntimeError(
+                    f"Candidate Stable signer does not match release identity: {role}"
+                )
             if (
                 raw.get("fileName") != file_name
                 or raw.get("packageName") != package_name
@@ -325,7 +369,7 @@ def validate_artifacts(
             artifact = ApkArtifact(
                 track,
                 role,
-                str(policy["version"]),
+                expected_version,
                 version_code,
                 file_name,
                 package_name,

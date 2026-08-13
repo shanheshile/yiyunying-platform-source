@@ -120,17 +120,17 @@ class PrivateDownloadContractTests(unittest.TestCase):
         aapt2 = MODULE.resolve_android_tool(ROOT, "aapt2", None)
         apksigner = MODULE.resolve_android_tool(ROOT, "apksigner", None)
         artifacts = MODULE.validate_artifacts(ROOT, aapt2, apksigner)
-        candidate_manifest = json.loads(
-            (ROOT / MODULE.TRACKS["candidate"]["manifest"]).read_text(encoding="utf-8")
-        )
-        candidate_code = candidate_manifest["versionCode"]
+        identity = MODULE.load_release_identity(ROOT)
         self.assertEqual(8, len(artifacts))
         self.assertEqual(
-            {("debug", "2.7.15", 60), ("candidate", "1.0.0", candidate_code)},
+            {
+                ("debug", "2.7.15", 60),
+                ("candidate", identity.version_name, identity.version_code),
+            },
             {(item.track, item.version, item.version_code) for item in artifacts},
         )
         self.assertGreaterEqual(
-            candidate_code, MODULE.TRACKS["candidate"]["minimum_code"]
+            identity.version_code, MODULE.TRACKS["candidate"]["minimum_code"]
         )
         self.assertTrue(
             all(item.package_name.endswith(".debug") for item in artifacts if item.track == "debug")
@@ -140,65 +140,117 @@ class PrivateDownloadContractTests(unittest.TestCase):
         )
         self.assertEqual(4, len({item.role for item in artifacts if item.track == "debug"}))
         self.assertEqual(4, len({item.role for item in artifacts if item.track == "candidate"}))
+        self.assertEqual(
+            {identity.stable_signer_sha256},
+            {
+                item.signer_sha256
+                for item in artifacts
+                if item.track == "candidate"
+            },
+        )
 
-    def test_candidate_version_code_follows_manifest_and_rejects_regression(self) -> None:
+    def write_release_fixture(
+        self,
+        root: Path,
+        *,
+        identity_code: int = 65,
+        manifest_code: int = 65,
+        candidate_signer: str | None = None,
+    ) -> str:
+        stable_signer = "CD" * 32
+        identity_path = root / MODULE.RELEASE_IDENTITY_PATH
+        identity_path.parent.mkdir(parents=True, exist_ok=True)
+        identity_path.write_text(
+            json.dumps(
+                {
+                    "version_name": "1.0.0",
+                    "version_code": identity_code,
+                    "stable_signer_sha256": stable_signer,
+                }
+            ),
+            encoding="utf-8",
+        )
+        for track, policy in MODULE.TRACKS.items():
+            manifest_path = root / policy["manifest"]
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            version_code = 60 if track == "debug" else manifest_code
+            releases = []
+            for role, (file_stem, version_suffix, base_package) in MODULE.ROLES.items():
+                debug_suffix = "-debug" if policy["debug"] else ""
+                package_suffix = ".debug" if policy["debug"] else ""
+                file_name = (
+                    f"yiyunying-{file_stem}-v{policy['version']}{debug_suffix}.apk"
+                )
+                payload = f"{track}-{role}".encode("ascii")
+                (manifest_path.parent / file_name).write_bytes(payload)
+                releases.append(
+                    {
+                        "id": role,
+                        "fileName": file_name,
+                        "packageName": base_package + package_suffix,
+                        "versionName": (
+                            f"{policy['version']}-{version_suffix}{debug_suffix}"
+                        ),
+                        "versionCode": version_code,
+                        "signerSha256": (
+                            "AB" * 32
+                            if track == "debug"
+                            else candidate_signer or stable_signer
+                        ),
+                        "sizeBytes": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest().upper(),
+                    }
+                )
+            manifest = {
+                "versionName": policy["version"],
+                "versionCode": version_code,
+                "finalizationStatus": policy["status"],
+                "releases": releases,
+            }
+            # Preserve compatibility with the frozen legacy Debug manifest,
+            # whose schema predates the explicit channel field.
+            if track != "debug":
+                manifest["channel"] = policy["channel"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return stable_signer
+
+    def test_matching_identity_65_manifest_65_and_legacy_debug_are_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for track, policy in MODULE.TRACKS.items():
-                manifest_path = root / policy["manifest"]
-                manifest_path.parent.mkdir(parents=True, exist_ok=True)
-                version_code = 60 if track == "debug" else 65
-                releases = []
-                for role, (file_stem, version_suffix, base_package) in MODULE.ROLES.items():
-                    debug_suffix = "-debug" if policy["debug"] else ""
-                    package_suffix = ".debug" if policy["debug"] else ""
-                    file_name = (
-                        f"yiyunying-{file_stem}-v{policy['version']}{debug_suffix}.apk"
-                    )
-                    payload = f"{track}-{role}".encode("ascii")
-                    (manifest_path.parent / file_name).write_bytes(payload)
-                    releases.append(
-                        {
-                            "id": role,
-                            "fileName": file_name,
-                            "packageName": base_package + package_suffix,
-                            "versionName": (
-                                f"{policy['version']}-{version_suffix}{debug_suffix}"
-                            ),
-                            "versionCode": version_code,
-                            "signerSha256": "AB" * 32,
-                            "sizeBytes": len(payload),
-                            "sha256": hashlib.sha256(payload).hexdigest().upper(),
-                        }
-                    )
-                manifest = {
-                    "channel": policy["channel"],
-                    "versionName": policy["version"],
-                    "versionCode": version_code,
-                    "finalizationStatus": policy["status"],
-                    "releases": releases,
-                }
-                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
+            stable_signer = self.write_release_fixture(root)
             with mock.patch.object(MODULE, "validate_apk_with_tools"):
                 artifacts = MODULE.validate_artifacts(root, Path("aapt2"), Path("apksigner"))
-            self.assertEqual(
-                {65},
-                {
-                    artifact.version_code
-                    for artifact in artifacts
-                    if artifact.track == "candidate"
-                },
-            )
+        self.assertEqual(
+            {65},
+            {
+                artifact.version_code
+                for artifact in artifacts
+                if artifact.track == "candidate"
+            },
+        )
+        self.assertEqual(
+            {stable_signer},
+            {
+                artifact.signer_sha256
+                for artifact in artifacts
+                if artifact.track == "candidate"
+            },
+        )
 
-            candidate_path = root / MODULE.TRACKS["candidate"]["manifest"]
-            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-            candidate["versionCode"] = 63
-            for release in candidate["releases"]:
-                release["versionCode"] = 63
-            candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    def test_identity_65_manifest_64_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_release_fixture(root, identity_code=65, manifest_code=64)
             with mock.patch.object(MODULE, "validate_apk_with_tools"):
-                with self.assertRaisesRegex(RuntimeError, "below the minimum 64"):
+                with self.assertRaisesRegex(RuntimeError, "does not match release identity"):
+                    MODULE.validate_artifacts(root, Path("aapt2"), Path("apksigner"))
+
+    def test_candidate_signer_must_match_release_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_release_fixture(root, candidate_signer="EF" * 32)
+            with mock.patch.object(MODULE, "validate_apk_with_tools"):
+                with self.assertRaisesRegex(RuntimeError, "Stable signer"):
                     MODULE.validate_artifacts(root, Path("aapt2"), Path("apksigner"))
 
 
@@ -220,7 +272,7 @@ class DeploymentSafetyTests(unittest.TestCase):
                 track=track,
                 role="user",
                 version="1.0.0",
-                version_code=64,
+                version_code=65,
                 file_name=f"{track}.apk",
                 package_name=f"example.{track}",
                 version_name=f"1.0.0-{track}",
