@@ -14,6 +14,20 @@ Android 端要求 API 始终返回 JSON。如果 `/api/health` 返回 Nginx 的 
 6. 在 PHP-FPM pool 或服务器面板中配置数据库环境变量，可参考 `php-fpm-env.example`。
 7. 重载 Nginx/Apache 和 PHP-FPM，再执行 `tools/check-deployment.ps1`。
 
+### 可信反向代理与客户端 IP
+
+`TRUSTED_PROXIES` 默认必须留空，此时后端只采用直连 `REMOTE_ADDR`，并忽略客户端传入的
+`X-Forwarded-For`。只有负载均衡器或反向代理直接连接 PHP 入口、且该代理会**覆盖而不是追加保留**
+外部同名请求头时，才按逗号分隔填写真实代理的单个 IPv4/IPv6 或 CIDR，例如：
+
+```text
+TRUSTED_PROXIES=10.20.0.0/16,2001:db8:100::/48
+```
+
+不要填写 `0.0.0.0/0`、`::/0` 或并非代理出口的网段。普通 Nginx 到 PHP-FPM 的 FastCGI 部署若已把
+真实客户端地址写入 `REMOTE_ADDR`，无需配置本项。配置后应分别用直连伪造转发头和经过代理的 IPv4/IPv6
+请求验证：前者仍回读直连地址，后者才回读代理覆盖后的第一个合法客户端地址。
+
 ### 首次安装身份注入
 
 `database/install.sql` 不再包含默认账号、默认密码或公开应用密钥。直接导入仍可完整创建表结构和初始化数据，

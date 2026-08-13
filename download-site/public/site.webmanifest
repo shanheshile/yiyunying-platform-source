@@ -1,13 +1,14 @@
 {
-  "name": "易运盈官方下载中心",
-  "short_name": "易运盈下载",
-  "start_url": "/",
+  "name": "易云盈应用运营平台",
+  "short_name": "易云盈",
+  "start_url": "/download-center/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#176b5b",
+  "theme_color": "#0f6a5b",
+  "lang": "zh-CN",
   "icons": [
     {
-      "src": "/logo.svg",
+      "src": "/download-center/logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

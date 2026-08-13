@@ -51,6 +51,16 @@ final class Request
         }
         return $this->query[$key] ?? $default;
     }
+    public function bodyInput(string $key, $default = null)
+    {
+        return $this->body[$key] ?? $default;
+    }
+
+    public function queryInput(string $key, $default = null)
+    {
+        return $this->query[$key] ?? $default;
+    }
+
 
     public function all(): array
     {
@@ -73,11 +83,27 @@ final class Request
 
     public function clientIp(): string
     {
-        $forwarded = $this->header('x-forwarded-for');
-        if ($forwarded !== null && $forwarded !== '') {
-            return trim(explode(',', $forwarded)[0]);
+        $remoteAddress = self::normalizeIp((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        if ($remoteAddress === null) {
+            return '0.0.0.0';
         }
-        return (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+
+        $trustedProxies = config('security.trusted_proxies', []);
+        if (!is_array($trustedProxies) || !self::isTrustedProxy($remoteAddress, $trustedProxies)) {
+            return $remoteAddress;
+        }
+
+        $forwarded = trim((string) $this->header('x-forwarded-for', ''));
+        if ($forwarded === '') {
+            return $remoteAddress;
+        }
+        foreach (explode(',', $forwarded) as $candidate) {
+            $clientAddress = self::normalizeIp($candidate);
+            if ($clientAddress !== null) {
+                return $clientAddress;
+            }
+        }
+        return $remoteAddress;
     }
 
     public function userAgent(): string
@@ -148,5 +174,78 @@ final class Request
             $headers['authorization'] = (string) $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
         }
         return $headers;
+    }
+
+    private static function normalizeIp(string $value): ?string
+    {
+        $value = trim($value);
+        if (strlen($value) >= 2 && $value[0] === '[' && $value[strlen($value) - 1] === ']') {
+            $value = substr($value, 1, -1);
+        }
+        if (filter_var($value, FILTER_VALIDATE_IP) === false) {
+            return null;
+        }
+        $packed = inet_pton($value);
+        if ($packed === false) {
+            return null;
+        }
+        $normalized = inet_ntop($packed);
+        return $normalized === false ? null : $normalized;
+    }
+
+    private static function isTrustedProxy(string $remoteAddress, array $rules): bool
+    {
+        $remotePacked = inet_pton($remoteAddress);
+        if ($remotePacked === false) {
+            return false;
+        }
+        foreach ($rules as $rule) {
+            $rule = trim((string) $rule);
+            if ($rule === '') {
+                continue;
+            }
+            if (self::ipMatchesRule($remotePacked, $rule)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function ipMatchesRule(string $remotePacked, string $rule): bool
+    {
+        if (!str_contains($rule, '/')) {
+            $ruleAddress = self::normalizeIp($rule);
+            $rulePacked = $ruleAddress === null ? false : inet_pton($ruleAddress);
+            return $rulePacked !== false
+                && strlen($rulePacked) === strlen($remotePacked)
+                && hash_equals($rulePacked, $remotePacked);
+        }
+
+        $parts = explode('/', $rule);
+        if (count($parts) !== 2 || preg_match('/^\d+$/', trim($parts[1])) !== 1) {
+            return false;
+        }
+        $networkAddress = self::normalizeIp($parts[0]);
+        $networkPacked = $networkAddress === null ? false : inet_pton($networkAddress);
+        if ($networkPacked === false || strlen($networkPacked) !== strlen($remotePacked)) {
+            return false;
+        }
+
+        $prefixLength = (int) trim($parts[1]);
+        $maximumBits = strlen($networkPacked) * 8;
+        if ($prefixLength <= 0 || $prefixLength > $maximumBits) {
+            return false;
+        }
+        $wholeBytes = intdiv($prefixLength, 8);
+        if ($wholeBytes > 0
+            && !hash_equals(substr($networkPacked, 0, $wholeBytes), substr($remotePacked, 0, $wholeBytes))) {
+            return false;
+        }
+        $remainingBits = $prefixLength % 8;
+        if ($remainingBits === 0) {
+            return true;
+        }
+        $mask = (0xff << (8 - $remainingBits)) & 0xff;
+        return (ord($networkPacked[$wholeBytes]) & $mask) === (ord($remotePacked[$wholeBytes]) & $mask);
     }
 }

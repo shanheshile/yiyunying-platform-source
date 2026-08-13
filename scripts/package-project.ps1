@@ -1,7 +1,9 @@
 ﻿[CmdletBinding()]
 param(
     [string] $ReleaseRoot,
-    [string] $ExpectedTag
+    [string] $ExpectedTag,
+    [ValidateSet('Debug', 'Stable')]
+    [string] $Channel = 'Debug'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +54,9 @@ function Assert-ConnectionIdentityEvidence($Value, [string] $Source) {
         $uri.IsLoopback -or
         $uri.Host.Trim('[', ']').ToLowerInvariant() -in @('localhost', '0.0.0.0', '::', '::1', '10.0.2.2')) {
         throw "$Source 的 connectionIdentity.apiBaseUrl 不是合法的非本机绝对地址。"
+    }
+    if ($Channel -eq 'Stable' -and $uri.Scheme -ne 'https') {
+        throw "$Source 的 Stable connectionIdentity.apiBaseUrl 必须使用 HTTPS。"
     }
     foreach ($field in @('appKeySha256', 'platformKeySha256', 'authorizedPlatformKeySha256')) {
         if ([string] $Value.$field -notmatch '^[0-9A-Fa-f]{64}$') {
@@ -137,6 +142,12 @@ $versionCode = [int] $identity.version_code
 if ($version -notmatch '^\d+\.\d+\.\d+$' -or $versionCode -le 0) {
     throw '发布身份中的版本格式无效。'
 }
+$stableSignerSha256 = ([string] $identity.stable_signer_sha256).ToUpperInvariant()
+if ($Channel -eq 'Stable' -and $stableSignerSha256 -notmatch '^[0-9A-F]{64}$') {
+    throw 'Stable Finalize 要求 committed release identity 包含有效 stable_signer_sha256。'
+}
+$tagSuffix = if ($Channel -eq 'Stable') { '' } else { '-debug' }
+$expectedTagForChannel = "v$version$tagSuffix"
 $identitySha256 = Get-Sha256 $releaseIdentityFile
 $resolvedReleaseRoot = if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
     $defaultRoot = Join-Path $projectRoot 'releases'
@@ -162,7 +173,11 @@ $buildCommit = ([string] $releaseManifest.buildSourceCommit).ToLowerInvariant()
 if ($buildCommit -notmatch '^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$') {
     throw '发布清单缺少有效的 buildSourceCommit。'
 }
-if ($releaseManifest.versionName -ne $version -or [int] $releaseManifest.versionCode -ne $versionCode) {
+$manifestChannel = [string] $releaseManifest.channel
+if ([string]::IsNullOrWhiteSpace($manifestChannel) -and $Channel -eq 'Debug') {
+    $manifestChannel = 'Debug'
+}
+if ($releaseManifest.versionName -ne $version -or [int] $releaseManifest.versionCode -ne $versionCode -or $manifestChannel -ne $Channel) {
     throw '发布清单与后端发布身份版本不一致。'
 }
 if (([string] $releaseManifest.releaseIdentitySha256).ToLowerInvariant() -ne $identitySha256) {
@@ -179,13 +194,18 @@ if (-not (Test-Path -LiteralPath $downloadMetadataFile)) {
 }
 [void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'download-site/release-metadata.json') -Operation '确认下载元数据已提交')
 $downloadMetadata = Get-Content -LiteralPath $downloadMetadataFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$metadataChannel = [string] $downloadMetadata.channel
+if ([string]::IsNullOrWhiteSpace($metadataChannel) -and $Channel -eq 'Debug') {
+    $metadataChannel = 'Debug'
+}
 $pendingManifestSha256 = Get-Sha256 $releaseManifestPath
 if ([int] $downloadMetadata.schemaVersion -ne 4 -or
     [string] $downloadMetadata.versionName -ne $version -or
     [int] $downloadMetadata.versionCode -ne $versionCode -or
     [string] $downloadMetadata.buildSourceCommit -ne $buildCommit -or
     ([string] $downloadMetadata.releaseIdentitySha256).ToLowerInvariant() -ne $identitySha256 -or
-    [string] $downloadMetadata.releaseTag -ne "v$version-debug" -or
+    $metadataChannel -ne $Channel -or
+    [string] $downloadMetadata.releaseTag -ne $expectedTagForChannel -or
     [string] $downloadMetadata.finalizationStatus -ne 'pending' -or
     -not [string]::IsNullOrWhiteSpace([string] $downloadMetadata.releaseEvidenceCommit) -or
     -not (Test-ConnectionIdentityEvidenceEqual -Left $downloadMetadata.connectionIdentity -Right $releaseManifest.connectionIdentity) -or
@@ -193,9 +213,9 @@ if ([int] $downloadMetadata.schemaVersion -ne 4 -or
     throw 'B 提交中的下载元数据未精确绑定当前 pending 发布清单、Build 提交或发布身份；拒绝 Finalize。'
 }
 
-$tag = if ([string]::IsNullOrWhiteSpace($ExpectedTag)) { "v$version-debug" } else { $ExpectedTag }
-if ($tag -ne "v$version-debug" -or [string] $releaseManifest.releaseTag -ne $tag) {
-    throw "最终标签必须严格使用 v<version>-debug：v$version-debug"
+$tag = if ([string]::IsNullOrWhiteSpace($ExpectedTag)) { $expectedTagForChannel } else { $ExpectedTag }
+if ($tag -ne $expectedTagForChannel -or [string] $releaseManifest.releaseTag -ne $tag) {
+    throw "最终标签与发布通道不匹配：$expectedTagForChannel"
 }
 
 $sourceName = "yiyunying-source-v$version.zip"
@@ -225,6 +245,10 @@ $requiredReleaseIds = @('user', 'admin', 'authorized', 'owner')
 $actualReleaseIds = @($releases | ForEach-Object { [string] $_.id } | Sort-Object)
 if ($releases.Count -ne 4 -or (Compare-Object ($requiredReleaseIds | Sort-Object) $actualReleaseIds)) {
     throw 'Build 发布清单必须且只能包含四个 Android 版本。'
+}
+$releaseSigners = @($releases | ForEach-Object { ([string] $_.signerSha256).ToUpperInvariant() } | Sort-Object -Unique)
+if ($Channel -eq 'Stable' -and ($releaseSigners.Count -ne 1 -or $releaseSigners[0] -cne $stableSignerSha256)) {
+    throw 'Stable 四端 APK 必须统一使用 committed release identity 声明的生产签名。'
 }
 $expectedBuildFiles = @('release-manifest.json', 'SHA256SUMS.txt')
 foreach ($entry in $releases) {
@@ -366,6 +390,7 @@ try {
 
     $assetsManifest = [ordered]@{
         schemaVersion = 3
+        channel = $Channel
         versionName = $version
         versionCode = $versionCode
         buildSourceCommit = $buildCommit

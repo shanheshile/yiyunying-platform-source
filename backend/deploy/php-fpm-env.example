@@ -10,6 +10,8 @@ env[DB_NAME] = appht
 env[DB_USER] = appht
 env[DB_PASSWORD] = appht
 env[QR_SIGNING_KEY] = "请替换为至少32位随机字符串"
+; 默认留空并忽略 X-Forwarded-For。仅填入会覆盖该请求头的真实反向代理源 IP/CIDR，逗号分隔。
+env[TRUSTED_PROXIES] = ""
 env[MAIL_TRANSPORT] = "native"
 env[MAIL_FROM_ADDRESS] = "no-reply@appht.jjmxg.xyz"
 env[MAIL_FROM_NAME] = "易运盈后台"

@@ -98,6 +98,10 @@ return [
         'password_min_length' => (int) $env('PASSWORD_MIN_LENGTH', 8),
         'qr_signing_key' => (string) $env('QR_SIGNING_KEY', 'local-development-only-change-me'),
         'media_signing_key' => (string) $env('MEDIA_SIGNING_KEY', ''),
+        'trusted_proxies' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) $env('TRUSTED_PROXIES', ''))
+        ), static fn(string $value): bool => $value !== '')),
     ],
     'mail' => [
         'transport' => (string) $env('MAIL_TRANSPORT', 'native'),

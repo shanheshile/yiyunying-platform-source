@@ -13,6 +13,15 @@ public class EndpointPolicyTest {
     }
 
     @Test
+    public void stableModeDefaultsToHttpsAndRejectsExplicitHttp() {
+        assertEquals(
+                "https://appht.jjmxg.xyz/",
+                EndpointPolicy.normalize("appht.jjmxg.xyz", false));
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointPolicy.normalize("http://appht.jjmxg.xyz", false));
+    }
+
+    @Test
     public void rejectsUnsafeOrAmbiguousUrls() {
         assertThrows(IllegalArgumentException.class, () -> EndpointPolicy.normalize("file:///tmp/api"));
         assertThrows(IllegalArgumentException.class, () -> EndpointPolicy.normalize("https://user@example.com"));

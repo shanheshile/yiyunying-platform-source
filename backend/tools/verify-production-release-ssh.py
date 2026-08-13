@@ -49,6 +49,19 @@ SIGNER_PATTERN = re.compile(
 )
 INSECURE_HTTP_CONFIRMATION = "DEBUG_HTTP_NON_PRODUCTION_CONFIRMED"
 
+def release_channel(manifest: Mapping[str, object]) -> str:
+    raw = manifest.get("channel")
+    if raw in (None, ""):
+        return "Debug"
+    if raw not in {"Debug", "Stable"}:
+        raise RuntimeError("release manifest channel must be Debug or Stable")
+    return str(raw)
+
+
+def stable_identity_is_clean(package_name: str, version_name: str, filename: str) -> bool:
+    return not package_name.endswith(".debug") and not version_name.endswith("-debug") and not filename.endswith("-debug.apk")
+
+
 
 @dataclass(frozen=True, repr=False)
 class ConnectionIdentity:
@@ -348,7 +361,17 @@ def load_release_evidence(
 
     if manifest.get("schemaVersion") != 4 or manifest.get("finalizationStatus") != "finalized":
         raise RuntimeError("release manifest must be finalized schemaVersion 4 evidence")
+    channel = release_channel(manifest)
+    stable_signer = str(identity.get("stable_signer_sha256", "")).lower()
+    if channel == "Stable" and SHA256_PATTERN.fullmatch(stable_signer) is None:
+        raise RuntimeError(
+            "Stable release identity stable_signer_sha256 is missing or invalid"
+        )
     connection_identity = validate_manifest_connection_identity(manifest)
+    if channel == "Stable" and urllib.parse.urlparse(
+        connection_identity["apiBaseUrl"]
+    ).scheme.lower() != "https":
+        raise RuntimeError("Stable release connectionIdentity.apiBaseUrl must use HTTPS")
     build_commit = str(manifest.get("buildSourceCommit", "")).lower()
     evidence_commit = str(manifest.get("releaseEvidenceCommit", "")).lower()
     release_tag = str(manifest.get("releaseTag", ""))
@@ -358,8 +381,9 @@ def load_release_evidence(
         or build_commit == evidence_commit
     ):
         raise RuntimeError("release manifest build/evidence commits are missing, invalid or equal")
-    if release_tag != f"v{version_name}-debug":
-        raise RuntimeError("release manifest tag does not match v<version>-debug")
+    expected_tag = f"v{version_name}" + ("" if channel == "Stable" else "-debug")
+    if release_tag != expected_tag:
+        raise RuntimeError(f"release manifest tag does not match {expected_tag}")
 
     releases = manifest.get("releases")
     if not isinstance(releases, list) or len(releases) != 4:
@@ -388,12 +412,18 @@ def load_release_evidence(
         file_name = require_text(entry.get("fileName"), f"releases[{index}].fileName")
         if file_name != os.path.basename(file_name) or not file_name.lower().endswith(".apk"):
             raise RuntimeError(f"release APK filename is unsafe for {edition}")
+        package_name = require_text(
+            entry.get("packageName"), f"releases[{index}].packageName"
+        )
+        entry_version_name = require_text(
+            entry.get("versionName"), f"releases[{index}].versionName"
+        )
+        if channel == "Stable" and not stable_identity_is_clean(package_name, entry_version_name, file_name):
+            raise RuntimeError(f"Stable release must not use Debug APK identity: {edition}")
         expected[edition] = {
             "file_name": file_name,
-            "package": require_text(entry.get("packageName"), f"releases[{index}].packageName"),
-            "version_name": require_text(
-                entry.get("versionName"), f"releases[{index}].versionName"
-            ),
+            "package": package_name,
+            "version_name": entry_version_name,
             "version_code": entry_version_code,
             "sha256": sha256,
             "size": require_positive_int(entry.get("sizeBytes"), f"releases[{index}].sizeBytes"),
@@ -403,6 +433,8 @@ def load_release_evidence(
         raise RuntimeError("all four Android editions must be present exactly once")
     if len(release_signers) != 1:
         raise RuntimeError("all four Android editions must use one unified signer")
+    if channel == "Stable" and next(iter(release_signers)) != stable_signer:
+        raise RuntimeError("APK signer does not match committed stable_signer_sha256")
     return (
         identity,
         expected,

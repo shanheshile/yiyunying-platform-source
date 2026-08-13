@@ -13,6 +13,7 @@ import re
 import secrets
 import shlex
 import stat
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,9 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 EXPECTED_RELEASE_IDS = {"owner", "authorized", "admin", "user"}
+PUBLIC_RELEASE_IDS = EXPECTED_RELEASE_IDS
 EXPECTED_PROJECT_IDS = {"source", "history", "delivery", "manifest"}
+RELEASE_CHANNELS = {"Debug", "Stable"}
 DEBUG_HTTP_CONFIRMATION = "DEBUG_HTTP_NON_PRODUCTION_CONFIRMED"
 IDENTITY_FIELDS = {
     "apiBaseUrl",
@@ -36,6 +39,7 @@ IDENTITY_FIELDS = {
 }
 IMMUTABLE_METADATA_FIELDS = (
     "schemaVersion",
+    "channel",
     "versionName",
     "versionCode",
     "buildSourceCommit",
@@ -50,6 +54,19 @@ IMMUTABLE_METADATA_FIELDS = (
     "projectAssets",
 )
 
+
+STABLE_SITE_FILES = {
+    "index.html",
+    "site.js",
+    "site.webmanifest",
+    "logo.svg",
+    "og-card.png",
+    "api-docs/index.html",
+    "privacy/index.html",
+    "terms/index.html",
+}
+STABLE_ASSET_SUFFIXES = {".css", ".png", ".svg", ".webp", ".woff", ".woff2"}
+STABLE_FORBIDDEN_SUFFIXES = {".apk", ".zip", ".bundle"}
 
 @dataclass(frozen=True)
 class Artifact:
@@ -190,14 +207,45 @@ def public_origin(api_base_url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
 
 
+def release_channel(manifest: dict) -> str:
+    raw = manifest.get("channel")
+    if raw in RELEASE_CHANNELS:
+        return str(raw)
+    if raw not in (None, ""):
+        raise RuntimeError("Release manifest channel must be Debug or Stable")
+
+    releases = manifest.get("releases")
+    legacy_debug = (
+        str(manifest.get("releaseTag", "")).endswith("-debug")
+        and isinstance(releases, list)
+        and len(releases) == 4
+        and all(
+            isinstance(entry, dict)
+            and str(entry.get("packageName", "")).endswith(".debug")
+            and str(entry.get("versionName", "")).endswith("-debug")
+            and str(entry.get("fileName", "")).endswith("-debug.apk")
+            for entry in releases
+        )
+    )
+    if legacy_debug:
+        return "Debug"
+    raise RuntimeError("Stable release manifest must explicitly declare channel=Stable")
+
+
+def expected_release_tag(version: str, channel: str) -> str:
+    if channel not in RELEASE_CHANNELS:
+        raise RuntimeError("Unsupported release channel")
+    return f"v{version}" if channel == "Stable" else f"v{version}-debug"
+
+
 def validate_public_transport(
     manifest: dict,
     allow_insecure_http_debug: bool,
     insecure_http_confirmation: str,
 ) -> None:
+    channel = release_channel(manifest)
     api_base_url = str(manifest["connectionIdentity"]["apiBaseUrl"])
-    if urlsplit(api_base_url).scheme == "https":
-        return
+    scheme = urlsplit(api_base_url).scheme
     releases = manifest.get("releases")
     debug_only = isinstance(releases, list) and len(releases) == 4 and all(
         isinstance(entry, dict)
@@ -206,6 +254,15 @@ def validate_public_transport(
         and str(entry.get("fileName", "")).endswith("-debug.apk")
         for entry in releases
     )
+
+    if channel == "Stable":
+        if scheme != "https":
+            raise RuntimeError("Stable publication requires an HTTPS API base URL")
+        if debug_only:
+            raise RuntimeError("Stable publication may not contain Debug package identities")
+        return
+    if scheme == "https":
+        return
     if (
         not allow_insecure_http_debug
         or insecure_http_confirmation != DEBUG_HTTP_CONFIRMATION
@@ -228,14 +285,54 @@ def validate_remote_root(value: str) -> str:
     return normalized
 
 
-def validate_site_tree(site_dir: Path, version: str) -> list[SiteFile]:
+def png_dimensions(path: Path) -> tuple[int, int]:
+    with path.open("rb") as stream:
+        header = stream.read(24)
+    if (
+        len(header) != 24
+        or header[:8] != b"\x89PNG\r\n\x1a\n"
+        or header[12:16] != b"IHDR"
+    ):
+        raise RuntimeError(f"Stable social card is not a canonical PNG: {path}")
+    return struct.unpack(">II", header[16:24])
+
+
+def stable_site_file_allowed(relative: str) -> bool:
+    if relative in STABLE_SITE_FILES:
+        return True
+    path = Path(relative)
+    return (
+        relative.startswith("assets/")
+        and path.suffix.lower() in STABLE_ASSET_SUFFIXES
+        and path.name not in {"", ".", ".."}
+    )
+
+
+def validate_site_tree(
+    site_dir: Path,
+    version: str,
+    channel: str = "Debug",
+    manifest: dict | None = None,
+) -> list[SiteFile]:
+    if channel not in RELEASE_CHANNELS:
+        raise RuntimeError("Download site channel must be Debug or Stable")
     index_path = site_dir / "index.html"
     if not index_path.is_file() or index_path.is_symlink():
         raise RuntimeError("Download site must contain a regular index.html")
     if version not in index_path.read_text(encoding="utf-8", errors="replace"):
         raise RuntimeError("Download site index.html does not contain the release version")
 
-    files: list[SiteFile] = []
+    discovered: list[SiteFile] = []
+    forbidden_markers = (
+        "authorized-platform",
+        "platform-owner",
+        "yiyunying-source-",
+        "yiyunying-git-history-",
+        "yiyunying-project-delivery-",
+        "project-assets-manifest",
+        "release-manifest",
+        "sha256sums",
+    )
     for path in sorted(site_dir.rglob("*")):
         if path.is_symlink():
             raise RuntimeError(f"Download site may not contain symlinks: {path}")
@@ -244,10 +341,103 @@ def validate_site_tree(site_dir: Path, version: str) -> list[SiteFile]:
         if not path.is_file():
             raise RuntimeError(f"Download site contains a non-regular entry: {path}")
         relative = path.relative_to(site_dir).as_posix()
-        files.append(SiteFile(relative, path, sha256(path), path.stat().st_size))
-    if not files:
+        lower = relative.lower()
+        if channel == "Stable" and (
+            path.suffix.lower() in STABLE_FORBIDDEN_SUFFIXES
+            or any(marker in lower for marker in forbidden_markers)
+        ):
+            raise RuntimeError(f"Stable site contains a forbidden public file: {relative}")
+        if channel == "Debug" or stable_site_file_allowed(relative):
+            discovered.append(
+                SiteFile(relative, path, sha256(path), path.stat().st_size)
+            )
+    if not discovered:
         raise RuntimeError("Download site is empty")
-    return files
+    if channel == "Debug":
+        return discovered
+
+    selected = {item.relative: item for item in discovered}
+    missing = sorted(STABLE_SITE_FILES - set(selected))
+    if missing:
+        raise RuntimeError(f"Stable site is missing required public files: {missing}")
+    if not any(
+        relative.startswith("assets/") and Path(relative).suffix.lower() == ".css"
+        for relative in selected
+    ):
+        raise RuntimeError("Stable site must contain its content-hashed stylesheet")
+    if png_dimensions(site_dir / "og-card.png") != (1200, 630):
+        raise RuntimeError("Stable og-card.png must be exactly 1200x630")
+
+    manifest_document = read_json(
+        site_dir / "site.webmanifest", "stable site web manifest"
+    )
+    icon_paths = {
+        str(icon.get("src", ""))
+        for icon in manifest_document.get("icons", [])
+        if isinstance(icon, dict)
+    }
+    if "/download-center/logo.svg" not in icon_paths:
+        raise RuntimeError(
+            "Stable site.webmanifest must reference /download-center/logo.svg"
+        )
+
+    public_text_files = [
+        item
+        for item in discovered
+        if item.path.suffix.lower() in {".html", ".js", ".css", ".json", ".webmanifest"}
+        or item.path.name == "site.webmanifest"
+    ]
+    public_text = "\n".join(
+        item.path.read_text(encoding="utf-8", errors="replace")
+        for item in public_text_files
+    )
+    if "\ufffd" in public_text:
+        raise RuntimeError("Stable site contains a UTF-8 replacement character")
+    for root_reference in ('href="/logo.svg"', 'src="/logo.svg"', 'href="/site.webmanifest"'):
+        if root_reference in public_text:
+            raise RuntimeError(
+                "Stable site assets must use the /download-center/ public prefix"
+            )
+
+    referenced: set[str] = set()
+    for match in re.findall(r'(?:src|href)=["\']([^"\']+)["\']', public_text):
+        parsed = urlsplit(match)
+        path = parsed.path
+        if path == "/download-center/" or path == "/download-center":
+            referenced.add("index.html")
+        elif path.startswith("/download-center/"):
+            relative = path.removeprefix("/download-center/")
+            if relative.endswith("/"):
+                relative += "index.html"
+            referenced.add(relative)
+    for relative in sorted(referenced):
+        if (
+            relative.startswith("downloads/")
+            or relative.startswith("#")
+            or relative == ""
+        ):
+            continue
+        if relative not in selected:
+            raise RuntimeError(f"Stable site references a non-public asset: {relative}")
+
+    if manifest is not None:
+        private_values: list[str] = []
+        for entry in manifest.get("releases", []):
+            if isinstance(entry, dict) and str(entry.get("id")) not in PUBLIC_RELEASE_IDS:
+                private_values.extend(
+                    str(entry.get(field, ""))
+                    for field in ("fileName", "packageName", "sha256")
+                )
+        for descriptor in manifest.get("projectAssets", []):
+            if isinstance(descriptor, dict):
+                private_values.append(str(descriptor.get("fileName", "")))
+        leaked = sorted(
+            value for value in private_values if value and value in public_text
+        )
+        if leaked:
+            raise RuntimeError("Stable site leaks non-public release metadata")
+
+    return [selected[relative] for relative in sorted(selected)]
 
 
 def exact_artifact(path: Path, expected_hash: object, expected_size: object, label: str) -> Artifact:
@@ -280,11 +470,13 @@ def load_release_files(
         raise RuntimeError("Release manifest version does not match --version")
     if manifest.get("downloadRootBase") != "/downloads":
         raise RuntimeError("Release manifest downloadRootBase must be /downloads")
+
+    channel = release_channel(manifest)
     build_commit = require_commit(manifest.get("buildSourceCommit"), "buildSourceCommit")
     evidence_commit = require_commit(manifest.get("releaseEvidenceCommit"), "releaseEvidenceCommit")
     if build_commit == evidence_commit:
         raise RuntimeError("Build commit A and evidence commit B must be distinct")
-    expected_tag = f"v{version}-debug"
+    expected_tag = expected_release_tag(version, channel)
     if manifest.get("releaseTag") != expected_tag:
         raise RuntimeError(f"Release tag must be {expected_tag}")
     identity = validate_connection_identity(
@@ -295,6 +487,20 @@ def load_release_files(
     identity_hash = sha256(identity_path) if identity_path.is_file() else ""
     if require_sha256(manifest.get("releaseIdentitySha256"), "releaseIdentitySha256") != identity_hash:
         raise RuntimeError("Release manifest is not bound to the repository release identity bytes")
+    identity_document = read_json(identity_path, "repository release identity")
+    if (
+        str(identity_document.get("version_name", "")) != version
+        or int(identity_document.get("version_code", 0)) != int(manifest["versionCode"])
+    ):
+        raise RuntimeError("Repository release identity version does not match the manifest")
+    stable_signer = ""
+    if channel == "Stable":
+        stable_signer = require_sha256(
+            identity_document.get("stable_signer_sha256"),
+            "release identity stable_signer_sha256",
+        )
+        if urlsplit(identity["apiBaseUrl"]).scheme != "https":
+            raise RuntimeError("Stable publication requires an HTTPS API base URL")
 
     metadata = read_json(
         repository_root / "download-site" / "release-metadata.json",
@@ -324,9 +530,11 @@ def load_release_files(
     entries = manifest.get("releases")
     if not isinstance(entries, list) or len(entries) != 4 or entries != metadata.get("releases"):
         raise RuntimeError("Manifest and metadata must contain the same four APK entries")
-    artifacts: list[Artifact] = []
+    apk_artifacts: list[Artifact] = []
+    apk_by_id: dict[str, Artifact] = {}
     release_ids: set[str] = set()
     release_names: set[str] = set()
+    release_signers: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict):
             raise RuntimeError("APK manifest entry must be an object")
@@ -340,16 +548,41 @@ def load_release_files(
         release_names.add(name)
         if str(entry.get("versionCode")) != str(manifest["versionCode"]):
             raise RuntimeError(f"APK versionCode mismatch: {name}")
-        artifacts.append(
-            exact_artifact(
-                release_dir / name,
-                entry.get("sha256"),
-                entry.get("sizeBytes"),
-                "APK",
-            )
+        signer = require_sha256(entry.get("signerSha256"), f"{release_id} signerSha256")
+        release_signers.add(signer)
+
+        package_name = str(entry.get("packageName", ""))
+        embedded_version = str(entry.get("versionName", ""))
+        debug_identity = (
+            package_name.endswith(".debug")
+            or embedded_version.endswith("-debug")
+            or name.endswith("-debug.apk")
         )
+        if channel == "Stable" and debug_identity:
+            raise RuntimeError(f"Stable APK contains a Debug identity: {name}")
+        if channel == "Debug" and not (
+            package_name.endswith(".debug")
+            and embedded_version.endswith("-debug")
+            and name.endswith("-debug.apk")
+        ):
+            raise RuntimeError(f"Debug APK identity is incomplete: {name}")
+
+        artifact = exact_artifact(
+            release_dir / name,
+            entry.get("sha256"),
+            entry.get("sizeBytes"),
+            "APK",
+        )
+        apk_artifacts.append(artifact)
+        apk_by_id[release_id] = artifact
     if release_ids != EXPECTED_RELEASE_IDS:
         raise RuntimeError("Release manifest does not contain the complete four-APK set")
+    if len(release_signers) != 1:
+        raise RuntimeError("All four APK entries must use one signer")
+    if channel == "Stable" and next(iter(release_signers)) != stable_signer:
+        raise RuntimeError(
+            "Stable APK signer does not match release identity stable_signer_sha256"
+        )
 
     descriptor_list = manifest.get("projectAssets")
     if not isinstance(descriptor_list, list) or len(descriptor_list) != 4:
@@ -392,6 +625,8 @@ def load_release_files(
             "containsProductionData": False,
         },
     }
+    if manifest.get("channel") not in (None, ""):
+        expected_project_fields["channel"] = channel
     for field, expected in expected_project_fields.items():
         actual = project_manifest.get(field)
         if field.endswith("Sha256") and isinstance(actual, str):
@@ -404,6 +639,7 @@ def load_release_files(
         raise RuntimeError(
             "Project assets manifest must contain exactly source, history and delivery"
         )
+    project_artifacts: list[Artifact] = []
     project_names: set[str] = set()
     expected_checksum_names = {
         expected_names[key] for key in ("source", "history", "delivery")
@@ -415,7 +651,7 @@ def load_release_files(
         if name in project_names or name not in expected_checksum_names:
             raise RuntimeError(f"Unexpected or duplicate project asset: {name}")
         project_names.add(name)
-        artifacts.append(
+        project_artifacts.append(
             exact_artifact(
                 release_dir / name,
                 item.get("sha256"),
@@ -425,7 +661,7 @@ def load_release_files(
         )
     if project_names != expected_checksum_names:
         raise RuntimeError("Project asset checksum set is incomplete")
-    artifacts.append(
+    project_artifacts.append(
         Artifact(
             project_manifest_path.name,
             project_manifest_path,
@@ -449,9 +685,26 @@ def load_release_files(
         if name in sums:
             raise RuntimeError(f"SHA256SUMS.txt contains a duplicate: {name}")
         sums[name] = digest
-    expected_sums = {item.name: item.sha256 for item in artifacts[:4]}
+    expected_sums = {item.name: item.sha256 for item in apk_artifacts}
     if sums != expected_sums:
         raise RuntimeError("SHA256SUMS.txt must exactly describe the four APKs")
+
+    if len(project_artifacts) != 4 or len({item.name for item in project_artifacts}) != 4:
+        raise RuntimeError("Expected four finalized project artifacts")
+    if channel == "Stable":
+        public_artifacts = [
+            apk_by_id[release_id]
+            for release_id in ("user", "admin", "authorized", "owner")
+        ]
+        if len(public_artifacts) != 4 or any(
+            marker in artifact.name.lower()
+            for artifact in public_artifacts
+            for marker in ("source", "bundle", "delivery", "manifest")
+        ):
+            raise RuntimeError("Stable public artifact whitelist is invalid")
+        return public_artifacts, manifest
+
+    artifacts = apk_artifacts + project_artifacts
     if len(artifacts) != 8 or len({item.name for item in artifacts}) != 8:
         raise RuntimeError("Expected four APKs and four finalized project artifacts")
     return artifacts, manifest
@@ -730,9 +983,12 @@ def main() -> int:
             "Static publication only accepts canonical download-site/static-dist "
             "and releases/<version> inputs"
         )
-    site_files = validate_site_tree(site_dir, args.version)
     artifacts, manifest = load_release_files(
         release_dir, args.version, repository_root
+    )
+    channel = release_channel(manifest)
+    site_files = validate_site_tree(
+        site_dir, args.version, channel=channel, manifest=manifest
     )
     validate_git_release_evidence(repository_root, manifest)
     validate_public_transport(
@@ -889,10 +1145,10 @@ def main() -> int:
         completed = True
         rollback_ok = True
         print(
-            f"Deployed immutable download center {args.version}; verified site "
-            "plus four APK and four project artifacts."
+            f"Deployed immutable download center {args.version} ({channel}); "
+            f"verified site plus {len(artifacts)} public release artifacts."
         )
-        print(f"Stable release: {remote_release}")
+        print(f"{channel} public release: {remote_release}")
         print(
             "WARNING: static deployment does not activate software_update_policies. "
             "Run backend/tools/publish-android-ssh.py and "

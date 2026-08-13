@@ -45,6 +45,19 @@ SIGNER_RE = re.compile(
 )
 INSECURE_HTTP_CONFIRMATION = "DEBUG_HTTP_NON_PRODUCTION_CONFIRMED"
 
+def release_channel(manifest: Mapping[str, object]) -> str:
+    raw = manifest.get("channel")
+    if raw in (None, ""):
+        return "Debug"
+    if raw not in {"Debug", "Stable"}:
+        raise RuntimeError("release manifest channel must be Debug or Stable")
+    return str(raw)
+
+
+def stable_identity_is_clean(package_name: str, version_name: str, filename: str) -> bool:
+    return not package_name.endswith(".debug") and not version_name.endswith("-debug") and not filename.endswith("-debug.apk")
+
+
 
 @dataclass(frozen=True)
 class Release:
@@ -478,7 +491,9 @@ def validate_release_plan(
     _, identity_sha256 = digest(identity_path)
     build_commit = str(manifest.get("buildSourceCommit", "")).lower()
     evidence_commit = str(manifest.get("releaseEvidenceCommit", "")).lower()
-    expected_tag = f"v{expected_version_name}-debug"
+    channel = release_channel(manifest)
+    tag_suffix = "" if channel == "Stable" else "-debug"
+    expected_tag = f"v{expected_version_name}{tag_suffix}"
     if manifest.get("schemaVersion") != 4:
         raise RuntimeError("release manifest schemaVersion must be 4")
     if manifest.get("finalizationStatus") != "finalized":
@@ -492,7 +507,9 @@ def validate_release_plan(
     manifest_identity_sha256 = str(manifest.get("releaseIdentitySha256", "")).lower()
     if manifest_identity_sha256 != identity_sha256:
         raise RuntimeError("release manifest is not bound to the supplied release identity bytes")
-    validate_manifest_connection_identity(manifest)
+    manifest_connection_identity = validate_manifest_connection_identity(manifest)
+    if channel == "Stable" and urlsplit(manifest_connection_identity["apiBaseUrl"]).scheme.lower() != "https":
+        raise RuntimeError("Stable release connectionIdentity.apiBaseUrl must use HTTPS")
 
     entries = manifest.get("releases")
     if not isinstance(entries, list) or len(entries) != len(EDITIONS):
@@ -528,6 +545,11 @@ def validate_release_plan(
             int(entry.get("sizeBytes", -1)),
             manifest_sha,
         )
+        if channel == "Stable" and not stable_identity_is_clean(
+            expected[0], expected[1], expected[3]
+        ):
+            raise RuntimeError(f"Stable release must not use Debug APK identity: {release.edition}")
+
         actual_file = (
             release.package_name,
             str(entry.get("versionName", "")),
@@ -565,17 +587,24 @@ def validate_release_plan(
     if len(manifest_signers) != 1 or len(actual_signers) != 1:
         raise RuntimeError("all four APKs must use one unified signer")
     signer = next(iter(actual_signers))
-    configured_signer = str(
-        identity.get("signer_sha256", identity.get("signerSha256", ""))
-    ).upper()
-    if configured_signer and SHA256_RE.fullmatch(configured_signer) is None:
-        raise RuntimeError("release identity signer hash is invalid")
-    previous_signer = previous_release_signer(manifest_path, expected_version_code)
-    trusted_signers = {value for value in (configured_signer, previous_signer) if value}
-    if len(trusted_signers) > 1:
-        raise RuntimeError("configured signer conflicts with previous release signer")
-    if trusted_signers and signer != next(iter(trusted_signers)):
-        raise RuntimeError("APK signer does not match the trusted previous release signer")
+    if channel == "Stable":
+        configured_signer = str(identity.get("stable_signer_sha256", "")).upper()
+        if SHA256_RE.fullmatch(configured_signer) is None:
+            raise RuntimeError("Stable release identity stable_signer_sha256 is missing or invalid")
+        if signer != configured_signer:
+            raise RuntimeError("APK signer does not match committed stable_signer_sha256")
+    else:
+        configured_signer = str(
+            identity.get("signer_sha256", identity.get("signerSha256", ""))
+        ).upper()
+        if configured_signer and SHA256_RE.fullmatch(configured_signer) is None:
+            raise RuntimeError("release identity signer hash is invalid")
+        previous_signer = previous_release_signer(manifest_path, expected_version_code)
+        trusted_signers = {value for value in (configured_signer, previous_signer) if value}
+        if len(trusted_signers) > 1:
+            raise RuntimeError("configured signer conflicts with previous release signer")
+        if trusted_signers and signer != next(iter(trusted_signers)):
+            raise RuntimeError("APK signer does not match the trusted previous release signer")
     return validated, manifest
 
 
@@ -1442,6 +1471,7 @@ def main() -> int:
 
         receipt = {
             "status": "activated",
+            "channel": release_channel(manifest),
             "version_name": args.version_name,
             "version_code": args.version_code,
             "build_source_commit": str(manifest["buildSourceCommit"]).lower(),

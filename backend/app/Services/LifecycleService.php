@@ -96,23 +96,7 @@ final class LifecycleService
         }
         $update = self::selectUpdate($updates, $currentVersionCode);
 
-        $maintenance = Database::all(
-            "SELECT m.* FROM maintenance_policies m
-             WHERE m.edition_code IN ('all', ?) AND m.status = 1
-               AND (m.starts_at IS NULL OR m.starts_at <= NOW()) AND (m.ends_at IS NULL OR m.ends_at > NOW())
-               AND ((m.issuer_type = 'platform' AND m.issuer_id IN ({$issuerPlaceholders}))
-                    OR (m.issuer_type = 'admin' AND m.issuer_id = ?))
-               AND ({$matchSql})
-             ORDER BY m.forced DESC, m.issuer_level ASC, m.priority DESC, m.id DESC",
-            array_merge([$edition], $issuerIds, [(int) ($context['admin_id'] ?? 0)], $matchParams)
-        );
-        $activeMaintenance = null;
-        foreach ($maintenance as $candidate) {
-            $allowlist = json_decode((string) ($candidate['allowlist_json'] ?? ''), true);
-            if (is_array($allowlist) && in_array($clientIp, array_map('strval', $allowlist), true)) continue;
-            $activeMaintenance = $candidate;
-            break;
-        }
+        $activeMaintenance = self::activeMaintenance($context, $clientIp);
 
         $themes = Database::all(
             "SELECT f.* FROM festival_theme_policies f
@@ -159,6 +143,90 @@ final class LifecycleService
             ],
             'server_time' => date('Y-m-d H:i:s'),
         ];
+    }
+
+    /**
+     * Resolve the active application hierarchy used by the server-side write guard.
+     * Missing, disabled or deleted identities are left to the normal controller auth path.
+     */
+    public static function maintenanceContextForApp(int $appId): ?array
+    {
+        $row = Database::one(
+            'SELECT ap.id AS app_id, ap.admin_id, a.platform_id, p.level AS platform_level,
+                    CASE WHEN p.level = 1 THEN p.id ELSE p.parent_id END AS root_platform_id
+             FROM apps ap
+             INNER JOIN admins a ON a.id = ap.admin_id
+             INNER JOIN platform_accounts p ON p.id = a.platform_id
+             WHERE ap.id = ? AND ap.status = 1 AND ap.deleted_at IS NULL
+               AND a.status = 1 AND a.deleted_at IS NULL
+               AND p.status = 1 AND p.deleted_at IS NULL
+             LIMIT 1',
+            [$appId]
+        );
+        if ($row === null || (int) ($row['root_platform_id'] ?? 0) <= 0) {
+            return null;
+        }
+        return [
+            'edition_code' => 'user',
+            'target_level' => 4,
+            'root_platform_id' => (int) $row['root_platform_id'],
+            'platform_id' => (int) $row['platform_id'],
+            'admin_id' => (int) $row['admin_id'],
+            'app_id' => (int) $row['app_id'],
+        ];
+    }
+
+    /**
+     * Select the same active maintenance policy for public lifecycle reads and write enforcement.
+     */
+    public static function activeMaintenance(array $context, string $clientIp): ?array
+    {
+        $edition = (string) $context['edition_code'];
+        $issuerIds = [(int) $context['root_platform_id']];
+        if ((int) $context['platform_id'] !== (int) $context['root_platform_id']) {
+            $issuerIds[] = (int) $context['platform_id'];
+        }
+        $issuerPlaceholders = implode(',', array_fill(0, count($issuerIds), '?'));
+        $matchSql = self::targetMatchSql($context);
+        $matchParams = self::targetMatchParams($context);
+        $maintenance = Database::all(
+            "SELECT m.* FROM maintenance_policies m
+             WHERE m.edition_code IN ('all', ?) AND m.status = 1
+               AND (m.starts_at IS NULL OR m.starts_at <= NOW()) AND (m.ends_at IS NULL OR m.ends_at > NOW())
+               AND ((m.issuer_type = 'platform' AND m.issuer_id IN ({$issuerPlaceholders}))
+                    OR (m.issuer_type = 'admin' AND m.issuer_id = ?))
+               AND ({$matchSql})
+             ORDER BY m.forced DESC, m.issuer_level ASC, m.priority DESC, m.id DESC",
+            array_merge([$edition], $issuerIds, [(int) ($context['admin_id'] ?? 0)], $matchParams)
+        );
+        foreach ($maintenance as $candidate) {
+            $allowlist = json_decode((string) ($candidate['allowlist_json'] ?? ''), true);
+            if (is_array($allowlist) && self::clientIpAllowlisted($clientIp, $allowlist)) continue;
+            return $candidate;
+        }
+        return null;
+    }
+
+    private static function clientIpAllowlisted(string $clientIp, array $allowlist): bool
+    {
+        $clientIp = trim($clientIp);
+        $clientPacked = inet_pton($clientIp);
+        foreach ($allowlist as $allowedIp) {
+            $allowedIp = trim((string) $allowedIp);
+            if ($allowedIp === $clientIp) {
+                return true;
+            }
+            if (strlen($allowedIp) >= 2 && $allowedIp[0] === '[' && $allowedIp[strlen($allowedIp) - 1] === ']') {
+                $allowedIp = substr($allowedIp, 1, -1);
+            }
+            $allowedPacked = inet_pton($allowedIp);
+            if ($clientPacked !== false && $allowedPacked !== false
+                && strlen($clientPacked) === strlen($allowedPacked)
+                && hash_equals($clientPacked, $allowedPacked)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function createPlatformUpdate(array $actor, array $data): int

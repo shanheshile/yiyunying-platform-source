@@ -103,6 +103,7 @@ class ReleaseFixture:
         ]
         self.manifest = {
             "schemaVersion": 4,
+            "channel": "Debug",
             "versionName": self.version,
             "versionCode": self.version_code,
             "buildSourceCommit": self.build_commit,
@@ -136,6 +137,7 @@ class ReleaseFixture:
             )
         self.project_manifest = {
             "schemaVersion": 3,
+            "channel": "Debug",
             "versionName": self.version,
             "versionCode": self.version_code,
             "buildSourceCommit": self.build_commit,
@@ -173,6 +175,105 @@ class ReleaseFixture:
             f"<!doctype html><title>{self.version}</title>\n",
             encoding="utf-8",
             newline="\n",
+        )
+
+    def make_stable(self) -> None:
+        stable_signer = "9" * 64
+        identity_path = (
+            self.repository / "backend" / "config" / "release-identity.json"
+        )
+        write_json(
+            identity_path,
+            {
+                "version_name": self.version,
+                "version_code": self.version_code,
+                "stable_signer_sha256": stable_signer,
+            },
+        )
+        self.identity_sha = digest(identity_path)
+        self.tag = f"v{self.version}"
+        self.manifest["channel"] = "Stable"
+        self.manifest["releaseTag"] = self.tag
+        self.manifest["releaseIdentitySha256"] = self.identity_sha
+
+        renamed: list[str] = []
+        for entry in self.manifest["releases"]:
+            old_path = self.release_dir / entry["fileName"]
+            entry["fileName"] = entry["fileName"].replace("-debug.apk", ".apk")
+            entry["packageName"] = entry["packageName"].removesuffix(".debug")
+            entry["versionName"] = entry["versionName"].removesuffix("-debug")
+            entry["signerSha256"] = stable_signer
+            new_path = self.release_dir / entry["fileName"]
+            old_path.rename(new_path)
+            entry["sizeBytes"] = new_path.stat().st_size
+            entry["sha256"] = digest(new_path)
+            renamed.append(entry["fileName"])
+        self.apk_names = renamed
+        self.rewrite_manifest()
+
+        self.project_manifest["channel"] = "Stable"
+        self.project_manifest["releaseTag"] = self.tag
+        self.project_manifest["releaseIdentitySha256"] = self.identity_sha
+        self.project_manifest["releaseManifestSha256"] = digest(self.manifest_path)
+        self.project_manifest["bundleRefs"] = [
+            "refs/heads/main",
+            f"refs/tags/{self.tag}",
+        ]
+        self.rewrite_project_manifest()
+
+        sums = "".join(
+            f"{entry['sha256'].upper()}  {entry['fileName']}\n"
+            for entry in self.manifest["releases"]
+        )
+        (self.release_dir / "SHA256SUMS.txt").write_text(
+            sums, encoding="utf-8", newline="\n"
+        )
+
+        self.metadata = copy.deepcopy(self.manifest)
+        self.metadata["finalizationStatus"] = "pending"
+        self.metadata["releaseEvidenceCommit"] = None
+        self.metadata.pop("finalizedAt")
+        self.metadata["pendingManifestSha256"] = "5" * 64
+        self.rewrite_metadata()
+
+    def write_stable_site(self) -> None:
+        files = {
+            "index.html": (
+                f'<!doctype html><link rel="stylesheet" '
+                f'href="/download-center/assets/site.css">'
+                f'<link rel="manifest" '
+                f'href="/download-center/site.webmanifest">'
+                f'<img src="/download-center/logo.svg">{self.version}'
+            ),
+            "site.js": "document.documentElement.dataset.ready='true';",
+            "logo.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+            "api-docs/index.html": '<a href="/download-center/">home</a>',
+            "privacy/index.html": '<a href="/download-center/">home</a>',
+            "terms/index.html": '<a href="/download-center/">home</a>',
+            "assets/site.css": "body{color:#123}",
+        }
+        for relative, text in files.items():
+            path = self.site_dir / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8", newline="\n")
+        write_json(
+            self.site_dir / "site.webmanifest",
+            {
+                "name": "fixture",
+                "icons": [
+                    {
+                        "src": "/download-center/logo.svg",
+                        "sizes": "any",
+                        "type": "image/svg+xml",
+                    }
+                ],
+            },
+        )
+        (self.site_dir / "og-card.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + b"\x00\x00\x00\x0dIHDR"
+            + (1200).to_bytes(4, "big")
+            + (630).to_bytes(4, "big")
         )
 
     def rewrite_manifest(self) -> None:
@@ -226,6 +327,89 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
             MODULE.validate_public_transport(
                 insecure, True, MODULE.DEBUG_HTTP_CONFIRMATION
             )
+    def test_stable_publishes_all_four_clients_with_https_and_bound_signer(self) -> None:
+        self.fixture.make_stable()
+        artifacts, manifest = self.load()
+        self.assertEqual(manifest["channel"], "Stable")
+        self.assertEqual(manifest["releaseTag"], f"v{self.fixture.version}")
+        self.assertEqual(
+            {item.name for item in artifacts},
+            {
+                f"yiyunying-user-v{self.fixture.version}.apk",
+                f"yiyunying-admin-v{self.fixture.version}.apk",
+                f"yiyunying-authorized-v{self.fixture.version}.apk",
+                f"yiyunying-owner-v{self.fixture.version}.apk",
+            },
+        )
+        self.assertFalse(
+            any(
+                marker in item.name
+                for item in artifacts
+                for marker in (
+                    "source",
+                    "git-history",
+                    "delivery",
+                    "manifest",
+                )
+            )
+        )
+
+        insecure = copy.deepcopy(self.fixture.manifest)
+        insecure["connectionIdentity"]["apiBaseUrl"] = (
+            "http://downloads.example.test/"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Stable.*HTTPS"):
+            MODULE.validate_public_transport(insecure, False, "")
+
+        self.fixture.manifest["releases"][0]["signerSha256"] = "8" * 64
+        self.fixture.metadata["releases"][0]["signerSha256"] = "8" * 64
+        self.fixture.rewrite_manifest()
+        self.fixture.rewrite_metadata()
+        with self.assertRaisesRegex(RuntimeError, "one signer|stable_signer"):
+            self.load()
+
+    def test_stable_site_uses_an_explicit_minimum_public_whitelist(self) -> None:
+        self.fixture.make_stable()
+        self.fixture.write_stable_site()
+        files = MODULE.validate_site_tree(
+            self.fixture.site_dir,
+            self.fixture.version,
+            channel="Stable",
+            manifest=self.fixture.manifest,
+        )
+        relative = {item.relative for item in files}
+        self.assertTrue(MODULE.STABLE_SITE_FILES.issubset(relative))
+        self.assertIn("assets/site.css", relative)
+        self.assertFalse(any(path.endswith(".apk") for path in relative))
+
+        forbidden = (
+            self.fixture.site_dir
+            / f"yiyunying-authorized-platform-v{self.fixture.version}.apk"
+        )
+        forbidden.write_bytes(b"private")
+        with self.assertRaisesRegex(RuntimeError, "forbidden public file"):
+            MODULE.validate_site_tree(
+                self.fixture.site_dir,
+                self.fixture.version,
+                channel="Stable",
+                manifest=self.fixture.manifest,
+            )
+
+    def test_stable_site_rejects_private_metadata_even_without_private_files(self) -> None:
+        self.fixture.make_stable()
+        self.fixture.write_stable_site()
+        (self.fixture.site_dir / "site.js").write_text(
+            self.fixture.manifest["projectAssets"][0]["fileName"],
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "non-public release metadata"):
+            MODULE.validate_site_tree(
+                self.fixture.site_dir,
+                self.fixture.version,
+                channel="Stable",
+                manifest=self.fixture.manifest,
+            )
+
     def test_pending_or_same_commit_manifest_is_rejected(self) -> None:
         self.fixture.manifest["finalizationStatus"] = "pending"
         self.fixture.rewrite_manifest()

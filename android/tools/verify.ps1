@@ -1,8 +1,12 @@
 param(
-    [string] $JavaHome = $env:JAVA_HOME
+    [string] $JavaHome = $env:JAVA_HOME,
+    [ValidateSet('Debug', 'Stable')]
+    [string] $Channel = 'Debug'
 )
 
 $ErrorActionPreference = 'Stop'
+$buildType = if ($Channel -eq 'Stable') { 'Release' } else { 'Debug' }
+$buildTypeDirectory = $buildType.ToLowerInvariant()
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runRoot = $projectRoot
 
@@ -32,34 +36,51 @@ if ($projectRoot -match '[^\x00-\x7F]') {
 }
 
 $env:JAVA_HOME = $JavaHome
+
+function Invoke-GradlePhase {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Label,
+        [Parameter(Mandatory = $true)]
+        [string[]] $Tasks
+    )
+
+    Write-Host "Gradle verification phase: $Label"
+    & .\gradlew.bat --no-daemon --no-parallel --max-workers=1 --rerun-tasks @Tasks
+    if ($LASTEXITCODE -ne 0) {
+        throw "Android verification phase '$Label' failed with exit code $LASTEXITCODE."
+    }
+}
+
 Push-Location $runRoot
 try {
-    $tasks = @(
-        'clean',
+    $unitTestTasks = @(
         'testPlatformOwnerDebugUnitTest',
         'testAuthorizedPlatformDebugUnitTest',
         'testAdminDebugUnitTest',
-        'testUserDebugUnitTest',
-        'lintPlatformOwnerDebug',
-        'lintAuthorizedPlatformDebug',
-        'lintAdminDebug',
-        'lintUserDebug',
-        'assemblePlatformOwnerDebug',
-        'assembleAuthorizedPlatformDebug',
-        'assembleAdminDebug',
-        'assembleUserDebug'
+        'testUserDebugUnitTest'
     )
-    # Keep the verification deterministic and within a bounded memory/worker budget.
-    # Parallel Gradle builds previously competed for shared intermediates and page-file commit.
-    & .\gradlew.bat --no-daemon --no-parallel --max-workers=1 --rerun-tasks @tasks
-    if ($LASTEXITCODE -ne 0) {
-        throw "Android verification failed with exit code $LASTEXITCODE."
+    $cleanRequired = $true
+    foreach ($unitTestTask in $unitTestTasks) {
+        $phaseTasks = if ($cleanRequired) { @('clean', $unitTestTask) } else { @($unitTestTask) }
+        $cleanRequired = $false
+        Invoke-GradlePhase -Label "unit test: $unitTestTask" -Tasks $phaseTasks
+    }
+
+    # Each edition gets a fresh, bounded Gradle process. This releases unit-test
+    # workers before lint/R8 and keeps Stable on Release lint + assemble tasks.
+    $editions = @('PlatformOwner', 'AuthorizedPlatform', 'Admin', 'User')
+    foreach ($edition in $editions) {
+        Invoke-GradlePhase -Label "$edition $buildType lint and assemble" -Tasks @(
+            "lint${edition}${buildType}",
+            "assemble${edition}${buildType}"
+        )
     }
     $apks = @(
-        'app\build\outputs\apk\platformOwner\debug\app-platformOwner-debug.apk',
-        'app\build\outputs\apk\authorizedPlatform\debug\app-authorizedPlatform-debug.apk',
-        'app\build\outputs\apk\admin\debug\app-admin-debug.apk',
-        'app\build\outputs\apk\user\debug\app-user-debug.apk'
+        "app\build\outputs\apk\platformOwner\$buildTypeDirectory\app-platformOwner-$buildTypeDirectory.apk",
+        "app\build\outputs\apk\authorizedPlatform\$buildTypeDirectory\app-authorizedPlatform-$buildTypeDirectory.apk",
+        "app\build\outputs\apk\admin\$buildTypeDirectory\app-admin-$buildTypeDirectory.apk",
+        "app\build\outputs\apk\user\$buildTypeDirectory\app-user-$buildTypeDirectory.apk"
     )
     foreach ($relativePath in $apks) {
         $apk = Join-Path $projectRoot $relativePath

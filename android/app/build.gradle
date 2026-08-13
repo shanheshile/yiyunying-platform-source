@@ -37,6 +37,16 @@ def authorizedPlatformKey = configValue(
         'local-authorized-platform'
 )
 
+// Stable signing material is deliberately available only through the process
+// environment. Never add Gradle-property or source-controlled fallbacks here.
+def releaseSigningEnvironment = [
+        storeFile: System.getenv('YIYUNYING_RELEASE_STORE_FILE'),
+        storePassword: System.getenv('YIYUNYING_RELEASE_STORE_PASSWORD'),
+        keyAlias: System.getenv('YIYUNYING_RELEASE_KEY_ALIAS'),
+        keyPassword: System.getenv('YIYUNYING_RELEASE_KEY_PASSWORD')
+]
+def releaseSigningComplete = releaseSigningEnvironment.values().every { it != null && !it.trim().isEmpty() }
+
 tasks.register('printVersion') {
     group = 'versioning'
     description = 'Prints the shared application version without building an APK.'
@@ -46,6 +56,17 @@ tasks.register('printVersion') {
 android {
     namespace 'xyz.jjmxg.yiyunying'
     compileSdk 36
+
+    signingConfigs {
+        release {
+            if (releaseSigningComplete) {
+                storeFile file(releaseSigningEnvironment.storeFile)
+                storePassword releaseSigningEnvironment.storePassword
+                keyAlias releaseSigningEnvironment.keyAlias
+                keyPassword releaseSigningEnvironment.keyPassword
+            }
+        }
+    }
 
     defaultConfig {
         applicationId 'xyz.jjmxg.yiyunying'
@@ -145,6 +166,7 @@ android {
             minifyEnabled true
             shrinkResources true
             buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'false'
+            signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -158,6 +180,29 @@ android {
 
     packaging {
         resources.excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1']
+    }
+}
+
+def validateReleaseSigningEnvironment = tasks.register('validateReleaseSigningEnvironment') {
+    group = 'verification'
+    description = 'Fails closed unless all Stable signing environment variables and the keystore are present.'
+    doLast {
+        def missing = releaseSigningEnvironment.findAll { _, value -> value == null || value.trim().isEmpty() }.keySet()
+        if (!missing.isEmpty()) {
+            throw new GradleException('Stable Release signing environment is incomplete. Missing: ' + missing.join(', '))
+        }
+        def keystore = file(releaseSigningEnvironment.storeFile)
+        if (!keystore.isFile()) {
+            throw new GradleException('Stable Release keystore does not exist or is not a regular file.')
+        }
+    }
+}
+
+// Debug tasks remain usable without production secrets. Any APK/AAB Release
+// packaging graph is explicitly gated before Android signing can run.
+tasks.configureEach { task ->
+    if (task.name ==~ /(?i)^(assemble|bundle|package).*Release$/) {
+        task.dependsOn(validateReleaseSigningEnvironment)
     }
 }
 

@@ -124,14 +124,23 @@ function Read-BackendReleaseIdentity {
     if ([string] $identity.version_name -notmatch '^\d+\.\d+\.\d+$' -or [int] $identity.version_code -le 0) {
         throw '后端发布身份文件格式无效。'
     }
+    $stableSignerSha256 = [string] $identity.stable_signer_sha256
+    if (-not [string]::IsNullOrWhiteSpace($stableSignerSha256) -and $stableSignerSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+        throw '后端发布身份的 stable_signer_sha256 格式无效。'
+    }
     return [ordered]@{
         versionName = [string] $identity.version_name
         versionCode = [int] $identity.version_code
+        stableSignerSha256 = $stableSignerSha256.ToLowerInvariant()
     }
 }
 
 function Write-BackendReleaseIdentity([string] $Name, [int] $Code) {
+    $existing = Read-BackendReleaseIdentity
     $identity = [ordered]@{ version_name = $Name; version_code = $Code }
+    if (-not [string]::IsNullOrWhiteSpace($existing.stableSignerSha256)) {
+        $identity.stable_signer_sha256 = $existing.stableSignerSha256
+    }
     $json = $identity | ConvertTo-Json
     [System.IO.File]::WriteAllText(
         $backendReleaseFile,

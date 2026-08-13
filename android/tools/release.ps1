@@ -2,6 +2,8 @@
 param(
     [ValidateSet('Build', 'Finalize')]
     [string] $Phase = 'Build',
+    [ValidateSet('Debug', 'Stable')]
+    [string] $Channel = 'Debug',
     [ValidateSet('none', 'patch', 'minor', 'major', 'build')]
     [string] $Bump = 'none',
     [string] $JavaHome = $env:JAVA_HOME,
@@ -74,7 +76,7 @@ function Write-Utf8JsonAtomic {
     }
 }
 
-function Assert-DownloadRoot([string] $Value) {
+function Assert-DownloadRoot([string] $Value, [string] $ReleaseChannel) {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         throw '下载根地址不能为空。'
     }
@@ -88,6 +90,9 @@ function Assert-DownloadRoot([string] $Value) {
     }
     if ($uri.Scheme -notin @('http', 'https')) {
         throw "下载根地址协议不受支持：$($uri.Scheme)"
+    }
+    if ($ReleaseChannel -eq 'Stable' -and $uri.Scheme -ne 'https') {
+        throw 'Stable 下载根地址必须使用 HTTPS。'
     }
     if ($uri.IsLoopback -or $uri.Host -in @('localhost', '127.0.0.1', '0.0.0.0')) {
         throw "下载根地址不能指向本机：$Value"
@@ -192,7 +197,8 @@ function Assert-Apk {
         [string] $ExpectedVersionName,
         [int] $ExpectedVersionCode,
         [string] $AaptPath,
-        [string] $ApkSignerPath
+        [string] $ApkSignerPath,
+        [string] $ExpectedSignerSha256
     )
 
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -362,7 +368,7 @@ function Assert-ReleaseConnectionKey([string] $Name, [string] $Value) {
     }
 }
 
-function Read-ReleaseConnectionIdentity {
+function Read-ReleaseConnectionIdentity([string] $ReleaseChannel) {
     $apiBaseUrl = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_API_BASE_URL'
     $appKey = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_APP_KEY'
     $platformKey = Read-RequiredReleaseEnvironment -Name 'YIYUNYING_PLATFORM_KEY'
@@ -372,6 +378,9 @@ function Read-ReleaseConnectionIdentity {
     if (-not [Uri]::TryCreate($apiBaseUrl, [UriKind]::Absolute, [ref] $uri) -or
         $uri.Scheme -notin @('http', 'https')) {
         throw 'YIYUNYING_API_BASE_URL 必须是绝对 HTTP/HTTPS 地址。'
+    }
+    if ($ReleaseChannel -eq 'Stable' -and $uri.Scheme -ne 'https') {
+        throw 'Stable 的 YIYUNYING_API_BASE_URL 必须使用 HTTPS。'
     }
     $normalizedHost = $uri.Host.Trim('[', ']').ToLowerInvariant()
     if ($uri.IsLoopback -or
@@ -444,7 +453,7 @@ function Read-GeneratedBuildConfigString {
     return $decoded.ToString()
 }
 
-function Assert-GeneratedConnectionIdentity($ConnectionIdentity) {
+function Assert-GeneratedConnectionIdentity($ConnectionIdentity, [string] $BuildTypeDirectory) {
     $buildConfigRoot = Join-Path $projectRoot 'app\build\generated\source\buildConfig'
     $flavors = @(
         [pscustomobject]@{ name = 'platformOwner'; platformKey = $ConnectionIdentity.platformKey },
@@ -453,7 +462,7 @@ function Assert-GeneratedConnectionIdentity($ConnectionIdentity) {
         [pscustomobject]@{ name = 'user'; platformKey = $ConnectionIdentity.platformKey }
     )
     foreach ($flavor in $flavors) {
-        $buildConfigPath = Join-Path $buildConfigRoot "$($flavor.name)\debug\xyz\jjmxg\yiyunying\BuildConfig.java"
+        $buildConfigPath = Join-Path $buildConfigRoot "$($flavor.name)\$BuildTypeDirectory\xyz\jjmxg\yiyunying\BuildConfig.java"
         $actualApiBaseUrl = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_API_BASE_URL' -FlavorName $flavor.name
         $actualAppKey = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_APP_KEY' -FlavorName $flavor.name
         $actualPlatformKey = Read-GeneratedBuildConfigString -Path $buildConfigPath -FieldName 'DEFAULT_PLATFORM_KEY' -FlavorName $flavor.name
@@ -469,7 +478,7 @@ function Assert-GeneratedConnectionIdentity($ConnectionIdentity) {
     }
 }
 
-function Read-CommittedReleaseEvidence($Version) {
+function Read-CommittedReleaseEvidence($Version, [string] $ReleaseChannel) {
     if (-not (Test-Path -LiteralPath $releaseIdentityFile)) {
         throw "缺少后端发布身份文件：$releaseIdentityFile"
     }
@@ -508,25 +517,43 @@ function Read-CommittedReleaseEvidence($Version) {
     if ($identity.version_name -ne $Version.versionName -or [int] $identity.version_code -ne [int] $Version.versionCode) {
         throw 'Android 版本与后端发布身份不一致，拒绝构建。'
     }
+    $stableSignerSha256 = ([string] $identity.stable_signer_sha256).ToUpperInvariant()
+    if ($ReleaseChannel -eq 'Stable' -and $stableSignerSha256 -notmatch '^[0-9A-F]{64}$') {
+        throw 'Stable 构建要求 committed release identity 包含有效的 stable_signer_sha256。'
+    }
+    if ($ReleaseChannel -ne 'Stable') {
+        $stableSignerSha256 = ''
+    }
     $identityHash = Get-ByteArraySha256 -Bytes $committedIdentityBytes
     return [ordered]@{
         buildSourceCommit = $commit.ToLowerInvariant()
         releaseIdentitySha256 = $identityHash
+        stableSignerSha256 = $stableSignerSha256
     }
 }
 
 Assert-ApkIdentityParser
-Assert-DownloadRoot -Value $DownloadRootBase
+Assert-DownloadRoot -Value $DownloadRootBase -ReleaseChannel $Channel
 if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSha256) -and $ExpectedSignerSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
     throw 'ExpectedSignerSha256 必须是 64 位十六进制 SHA-256。'
+}
+if ($Channel -eq 'Stable' -and $SkipVerification) {
+    throw 'Stable 禁止使用 -SkipVerification。'
 }
 if (-not $DryRun -and $Bump -ne 'none') {
     throw '证据绑定发布不允许在构建或收口过程中修改版本；请先单独更新版本并提交到 main。'
 }
 $action = if ($Bump -eq 'none') { 'show' } else { $Bump }
 $version = Invoke-VersionCommand -Action $action -Preview:$DryRun
+$isStable = $Channel -eq 'Stable'
+$buildType = if ($isStable) { 'Release' } else { 'Debug' }
+$buildTypeDirectory = $buildType.ToLowerInvariant()
+$tagSuffix = if ($isStable) { '' } else { '-debug' }
+$packageDebugSuffix = if ($isStable) { '' } else { '.debug' }
+$expectedTag = "v$($version.versionName)$tagSuffix"
 if ($DryRun) {
     Write-Host "计划阶段：$Phase"
+    Write-Host "计划通道：$Channel"
     Write-Host "计划发布：$($version.versionName) ($($version.versionCode))"
     Write-Host '干运行结束：未构建 APK、未生成项目资产、未写入版本和下载站元数据。'
     exit 0
@@ -537,9 +564,8 @@ if ($Phase -eq 'Finalize') {
     if (-not (Test-Path -LiteralPath $releaseDirectory)) {
         throw "缺少 Build 阶段发布目录：$releaseDirectory"
     }
-    $expectedTag = "v$($version.versionName)-debug"
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
-        -ReleaseRoot $releaseRoot -ExpectedTag $expectedTag
+        -ReleaseRoot $releaseRoot -ExpectedTag $expectedTag -Channel $Channel
     if ($LASTEXITCODE -ne 0) {
         throw "Finalize 阶段项目资产生成失败，退出码：$LASTEXITCODE"
     }
@@ -549,6 +575,7 @@ if ($Phase -eq 'Finalize') {
     $evidenceCommit = (Invoke-GitText -Arguments @('rev-parse', '--verify', 'HEAD^{commit}') -Operation '读取发布证据提交').ToLowerInvariant()
     if ($finalManifest.versionName -ne $version.versionName -or
         [int] $finalManifest.versionCode -ne [int] $version.versionCode -or
+        [string] $finalManifest.channel -ne $Channel -or
         [string] $finalManifest.releaseEvidenceCommit -ne $evidenceCommit -or
         [string] $finalManifest.releaseTag -ne $expectedTag -or
         [string] $finalManifest.finalizationStatus -ne 'finalized') {
@@ -559,6 +586,7 @@ if ($Phase -eq 'Finalize') {
     $finalManifestSha256 = (Get-FileHash -LiteralPath $finalManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ([int] $projectAssetsManifest.schemaVersion -ne 3 -or
         @($projectAssetsManifest.assets).Count -ne 3 -or
+        [string] $projectAssetsManifest.channel -ne $Channel -or
         [string] $projectAssetsManifest.buildSourceCommit -ne [string] $finalManifest.buildSourceCommit -or
         [string] $projectAssetsManifest.releaseEvidenceCommit -ne $evidenceCommit -or
         [string] $projectAssetsManifest.releaseTag -ne $expectedTag -or
@@ -596,10 +624,19 @@ if ($Phase -eq 'Finalize') {
     exit 0
 }
 
-$releaseEvidence = Read-CommittedReleaseEvidence -Version $version
+$releaseEvidence = Read-CommittedReleaseEvidence -Version $version -ReleaseChannel $Channel
 $buildSourceCommit = [string] $releaseEvidence.buildSourceCommit
 $releaseIdentitySha256 = [string] $releaseEvidence.releaseIdentitySha256
-$connectionIdentity = Read-ReleaseConnectionIdentity
+$stableSignerSha256 = [string] $releaseEvidence.stableSignerSha256
+if ($isStable) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSignerSha256)) {
+        throw 'Stable Build 必须显式传入 -ExpectedSignerSha256。'
+    }
+    if ($ExpectedSignerSha256.ToUpperInvariant() -cne $stableSignerSha256) {
+        throw 'ExpectedSignerSha256 与 committed release identity 的 stable_signer_sha256 不一致。'
+    }
+}
+$connectionIdentity = Read-ReleaseConnectionIdentity -ReleaseChannel $Channel
 
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw 'JAVA_HOME 未配置，请通过 -JavaHome 指定 JDK 17。'
@@ -636,12 +673,12 @@ try {
         }
     }
     else {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyScript -JavaHome $JavaHome
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyScript -JavaHome $JavaHome -Channel $Channel
         if ($LASTEXITCODE -ne 0) {
             throw "四端验证失败，退出码：$LASTEXITCODE"
         }
     }
-    Assert-GeneratedConnectionIdentity -ConnectionIdentity $connectionIdentity
+    Assert-GeneratedConnectionIdentity -ConnectionIdentity $connectionIdentity -BuildTypeDirectory $buildTypeDirectory
 
     $aapt = Resolve-AndroidBuildTool -FileName 'aapt.exe'
     $apksigner = Resolve-AndroidBuildTool -FileName 'apksigner.bat'
@@ -652,34 +689,34 @@ try {
         [ordered]@{
             id = 'user'; name = '易运盈用户端'; shortName = '用户端'; audience = '普通用户'
             description = '聊天、动态、活动、商城与个人中心'; accent = 'blue'
-            source = 'app\build\outputs\apk\user\debug\app-user-debug.apk'
-            fileName = "yiyunying-user-v$($version.versionName)-debug.apk"
-            expectedPackage = 'xyz.jjmxg.yiyunying.user.debug'
-            expectedVersionName = "$($version.versionName)-user-debug"
+            source = "app\build\outputs\apk\user\$buildTypeDirectory\app-user-$buildTypeDirectory.apk"
+            fileName = "yiyunying-user-v$($version.versionName)$tagSuffix.apk"
+            expectedPackage = "xyz.jjmxg.yiyunying.user$packageDebugSuffix"
+            expectedVersionName = "$($version.versionName)-user$tagSuffix"
         },
         [ordered]@{
             id = 'admin'; name = '易运盈管理员'; shortName = '管理员'; audience = '管理员'
             description = '用户、内容、订单与运营功能管理'; accent = 'green'
-            source = 'app\build\outputs\apk\admin\debug\app-admin-debug.apk'
-            fileName = "yiyunying-admin-v$($version.versionName)-debug.apk"
-            expectedPackage = 'xyz.jjmxg.yiyunying.admin.debug'
-            expectedVersionName = "$($version.versionName)-admin-debug"
+            source = "app\build\outputs\apk\admin\$buildTypeDirectory\app-admin-$buildTypeDirectory.apk"
+            fileName = "yiyunying-admin-v$($version.versionName)$tagSuffix.apk"
+            expectedPackage = "xyz.jjmxg.yiyunying.admin$packageDebugSuffix"
+            expectedVersionName = "$($version.versionName)-admin$tagSuffix"
         },
         [ordered]@{
             id = 'authorized'; name = '易运盈授权平台'; shortName = '授权平台'; audience = '授权运营方'
             description = '授权应用、下级管理员与业务数据管理'; accent = 'amber'
-            source = 'app\build\outputs\apk\authorizedPlatform\debug\app-authorizedPlatform-debug.apk'
-            fileName = "yiyunying-authorized-platform-v$($version.versionName)-debug.apk"
-            expectedPackage = 'xyz.jjmxg.yiyunying.authorized.debug'
-            expectedVersionName = "$($version.versionName)-authorized-platform-debug"
+            source = "app\build\outputs\apk\authorizedPlatform\$buildTypeDirectory\app-authorizedPlatform-$buildTypeDirectory.apk"
+            fileName = "yiyunying-authorized-platform-v$($version.versionName)$tagSuffix.apk"
+            expectedPackage = "xyz.jjmxg.yiyunying.authorized$packageDebugSuffix"
+            expectedVersionName = "$($version.versionName)-authorized-platform$tagSuffix"
         },
         [ordered]@{
             id = 'owner'; name = '易运盈平台总控'; shortName = '平台总控'; audience = '平台所有者'
             description = '全平台应用、权限、财务与审计总控'; accent = 'charcoal'
-            source = 'app\build\outputs\apk\platformOwner\debug\app-platformOwner-debug.apk'
-            fileName = "yiyunying-platform-owner-v$($version.versionName)-debug.apk"
-            expectedPackage = 'xyz.jjmxg.yiyunying.platformowner.debug'
-            expectedVersionName = "$($version.versionName)-platform-owner-debug"
+            source = "app\build\outputs\apk\platformOwner\$buildTypeDirectory\app-platformOwner-$buildTypeDirectory.apk"
+            fileName = "yiyunying-platform-owner-v$($version.versionName)$tagSuffix.apk"
+            expectedPackage = "xyz.jjmxg.yiyunying.platformowner$packageDebugSuffix"
+            expectedVersionName = "$($version.versionName)-platform-owner$tagSuffix"
         }
     )
 
@@ -696,6 +733,7 @@ try {
             ExpectedVersionCode = $version.versionCode
             AaptPath = $aapt
             ApkSignerPath = $apksigner
+            ExpectedSignerSha256 = $ExpectedSignerSha256
         }
         $identity = Assert-Apk @apkArguments
 
@@ -767,11 +805,12 @@ try {
 
     $manifest = [ordered]@{
         schemaVersion = 4
+        channel = $Channel
         versionName = $version.versionName
         versionCode = $version.versionCode
         buildSourceCommit = $buildSourceCommit
         releaseEvidenceCommit = $null
-        releaseTag = "v$($version.versionName)-debug"
+        releaseTag = $expectedTag
         finalizationStatus = 'pending'
         releaseIdentitySha256 = $releaseIdentitySha256
         connectionIdentity = $connectionIdentity.evidence
@@ -819,12 +858,17 @@ try {
 
     Write-Host "Build 阶段产物已生成：$releaseDirectory"
     Write-Host "版本：$($version.versionName) ($($version.versionCode))"
+    Write-Host "通道：$Channel"
     Write-Host "Build 源码提交：$buildSourceCommit"
     Write-Host "Pending 发布清单 SHA-256：$pendingManifestSha256"
     Write-Host "下载根地址：$DownloadRootBase"
     Write-Host '四端 APK 的包名、包内版本、签名、体积与 SHA-256 已全部通过校验。'
-    Write-Host "请提交下载元数据与部署证据，再创建注释标签 v$($version.versionName)-debug 并运行 -Phase Finalize。"
-    Write-Host '提示：当前产物为 Debug 验证包，正式公开发布前必须改用受保护的生产签名。'
+    Write-Host "请提交下载元数据与部署证据，再创建注释标签 $expectedTag 并运行 -Phase Finalize。"
+    if ($isStable) {
+        Write-Host "Stable 已绑定受保护生产签名：$stableSignerSha256"
+    } else {
+        Write-Host '提示：当前产物为 Debug 验证包，不能作为正式 Release。'
+    }
 }
 catch {
     Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue

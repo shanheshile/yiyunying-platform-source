@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Yiyunying\Core;
 
+use Yiyunying\Services\MaintenanceWriteGuard;
+
 final class Router
 {
     private array $routes = [];
@@ -54,9 +56,14 @@ final class Router
                 }
             }
             $request->setAttribute('route_params', $params);
-            if (isset($params['app_id']) && ctype_digit((string) $params['app_id'])) {
-                $request->setAttribute('requested_app_id', (int) $params['app_id']);
+            if (array_key_exists('app_id', $params)) {
+                $rawAppId = (string) $params['app_id'];
+                if (!ctype_digit($rawAppId) || (int) $rawAppId <= 0) {
+                    throw new HttpException('应用标识格式错误', 0, 422);
+                }
+                $request->setAttribute('requested_app_id', (int) $rawAppId);
             }
+            MaintenanceWriteGuard::enforce($request, $params);
             $result = call_user_func($route['handler'], $request, $params);
             if (!$result instanceof ApiResponse) {
                 throw new \LogicException('路由处理器必须返回 ApiResponse');

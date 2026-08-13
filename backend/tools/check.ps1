@@ -125,6 +125,7 @@ $required = @(
     'tools\audit-default-credentials.php',
     'tools\test-default-credential-audit-contract.php',
     'tools\test-auth-session-revocation-contract.php',
+    'tools\test-maintenance-write-guard-contract.php',
     'tools\test-purchase-history-foreign-key-contract.php',
     'tools\test-catalog-private-migration-contract.php',
     'tools\test-upload-library-reference-guards.php',
@@ -404,6 +405,11 @@ exit($invalid === [] ? 0 : 1);
         throw "Auth/session revocation contract checks failed.`n$authSessionRevocationOutput"
     }
     Write-Host "Auth/session revocation contract checks: passed"
+    $maintenanceWriteGuardOutput = & $php.Source (Join-Path $root 'tools\test-maintenance-write-guard-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Maintenance write guard contract checks failed.`n$maintenanceWriteGuardOutput"
+    }
+    Write-Host "Maintenance write guard contract checks: passed"
     $purchaseHistoryOutput = & $php.Source (Join-Path $root 'tools\test-purchase-history-foreign-key-contract.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Purchase-history foreign-key contract checks failed.`n$purchaseHistoryOutput"

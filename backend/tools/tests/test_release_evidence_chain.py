@@ -24,6 +24,7 @@ VERIFIER_PATH = ROOT / "backend" / "tools" / "verify-production-release-ssh.py"
 RELEASE_PATH = ROOT / "android" / "tools" / "release.ps1"
 PACKAGE_PATH = ROOT / "scripts" / "package-project.ps1"
 VERSION_PATH = ROOT / "android" / "tools" / "version.ps1"
+VERIFY_PATH = ROOT / "android" / "tools" / "verify.ps1"
 
 
 def read(path: Path) -> str:
@@ -89,6 +90,26 @@ def run(
 
 
 class ReleaseEvidenceChainTest(unittest.TestCase):
+    def test_stable_verify_reuses_existing_debug_tests_and_release_outputs(self) -> None:
+        source = read(VERIFY_PATH)
+        for marker in (
+            "function Invoke-GradlePhase",
+            "--no-daemon --no-parallel --max-workers=1 --rerun-tasks @Tasks",
+            "foreach ($unitTestTask in $unitTestTasks)",
+            "@('clean', $unitTestTask)",
+            'Invoke-GradlePhase -Label "unit test: $unitTestTask" -Tasks $phaseTasks',
+            "foreach ($edition in $editions)",
+            'Invoke-GradlePhase -Label "$edition $buildType lint and assemble"',
+            "if ($LASTEXITCODE -ne 0)",
+        ):
+            self.assertIn(marker, source)
+        for edition in ("PlatformOwner", "AuthorizedPlatform", "Admin", "User"):
+            self.assertIn(f"'test{edition}DebugUnitTest'", source)
+            self.assertNotIn(f'"test{edition}${{buildType}}UnitTest"', source)
+        self.assertIn('"lint${edition}${buildType}"', source)
+        self.assertIn('"assemble${edition}${buildType}"', source)
+        self.assertNotIn("--rerun-tasks @tasks", source)
+
     def test_version_writers_use_lf_for_release_identity_and_version_evidence(self) -> None:
         source = read(VERSION_PATH)
         for marker in (
@@ -99,6 +120,62 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertNotIn("[Environment]::NewLine", source)
         self.assertNotIn("`r`n", source)
+    def test_version_set_preserves_committed_stable_signer_identity(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required")
+        signer = "6cf7b18af125a1d44e28feaee7a5c6d39ca0bbae89529ca43a8c200b21db9772"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "repository"
+            tools = repository / "android" / "tools"
+            tools.mkdir(parents=True)
+            (repository / "download-site").mkdir()
+            (repository / "backend" / "config").mkdir(parents=True)
+            shutil.copy2(VERSION_PATH, tools / "version.ps1")
+            (repository / "android" / "version.properties").write_text(
+                "VERSION_CODE=60\nVERSION_NAME=2.7.15\n",
+                encoding="utf-8",
+            )
+            (repository / "download-site" / "package.json").write_text(
+                json.dumps({"version": "2.7.15"}) + "\n",
+                encoding="utf-8",
+            )
+            identity_path = repository / "backend" / "config" / "release-identity.json"
+            identity_path.write_text(
+                json.dumps(
+                    {
+                        "version_name": "2.7.15",
+                        "version_code": 60,
+                        "stable_signer_sha256": signer.upper(),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(tools / "version.ps1"),
+                    "-Action",
+                    "set",
+                    "-VersionName",
+                    "2.8.0",
+                    "-VersionCode",
+                    "61",
+                    "-Json",
+                ],
+                repository,
+            )
+            self.assertIn('"versionName":"2.8.0"', result.stdout)
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            self.assertEqual(identity["version_name"], "2.8.0")
+            self.assertEqual(identity["version_code"], 61)
+            self.assertEqual(identity["stable_signer_sha256"], signer)
 
     def test_ssh_and_public_apk_verification_fail_closed(self) -> None:
         source = read(VERIFIER_PATH)
@@ -235,7 +312,10 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             "--untracked-files=all",
             "buildSourceCommit = $buildSourceCommit",
             "releaseEvidenceCommit = $null",
-            'releaseTag = "v$($version.versionName)-debug"',
+            "[ValidateSet('Debug', 'Stable')]",
+            "[string] $Channel = 'Debug'",
+            'releaseTag = $expectedTag',
+            "if ($Channel -eq 'Stable' -and $SkipVerification)",
             "finalizationStatus = 'pending'",
             "releaseIdentitySha256 = $releaseIdentitySha256",
             "Read-ReleaseConnectionIdentity",
@@ -499,7 +579,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
         source = read(PACKAGE_PATH)
         for marker in (
             "--untracked-files=all",
-            '$tag -ne "v$version-debug"',
+            '$tag -ne $expectedTagForChannel',
             "$mainCommit -ne $evidenceCommit",
             "$evidenceCommit -eq $buildCommit",
             "'merge-base', '--is-ancestor', $buildCommit, $evidenceCommit",
