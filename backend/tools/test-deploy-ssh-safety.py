@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 
 DEPLOY_PATH = Path(__file__).with_name("deploy-ssh.py")
@@ -50,6 +52,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
 
     def test_default_credential_audit_precedes_all_backup_and_maintenance_work(self) -> None:
         stage_guard = SOURCE.index("stage_backend + '/tools/audit-default-credentials.php'")
+        runtime = SOURCE.index('"runtime-dependency-preflight"')
         config = SOURCE.index('"application-config-preflight"')
         audit = SOURCE.index('"default-credential-read-only-audit"')
         backup_directory = SOURCE.index('"backup-directory"')
@@ -57,6 +60,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         maintenance_scope = SOURCE.index("maintenance_attempted = False")
         maintenance = SOURCE.index('"catalog-maintenance"')
         migration = SOURCE.index('f"database-migration-{index}"')
+        self.assertLess(stage_guard, runtime)
+        self.assertLess(runtime, config)
         self.assertLess(stage_guard, config)
         self.assertLess(config, audit)
         self.assertLess(audit, backup_directory)
@@ -68,6 +73,121 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             r'\"$PHP_BIN\" tools/audit-default-credentials.php',
             SOURCE,
         )
+
+    def test_runtime_dependency_preflight_is_strict_and_complete(self) -> None:
+        command = DEPLOY.runtime_dependency_preflight_command()
+        self.assertIn(f"PHP_BIN={DEPLOY.PHP82_BIN}", command)
+        self.assertIn('test -x "$PHP_BIN"', command)
+        self.assertIn('test ! -L "$PHP_BIN"', command)
+        self.assertNotIn("command -v php", command)
+        self.assertIn("PHP_VERSION_ID < 80200", command)
+        for extension in ("PDO", "pdo_mysql", "mbstring", "json", "hash"):
+            self.assertIn(extension, command)
+        for function in ("getimagesize", "disk_free_space", "hash_file", "json_encode"):
+            self.assertIn(function, command)
+        self.assertNotIn("fileinfo", command)
+        for tool in ("tar", "sha256sum", "gzip", "rsync", "curl"):
+            self.assertIn(tool, command)
+        self.assertIn(DEPLOY.MYSQL_BIN_FALLBACK, command)
+        self.assertIn(DEPLOY.MYSQLDUMP_BIN_FALLBACK, command)
+        self.assertIn(DEPLOY.PHP_FPM82_INIT_SCRIPT, command)
+        self.assertIn(DEPLOY.PHP_FPM82_SYSTEMD_SERVICE, command)
+
+        runtime = SOURCE.index('"runtime-dependency-preflight"')
+        for later_label in (
+            '"application-config-preflight"',
+            '"default-credential-read-only-audit"',
+            '"backup-directory"',
+            '"code-backup"',
+            '"catalog-maintenance"',
+            'f"database-migration-{index}"',
+            '"deploy-files"',
+        ):
+            self.assertLess(runtime, SOURCE.index(later_label))
+
+    def test_failed_runtime_preflight_never_enters_backup_or_maintenance(self) -> None:
+        labels: list[str] = []
+
+        def fake_run(_client: object, _command: str, label: str) -> str:
+            labels.append(label)
+            if label == "runtime-dependency-preflight":
+                raise RuntimeError("runtime dependency missing")
+            return ""
+
+        class FakeSftp:
+            def put(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeClient:
+            def load_host_keys(self, _path: str) -> None:
+                return None
+
+            def set_missing_host_key_policy(self, _policy: object) -> None:
+                return None
+
+            def connect(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            def get_transport(self) -> object:
+                key = SimpleNamespace(get_fingerprint=lambda: b"\x01\x02")
+                return SimpleNamespace(get_remote_server_key=lambda: key)
+
+            def open_sftp(self) -> FakeSftp:
+                return FakeSftp()
+
+            def close(self) -> None:
+                return None
+
+        fake_paramiko = SimpleNamespace(
+            SSHClient=FakeClient,
+            RejectPolicy=lambda: object(),
+        )
+        arguments = [
+            "deploy-ssh.py",
+            "--host", "example.invalid",
+            "--user", "deploy",
+            "--known-hosts", "known-hosts",
+            "--archive", "release.tar.gz",
+            "--remote-root", "/srv/yiyunying/backend",
+            "--release-version", "1.0.0",
+            "--release-identity", "identity.json",
+            "--build-source-commit", "a" * 40,
+            "--maintenance-command", "maintenance-enter",
+            "--maintenance-release-command", "maintenance-exit",
+            "--health-url", "https://example.invalid/api/health",
+            "--db-name", "app",
+            "--db-user", "app",
+        ]
+        for migration in DEPLOY.REQUIRED_RELEASE_MIGRATIONS:
+            arguments.extend(("--migration", migration))
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"YY_SSH_PASSWORD": "not-printed", "YY_DB_PASSWORD": "not-printed"},
+            ),
+            mock.patch.dict("sys.modules", {"paramiko": fake_paramiko}),
+            mock.patch("sys.argv", arguments),
+            mock.patch.object(os.path, "isfile", return_value=True),
+            mock.patch.object(
+                DEPLOY,
+                "validate_release_archive",
+                return_value=("b" * 64, "a" * 40),
+            ),
+            mock.patch.object(DEPLOY, "run", side_effect=fake_run),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "runtime dependency missing"):
+                DEPLOY.main()
+
+        self.assertEqual(
+            labels,
+            ["preflight", "archive-check", "stage-files", "runtime-dependency-preflight"],
+        )
+        self.assertNotIn("backup-directory", labels)
+        self.assertNotIn("catalog-maintenance", labels)
 
     def test_mutable_backups_are_taken_only_after_maintenance_stops_writes(self) -> None:
         uploads = SOURCE.index('"public-uploads-backup"')
@@ -141,11 +261,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertLess(gate_closed, deploy)
 
     def test_catalog_gate_php_and_data_round_trip_as_separate_shell_arguments(self) -> None:
-        php_bootstrap = (
-            "PHP_BIN=/www/server/php/82/bin/php; "
-            'if [ ! -x "$PHP_BIN" ]; then PHP_BIN=$(command -v php || true); fi; '
-            'test -n "$PHP_BIN"; '
-        )
+        php_bootstrap = DEPLOY.strict_php82_bootstrap()
         cases = (
             (("0", "false"), 29, "catalog-gate=false"),
             (("1", "true"), 30, "catalog-gate=true"),
@@ -220,10 +336,14 @@ class DeploySshSafetyContractTest(unittest.TestCase):
 
     def test_maintenance_can_stop_php_fpm_before_a_real_restart(self) -> None:
         self.assertIn("it may stop PHP-FPM", SOURCE)
-        self.assertIn("/etc/init.d/php-fpm-82 restart", SOURCE)
-        self.assertIn("/etc/init.d/php-fpm-82 start", SOURCE)
-        self.assertIn("systemctl restart php8.2-fpm", SOURCE)
-        self.assertIn("systemctl start php8.2-fpm", SOURCE)
+        self.assertIn('f"{quote(PHP_FPM82_INIT_SCRIPT)} restart', SOURCE)
+        self.assertIn('f"|| {quote(PHP_FPM82_INIT_SCRIPT)} start', SOURCE)
+        self.assertIn(
+            'f"then systemctl restart {quote(PHP_FPM82_SYSTEMD_SERVICE)}', SOURCE
+        )
+        self.assertIn(
+            'f"|| systemctl start {quote(PHP_FPM82_SYSTEMD_SERVICE)}', SOURCE
+        )
         self.assertNotIn("php-fpm-82 reload", SOURCE)
         restart = SOURCE.index('"php-start-or-restart"')
         migration = SOURCE.index('f"database-migration-{index}"')

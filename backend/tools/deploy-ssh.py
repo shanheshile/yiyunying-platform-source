@@ -27,9 +27,61 @@ REQUIRED_RELEASE_MIGRATIONS = (
     "database/migrations/upgrade_20260814_secure_mail_settings.sql",
 )
 
+PHP82_BIN = "/www/server/php/82/bin/php"
+MYSQL_BIN_FALLBACK = "/www/server/mysql/bin/mysql"
+MYSQLDUMP_BIN_FALLBACK = "/www/server/mysql/bin/mysqldump"
+PHP_FPM82_INIT_SCRIPT = "/etc/init.d/php-fpm-82"
+PHP_FPM82_SYSTEMD_SERVICE = "php8.2-fpm.service"
+
 
 def quote(value: str) -> str:
     return shlex.quote(value)
+
+
+def strict_php82_bootstrap(php_bin: str = PHP82_BIN) -> str:
+    """Select only the reviewed PHP 8.2 binary used by this deployment."""
+    return (
+        f"PHP_BIN={quote(php_bin)}; "
+        'test -x "$PHP_BIN"; '
+        'test ! -L "$PHP_BIN"; '
+    )
+
+
+def runtime_dependency_preflight_command(
+    php_bin: str = PHP82_BIN,
+    mysql_fallback: str = MYSQL_BIN_FALLBACK,
+    mysqldump_fallback: str = MYSQLDUMP_BIN_FALLBACK,
+    fpm_init_script: str = PHP_FPM82_INIT_SCRIPT,
+    fpm_systemd_service: str = PHP_FPM82_SYSTEMD_SERVICE,
+) -> str:
+    """Build the fail-closed production runtime dependency preflight."""
+    php_probe = (
+        'if (PHP_VERSION_ID < 80200) exit(40); '
+        'foreach (["PDO", "pdo_mysql", "mbstring", "json", "hash"] as $extension) { '
+        'if (!extension_loaded($extension)) exit(41); } '
+        'foreach (["getimagesize", "disk_free_space", "hash_file", "json_encode"] as $function) { '
+        'if (!function_exists($function)) exit(42); } '
+        'echo "runtime-dependencies-ready";'
+    )
+    return (
+        "set -e; "
+        + strict_php82_bootstrap(php_bin)
+        + 'for TOOL in tar sha256sum gzip rsync curl; do '
+        + 'command -v "$TOOL" >/dev/null 2>&1; done; '
+        + 'MYSQL_BIN=$(command -v mysql || true); '
+        + f'if [ -z "$MYSQL_BIN" ] && [ -x {quote(mysql_fallback)} ]; '
+        + f'then MYSQL_BIN={quote(mysql_fallback)}; fi; '
+        + 'test -n "$MYSQL_BIN"; test -x "$MYSQL_BIN"; '
+        + 'DUMP_BIN=$(command -v mysqldump || true); '
+        + f'if [ -z "$DUMP_BIN" ] && [ -x {quote(mysqldump_fallback)} ]; '
+        + f'then DUMP_BIN={quote(mysqldump_fallback)}; fi; '
+        + 'test -n "$DUMP_BIN"; test -x "$DUMP_BIN"; '
+        + f'if [ -x {quote(fpm_init_script)} ]; then :; '
+        + 'elif command -v systemctl >/dev/null 2>&1 '
+        + f'&& systemctl show -p LoadState --value {quote(fpm_systemd_service)} '
+        + '| grep -qx loaded; then :; else exit 43; fi; '
+        + f'"$PHP_BIN" -r {quote(php_probe)}'
+    )
 
 
 def catalog_gate_readback_command(
@@ -306,6 +358,11 @@ def main() -> int:
             f"&& test \"${{ACTUAL_IDENTITY_SHA256%% *}}\" = {quote(identity_sha256)}",
             "stage-files",
         )
+        run(
+            client,
+            runtime_dependency_preflight_command(),
+            "runtime-dependency-preflight",
+        )
         backup_excludes = [
             f"{remote_name}/.env",
             f"{remote_name}/storage/cache",
@@ -344,8 +401,8 @@ def main() -> int:
         dump_path_q = quote(backup_dir + "/database.sql.gz")
         db_backup = (
             "set -e; DUMP_BIN=$(command -v mysqldump || true); "
-            "if [ -z \"$DUMP_BIN\" ] && [ -x /www/server/mysql/bin/mysqldump ]; "
-            "then DUMP_BIN=/www/server/mysql/bin/mysqldump; fi; "
+            f"if [ -z \"$DUMP_BIN\" ] && [ -x {quote(MYSQLDUMP_BIN_FALLBACK)} ]; "
+            f"then DUMP_BIN={quote(MYSQLDUMP_BIN_FALLBACK)}; fi; "
             "test -n \"$DUMP_BIN\"; "
             f"MYSQL_PWD={db_password_q} \"$DUMP_BIN\" -h {db_host_q} -P {args.db_port} "
             f"-u {db_user_q} --single-transaction --quick --routines --triggers {database_q} > {dump_sql_q}; "
@@ -422,19 +479,15 @@ def main() -> int:
             'echo "configuration-ready";'
         )
         php_preflight = (
-            "PHP_BIN=/www/server/php/82/bin/php; "
-            "if [ ! -x \"$PHP_BIN\" ]; then PHP_BIN=$(command -v php || true); fi; "
-            "test -n \"$PHP_BIN\"; "
-            f"\"$PHP_BIN\" -r {quote(config_assertion)} {quote(stage_backend)} "
+            strict_php82_bootstrap()
+            + f"\"$PHP_BIN\" -r {quote(config_assertion)} {quote(stage_backend)} "
             f"{quote(args.db_name)} {quote(args.db_user)}"
         )
         run(client, php_preflight, "application-config-preflight")
 
         credential_audit = (
-            "PHP_BIN=/www/server/php/82/bin/php; "
-            "if [ ! -x \"$PHP_BIN\" ]; then PHP_BIN=$(command -v php || true); fi; "
-            "test -n \"$PHP_BIN\"; "
-            f"cd {quote(stage_backend)}; \"$PHP_BIN\" tools/audit-default-credentials.php"
+            strict_php82_bootstrap()
+            + f"cd {quote(stage_backend)}; \"$PHP_BIN\" tools/audit-default-credentials.php"
         )
         # Exit 0 is the only accepted result.  Exit 1 (known defaults found) or
         # 2 (audit could not read the live DB) stops before backup/maintenance,
@@ -463,8 +516,8 @@ def main() -> int:
         )
         restore_database = (
             "MYSQL_BIN=$(command -v mysql || true); "
-            "if [ -z \"$MYSQL_BIN\" ] && [ -x /www/server/mysql/bin/mysql ]; "
-            "then MYSQL_BIN=/www/server/mysql/bin/mysql; fi; "
+            f"if [ -z \"$MYSQL_BIN\" ] && [ -x {quote(MYSQL_BIN_FALLBACK)} ]; "
+            f"then MYSQL_BIN={quote(MYSQL_BIN_FALLBACK)}; fi; "
             "test -n \"$MYSQL_BIN\"; "
             f"gzip -t {dump_path_q}; "
             f"gzip -dc {dump_path_q} > {quote(backup_dir + '/database.restore.sql')}; "
@@ -475,12 +528,14 @@ def main() -> int:
         )
 
         restart = (
-            "if [ -x /etc/init.d/php-fpm-82 ]; then "
-            "/etc/init.d/php-fpm-82 restart >/dev/null 2>&1 "
-            "|| /etc/init.d/php-fpm-82 start >/dev/null 2>&1; "
-            "elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^php8.2-fpm'; "
-            "then systemctl restart php8.2-fpm >/dev/null 2>&1 "
-            "|| systemctl start php8.2-fpm >/dev/null 2>&1; "
+            f"if [ -x {quote(PHP_FPM82_INIT_SCRIPT)} ]; then "
+            f"{quote(PHP_FPM82_INIT_SCRIPT)} restart >/dev/null 2>&1 "
+            f"|| {quote(PHP_FPM82_INIT_SCRIPT)} start >/dev/null 2>&1; "
+            "elif command -v systemctl >/dev/null 2>&1 "
+            f"&& systemctl show -p LoadState --value {quote(PHP_FPM82_SYSTEMD_SERVICE)} "
+            "| grep -qx loaded; "
+            f"then systemctl restart {quote(PHP_FPM82_SYSTEMD_SERVICE)} >/dev/null 2>&1 "
+            f"|| systemctl start {quote(PHP_FPM82_SYSTEMD_SERVICE)} >/dev/null 2>&1; "
             "else exit 1; fi"
         )
         health_path = f"/tmp/yiyunying-health-{stamp}.json"
@@ -496,10 +551,8 @@ def main() -> int:
             f"HTTP_CODE=$(curl -sS --max-time 20 -o {quote(health_path)} "
             f"-w '%{{http_code}}' {quote(args.health_url)}); "
             'test "$HTTP_CODE" = "200"; '
-            "PHP_BIN=/www/server/php/82/bin/php; "
-            "if [ ! -x \"$PHP_BIN\" ]; then PHP_BIN=$(command -v php || true); fi; "
-            "test -n \"$PHP_BIN\"; "
-            f"\"$PHP_BIN\" -r {quote(health_assertion)} {quote(health_path)}; "
+            + strict_php82_bootstrap()
+            + f"\"$PHP_BIN\" -r {quote(health_assertion)} {quote(health_path)}; "
             f"rm -f {quote(health_path)}"
         )
 
@@ -517,18 +570,14 @@ def main() -> int:
             run(client, uploads_backup, "public-uploads-backup")
             run(client, db_backup, "database-backup")
 
-            catalog_php = (
-                "PHP_BIN=/www/server/php/82/bin/php; "
-                "if [ ! -x \"$PHP_BIN\" ]; then PHP_BIN=$(command -v php || true); fi; "
-                "test -n \"$PHP_BIN\"; "
-            )
+            catalog_php = strict_php82_bootstrap()
 
             for index, migration in enumerate(migrations, start=1):
                 migration_path = stage_backend + "/" + migration
                 migrate = (
                     "MYSQL_BIN=$(command -v mysql || true); "
-                    "if [ -z \"$MYSQL_BIN\" ] && [ -x /www/server/mysql/bin/mysql ]; "
-                    "then MYSQL_BIN=/www/server/mysql/bin/mysql; fi; "
+                    f"if [ -z \"$MYSQL_BIN\" ] && [ -x {quote(MYSQL_BIN_FALLBACK)} ]; "
+                    f"then MYSQL_BIN={quote(MYSQL_BIN_FALLBACK)}; fi; "
                     "test -n \"$MYSQL_BIN\"; "
                     f"test -f {quote(migration_path)}; "
                     f"MYSQL_PWD={db_password_q} \"$MYSQL_BIN\" -h {db_host_q} -P {args.db_port} "
