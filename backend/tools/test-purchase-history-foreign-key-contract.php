@@ -58,6 +58,7 @@ $installResources = tableBody($source['install'], 'resources');
 $installStoreApps = tableBody($source['install'], 'store_apps');
 $migrationStore = tableBody($source['migration'], 'store_app_purchases');
 $migration = normaliseSql($source['migration']);
+$migrationWhitespace = trim((string) preg_replace('/\s+/', ' ', $source['migration']));
 $deleteCategory = methodSlice($source['controller'], 'deleteCategory', 'resources');
 $deleteStoreCategory = methodSlice($source['controller'], 'deleteStoreCategory', 'storeApps');
 
@@ -127,6 +128,8 @@ $checks = [
         $replacementSymbolsAreUniqueAndPresent
         && substr_count($source['migration'], "REPLACE(@purchase_fk_name, '`', '``')") === 6
         && substr_count($source['migration'], "REPLACE(@category_fk_name, '`', '``')") === 2
+        && !str_contains($migrationWhitespace, "'`, ADD CONSTRAINT `', REPLACE(@purchase_fk_name")
+        && !str_contains($migrationWhitespace, "'`, ADD CONSTRAINT `', REPLACE(@category_fk_name")
         && str_contains($source['migration'], 'MariaDB can reject DROP FOREIGN KEY + ADD CONSTRAINT with the same symbol'),
     'migration has create missing and replacement definitions for every purchase role' =>
         substr_count($migration, $resourceSubjectShape) === 2
