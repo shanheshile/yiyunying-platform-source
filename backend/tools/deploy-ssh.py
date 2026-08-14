@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ import socket
 import sys
 import tarfile
 import time
+from typing import Any
 from urllib.parse import urlsplit
 
 # These migrations form one release gate.  In particular, 63 moves catalog
@@ -35,10 +37,88 @@ PHP_FPM82_INIT_SCRIPT = "/etc/init.d/php-fpm-82"
 PHP_FPM82_SYSTEMD_SERVICE = "php8.2-fpm.service"
 SSH_KEEPALIVE_SECONDS = 15
 REMOTE_COMMAND_TIMEOUT_SECONDS = 2 * 60 * 60
+SFTP_CHANNEL_TIMEOUT_SECONDS = 5 * 60
 
 
 def quote(value: str) -> str:
     return shlex.quote(value)
+
+
+def exception_type_label(exception: Exception) -> str:
+    label = re.sub(r"[^A-Za-z0-9_]", "", type(exception).__name__)[:64]
+    return label or "Exception"
+
+
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        raise RuntimeError(
+            f"archive-local-sha256 failed ({exception_type_label(exc)})"
+        ) from exc
+    return digest.hexdigest()
+
+
+def run_sftp_operation(
+    client: Any,
+    label: str,
+    operation: Callable[[Any], object],
+) -> None:
+    sftp = None
+    phase = "open"
+    failure: tuple[RuntimeError, Exception] | None = None
+    try:
+        sftp = client.open_sftp()
+        phase = "timeout-configure"
+        sftp.get_channel().settimeout(SFTP_CHANNEL_TIMEOUT_SECONDS)
+        phase = "transfer"
+        operation(sftp)
+    except (TimeoutError, socket.timeout) as exc:
+        failure = (
+            RuntimeError(
+                f"{label} timed out during {phase}; "
+                f"sftp-timeout={SFTP_CHANNEL_TIMEOUT_SECONDS}s"
+            ),
+            exc,
+        )
+    except Exception as exc:
+        failure = (
+            RuntimeError(
+                f"{label} failed during {phase} ({exception_type_label(exc)})"
+            ),
+            exc,
+        )
+    finally:
+        if sftp is not None:
+            try:
+                sftp.close()
+            except Exception as exc:
+                if failure is None:
+                    failure = (
+                        RuntimeError(
+                            f"{label} failed during close ({exception_type_label(exc)})"
+                        ),
+                        exc,
+                    )
+    if failure is not None:
+        raise failure[0] from failure[1]
+
+
+def archive_sha256_check_command(remote_archive: str, expected_sha256: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError("Expected archive SHA-256 must be lowercase hexadecimal")
+    return (
+        "set -e; "
+        f"test -s {quote(remote_archive)}; "
+        f"ACTUAL_ARCHIVE_SHA256=$(sha256sum {quote(remote_archive)}); "
+        f'test "${{ACTUAL_ARCHIVE_SHA256%% *}}" = {quote(expected_sha256)}'
+    )
 
 
 def strict_php82_bootstrap(php_bin: str = PHP82_BIN) -> str:
@@ -321,6 +401,7 @@ def main() -> int:
         raise RuntimeError("Maintenance entry and release commands must not be empty")
     args.remote_root = normalize_remote_root(args.remote_root)
     migrations = assert_required_release_migrations(args.migration)
+    archive_sha256 = sha256_file(args.archive)
     identity_sha256, build_source_commit = validate_release_archive(
         args.archive,
         args.release_identity,
@@ -368,12 +449,17 @@ def main() -> int:
             "preflight",
         )
 
-        sftp = client.open_sftp()
-        try:
-            sftp.put(args.archive, remote_archive, confirm=True)
-        finally:
-            sftp.close()
-        print("[upload] archive uploaded")
+        run_sftp_operation(
+            client,
+            "archive-upload",
+            lambda sftp: sftp.put(args.archive, remote_archive, confirm=False),
+        )
+        run(
+            client,
+            archive_sha256_check_command(remote_archive, archive_sha256),
+            "archive-sha256-check",
+        )
+        print("[upload] archive uploaded and SHA-256 verified")
 
         run(client, f"tar -tzf {quote(remote_archive)} >/dev/null", "archive-check")
         run(
@@ -471,12 +557,16 @@ def main() -> int:
                 ]
             ).encode("utf-8")
             remote_env_tmp = remote_env + f".tmp-{stamp}"
-            sftp = client.open_sftp()
-            try:
+
+            def upload_environment(sftp: Any) -> None:
                 sftp.putfo(io.BytesIO(env_content), remote_env_tmp, confirm=True)
                 sftp.chmod(remote_env_tmp, 0o640)
-            finally:
-                sftp.close()
+
+            run_sftp_operation(
+                client,
+                "environment-upload",
+                upload_environment,
+            )
             install_env = (
                 f"id -u {quote(args.runtime_user)} >/dev/null 2>&1; "
                 f"getent group {quote(args.runtime_group)} >/dev/null 2>&1; "

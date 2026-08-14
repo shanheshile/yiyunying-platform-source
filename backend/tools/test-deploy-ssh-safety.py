@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -128,6 +129,31 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertIn('ACTUAL_IDENTITY_SHA256=$(sha256sum', SOURCE)
         self.assertIn(r'test \"${{ACTUAL_IDENTITY_SHA256%% *}}\"', SOURCE)
 
+    def test_archive_sha256_is_precomputed_and_checked_without_echoing_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive = Path(temporary_directory) / "release.tar.gz"
+            archive.write_bytes(b"archive-fixture")
+            expected = hashlib.sha256(b"archive-fixture").hexdigest()
+            self.assertEqual(DEPLOY.sha256_file(str(archive)), expected)
+
+        command = DEPLOY.archive_sha256_check_command(
+            "/tmp/yiyunying-release.tar.gz",
+            expected,
+        )
+        self.assertIn("ACTUAL_ARCHIVE_SHA256=$(sha256sum", command)
+        self.assertIn(f'= {expected}', command)
+        self.assertNotIn("echo", command)
+        self.assertLess(
+            SOURCE.index('archive_sha256 = sha256_file(args.archive)'),
+            SOURCE.index('identity_sha256, build_source_commit = validate_release_archive('),
+        )
+        self.assertLess(
+            SOURCE.index('"archive-sha256-check"'),
+            SOURCE.index('"archive-check"'),
+        )
+        with self.assertRaisesRegex(ValueError, "lowercase hexadecimal"):
+            DEPLOY.archive_sha256_check_command("/tmp/release.tar.gz", "not-a-hash")
+
     def test_default_credential_audit_precedes_all_backup_and_maintenance_work(self) -> None:
         stage_guard = SOURCE.index("stage_backend + '/tools/audit-default-credentials.php'")
         runtime = SOURCE.index('"runtime-dependency-preflight"')
@@ -186,19 +212,37 @@ class DeploySshSafetyContractTest(unittest.TestCase):
     def test_failed_runtime_preflight_never_enters_backup_or_maintenance(self) -> None:
         labels: list[str] = []
         keepalive_intervals: list[int] = []
+        sftp_timeouts: list[int] = []
+        archive_confirms: list[bool] = []
 
         def fake_run(_client: object, _command: str, label: str) -> str:
             labels.append(label)
+            if label == "archive-sha256-check":
+                self.assertTrue(fake_sftp.closed)
             if label == "runtime-dependency-preflight":
                 raise RuntimeError("runtime dependency missing")
             return ""
 
+        class FakeSftpChannel:
+            def settimeout(self, timeout: int) -> None:
+                sftp_timeouts.append(timeout)
+
         class FakeSftp:
-            def put(self, *_args: object, **_kwargs: object) -> None:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def get_channel(self) -> FakeSftpChannel:
+                return FakeSftpChannel()
+
+            def put(self, *_args: object, **kwargs: object) -> None:
+                archive_confirms.append(bool(kwargs["confirm"]))
                 return None
 
             def close(self) -> None:
+                self.closed = True
                 return None
+
+        fake_sftp = FakeSftp()
 
         class FakeTransport:
             def is_active(self) -> bool:
@@ -226,7 +270,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
                 return transport
 
             def open_sftp(self) -> FakeSftp:
-                return FakeSftp()
+                return fake_sftp
 
             def close(self) -> None:
                 return None
@@ -267,6 +311,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
                 "validate_release_archive",
                 return_value=("b" * 64, "a" * 40),
             ),
+            mock.patch.object(DEPLOY, "sha256_file", return_value="c" * 64),
             mock.patch.object(DEPLOY, "run", side_effect=fake_run),
         ):
             with self.assertRaisesRegex(RuntimeError, "runtime dependency missing"):
@@ -274,12 +319,170 @@ class DeploySshSafetyContractTest(unittest.TestCase):
 
         self.assertEqual(
             labels,
-            ["preflight", "archive-check", "stage-files", "runtime-dependency-preflight"],
+            [
+                "preflight", "archive-sha256-check", "archive-check", "stage-files",
+                "runtime-dependency-preflight",
+            ],
         )
         self.assertEqual(DEPLOY.SSH_KEEPALIVE_SECONDS, 15)
         self.assertEqual(keepalive_intervals, [15])
+        self.assertEqual(DEPLOY.SFTP_CHANNEL_TIMEOUT_SECONDS, 300)
+        self.assertEqual(sftp_timeouts, [300])
+        self.assertEqual(archive_confirms, [False])
         self.assertNotIn("backup-directory", labels)
         self.assertNotIn("catalog-maintenance", labels)
+
+    def test_archive_hash_mismatch_closes_sftp_and_never_reaches_unpack_or_maintenance(self) -> None:
+        labels: list[str] = []
+        commands: dict[str, str] = {}
+        confirms: list[bool] = []
+
+        class FakeSftpChannel:
+            timeout: int | None = None
+
+            def settimeout(self, timeout: int) -> None:
+                self.timeout = timeout
+
+        channel = FakeSftpChannel()
+
+        class FakeSftp:
+            closed = False
+
+            def get_channel(self) -> FakeSftpChannel:
+                return channel
+
+            def put(self, *_args: object, **kwargs: object) -> None:
+                confirms.append(bool(kwargs["confirm"]))
+
+            def close(self) -> None:
+                self.closed = True
+
+        sftp = FakeSftp()
+
+        def fake_run(_client: object, command: str, label: str) -> str:
+            labels.append(label)
+            commands[label] = command
+            if label == "archive-sha256-check":
+                self.assertTrue(sftp.closed)
+                raise RuntimeError("archive-sha256-check failed (1)")
+            return ""
+
+        class FakeTransport:
+            def is_active(self) -> bool:
+                return True
+
+            def set_keepalive(self, _interval: int) -> None:
+                return None
+
+            def get_remote_server_key(self) -> object:
+                return SimpleNamespace(get_fingerprint=lambda: b"\x01\x02")
+
+        transport = FakeTransport()
+
+        class FakeClient:
+            def load_host_keys(self, _path: str) -> None:
+                return None
+
+            def set_missing_host_key_policy(self, _policy: object) -> None:
+                return None
+
+            def connect(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            def get_transport(self) -> FakeTransport:
+                return transport
+
+            def open_sftp(self) -> FakeSftp:
+                return sftp
+
+            def close(self) -> None:
+                return None
+
+        fake_paramiko = SimpleNamespace(SSHClient=FakeClient, RejectPolicy=lambda: object())
+        arguments = [
+            "deploy-ssh.py", "--host", "example.invalid", "--user", "deploy",
+            "--known-hosts", "known-hosts", "--archive", "release.tar.gz",
+            "--remote-root", "/srv/yiyunying/backend", "--release-version", "1.0.0",
+            "--release-identity", "identity.json", "--build-source-commit", "a" * 40,
+            "--maintenance-command", "maintenance-enter",
+            "--maintenance-release-command", "maintenance-exit",
+            "--health-url", "https://example.invalid/api/health",
+            "--db-name", "app", "--db-user", "app",
+        ]
+        for migration in DEPLOY.REQUIRED_RELEASE_MIGRATIONS:
+            arguments.extend(("--migration", migration))
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"YY_SSH_PASSWORD": "secret-ssh", "YY_DB_PASSWORD": "secret-db"},
+            ),
+            mock.patch.dict("sys.modules", {"paramiko": fake_paramiko}),
+            mock.patch("sys.argv", arguments),
+            mock.patch.object(os.path, "isfile", return_value=True),
+            mock.patch.object(DEPLOY, "sha256_file", return_value="c" * 64),
+            mock.patch.object(
+                DEPLOY, "validate_release_archive", return_value=("b" * 64, "a" * 40)
+            ),
+            mock.patch.object(DEPLOY, "run", side_effect=fake_run),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "archive-sha256-check failed"):
+                DEPLOY.main()
+
+        self.assertEqual(labels, ["preflight", "archive-sha256-check"])
+        self.assertEqual(confirms, [False])
+        self.assertEqual(channel.timeout, 300)
+        self.assertTrue(sftp.closed)
+        self.assertIn("c" * 64, commands["archive-sha256-check"])
+        for forbidden in (
+            "archive-check", "stage-files", "runtime-dependency-preflight",
+            "backup-directory", "catalog-maintenance",
+        ):
+            self.assertNotIn(forbidden, labels)
+
+    def test_sftp_failure_is_labeled_and_does_not_expose_exception_message(self) -> None:
+        class FakeChannel:
+            def settimeout(self, _timeout: int) -> None:
+                return None
+
+        class FakeSftp:
+            closed = False
+
+            def get_channel(self) -> FakeChannel:
+                return FakeChannel()
+
+            def close(self) -> None:
+                self.closed = True
+
+        sftp = FakeSftp()
+        client = SimpleNamespace(open_sftp=lambda: sftp)
+
+        def fail_with_sensitive_message(_sftp: object) -> None:
+            raise RuntimeError("password=must-not-leak remote=/secret/path")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"archive-upload failed during transfer \(RuntimeError\)",
+        ) as raised:
+            DEPLOY.run_sftp_operation(client, "archive-upload", fail_with_sensitive_message)
+
+        self.assertNotIn("must-not-leak", str(raised.exception))
+        self.assertNotIn("/secret/path", str(raised.exception))
+        self.assertTrue(sftp.closed)
+
+        sftp.closed = False
+
+        def fail_with_sensitive_timeout(_sftp: object) -> None:
+            raise TimeoutError("token=timeout-secret")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"archive-upload timed out during transfer; sftp-timeout=300s",
+        ) as timeout_raised:
+            DEPLOY.run_sftp_operation(client, "archive-upload", fail_with_sensitive_timeout)
+
+        self.assertNotIn("timeout-secret", str(timeout_raised.exception))
+        self.assertTrue(sftp.closed)
 
     def test_mutable_backups_are_taken_only_after_maintenance_stops_writes(self) -> None:
         uploads = SOURCE.index('"public-uploads-backup"')
