@@ -73,8 +73,33 @@ MAX_PATH_BYTES = 4096
 MAX_MEMBER_SIZE = 256 * 1024 * 1024
 EXECUTE_CONFIRMATION = "install-production-python-runtime-3.12.13"
 MAINTENANCE_CONFIRMATION = "python-runtime-install-and-rollback-reviewed"
+REMOTE_VALIDATE_CONFIRMATION = "validate-production-python-runtime-3.12.13"
 REMOTE_STAGE_RE = re.compile(
     r"^/tmp/\.yiyunying-python-runtime-3\.12\.13-([0-9a-f]{32})\.tar\.gz$"
+)
+REMOTE_VALIDATE_WORK_RE = re.compile(
+    r"^/tmp/\.yiyunying-python-runtime-validate-3\.12\.13-([0-9a-f]{32})$"
+)
+REMOTE_FAILURE_PHASES = frozenset(
+    {
+        "archive",
+        "parents",
+        "lock",
+        "extract",
+        "normalize",
+        "tree-audit",
+        "python-smoke",
+        "target-move",
+        "stable-switch",
+        "post-smoke",
+        "cleanup",
+    }
+)
+REMOTE_VALIDATE_FAILURE_PHASES = frozenset(
+    {"archive", "extract", "normalize", "tree-audit", "python-smoke", "cleanup"}
+)
+REMOTE_FAILURE_DIAGNOSTIC_RE = re.compile(
+    r"PYTHON_RUNTIME_FAILURE_PHASE=([a-z-]+);EXIT_CODE=([1-9][0-9]{0,2})"
 )
 FULL_SOURCE_REGULAR_MODES = {0o660, 0o664, 0o775}
 PROJECTED_SOURCE_REGULAR_MODES = {0o664, 0o775}
@@ -114,6 +139,40 @@ class ArtifactInspection:
     members: tuple[ProjectedMember, ...]
     derived_directories: tuple[str, ...]
     python_binary_sha256: str
+
+
+class RemotePhaseFailure(RuntimeError):
+    """A strictly authenticated remote failure phase and process status."""
+
+    def __init__(self, phase: str, status: int) -> None:
+        super().__init__(f"remote Python runtime phase {phase} failed with exit {status}")
+        self.phase = phase
+        self.status = status
+
+
+class RecoveryRequired(RuntimeError):
+    """A non-secret recovery record that can be safely augmented after cleanup."""
+
+    def __init__(
+        self,
+        reason: str,
+        identifiers: dict[str, Any],
+        cleanup_uncertainties: tuple[str, ...] = (),
+    ) -> None:
+        self.reason = reason
+        self.identifiers = dict(identifiers)
+        self.cleanup_uncertainties = tuple(cleanup_uncertainties)
+        message = (
+            "RECOVERY_REQUIRED: "
+            + reason
+            + "; recovery_identifiers="
+            + json.dumps(self.identifiers, sort_keys=True, separators=(",", ":"))
+        )
+        if self.cleanup_uncertainties:
+            message += "; cleanup_uncertainties=" + json.dumps(
+                self.cleanup_uncertainties, separators=(",", ":")
+            )
+        super().__init__(message)
 
 
 def sha256_stream(handle: BinaryIO) -> tuple[int, str]:
@@ -803,19 +862,72 @@ def run_remote(
     allowed: set[int] | None = None,
     timeout: int = REMOTE_COMMAND_TIMEOUT,
     emit_output: bool = True,
+    require_empty_stdout: bool = False,
     require_empty_stderr: bool = False,
 ) -> tuple[int, str]:
     accepted = {0} if allowed is None else allowed
-    _stdin, stdout, _stderr = client.exec_command(command, get_pty=False, timeout=timeout)
-    status, output, error = collect_channel(stdout.channel, timeout, password)
+    status, output, error = collect_remote_result(client, command, password, timeout)
     if status not in accepted:
         detail = error.strip() or output.strip() or "no diagnostic output"
         raise RuntimeError(f"{label} failed ({status}): {detail}")
-    if require_empty_stderr and error.strip():
-        raise RuntimeError(f"{label} returned unexpected stderr: {error.strip()}")
+    if require_empty_stdout and output:
+        raise RuntimeError(f"{label} returned unexpected stdout")
+    if require_empty_stderr and error:
+        raise RuntimeError(f"{label} returned unexpected stderr")
     if emit_output and output.strip():
         print(output.strip())
     return status, output
+
+
+def collect_remote_result(
+    client: Any, command: str, password: str, timeout: int = REMOTE_COMMAND_TIMEOUT
+) -> tuple[int, str, str]:
+    """Run one command without interpreting or emitting its bounded result."""
+    _stdin, stdout, _stderr = client.exec_command(command, get_pty=False, timeout=timeout)
+    return collect_channel(stdout.channel, timeout, password)
+
+
+def parse_remote_failure_diagnostic(
+    error: str,
+    status: int,
+    allowed_phases: frozenset[str] = REMOTE_FAILURE_PHASES,
+) -> str:
+    """Accept only the one-line, allowlisted remote failure protocol."""
+    if status < 1 or status > 255:
+        raise RuntimeError("remote failure status is outside the strict protocol")
+    lines = error.splitlines()
+    if len(lines) != 1 or not lines[0]:
+        raise RuntimeError("remote failure diagnostic must contain exactly one line")
+    match = REMOTE_FAILURE_DIAGNOSTIC_RE.fullmatch(lines[0])
+    if match is None:
+        raise RuntimeError("remote failure diagnostic does not match the strict protocol")
+    phase = match.group(1)
+    reported_status = int(match.group(2))
+    if phase not in allowed_phases:
+        raise RuntimeError("remote failure diagnostic contains an unknown phase")
+    if reported_status != status:
+        raise RuntimeError("remote failure diagnostic exit code does not match SSH status")
+    return phase
+
+
+def run_remote_phased(
+    client: Any,
+    command: str,
+    label: str,
+    password: str,
+    timeout: int = REMOTE_COMMAND_TIMEOUT,
+    allowed_phases: frozenset[str] = REMOTE_FAILURE_PHASES,
+) -> str:
+    """Run an install/validation command with a non-secret failure protocol."""
+    status, output, error = collect_remote_result(client, command, password, timeout)
+    if status == 0:
+        if error:
+            raise RuntimeError(f"{label} returned unexpected diagnostic output")
+        return output
+    if output:
+        raise RuntimeError(f"{label} returned unexpected failure output")
+    phase = parse_remote_failure_diagnostic(error, status, allowed_phases)
+    raise RemotePhaseFailure(phase, status)
 
 
 def validate_known_hosts(path: Path) -> Path:
@@ -877,6 +989,43 @@ for index in range(e_phnum):
     if p_type in (2, 3): raise SystemExit(23)
 """
     return "exec(" + repr(source) + ")"
+
+
+def remote_tree_and_smoke_functions() -> str:
+    """One Bash implementation shared by install and remote validation."""
+    return r'''audit_tree() {
+  local root="$1" found
+  if ! test -d "$root" || test -L "$root"; then return 1; fi
+  if ! found=$(stat -c '%a|%U|%G' -- "$root"); then return 1; fi
+  if [ "$found" != '755|root|root' ]; then return 1; fi
+  if ! found=$(find "$root" -xdev \( ! -user root -o ! -group root \) -print -quit); then return 1; fi
+  if test -n "$found"; then return 1; fi
+  if ! found=$(find "$root" -xdev ! -type l -perm /022 -print -quit); then return 1; fi
+  if test -n "$found"; then return 1; fi
+  if ! found=$(find "$root" -xdev ! -type l -perm /7000 -print -quit); then return 1; fi
+  if test -n "$found"; then return 1; fi
+  if ! found=$(find "$root" -xdev -type f -links +1 -print -quit); then return 1; fi
+  if test -n "$found"; then return 1; fi
+  if ! found=$(find "$root" -xdev ! -type f ! -type d ! -type l -print -quit); then return 1; fi
+  if test -n "$found"; then return 1; fi
+  if ! find "$root" -xdev -type l -exec /bin/bash --noprofile --norc -c '
+    root=$1; shift
+    for link do
+      if ! resolved=$(readlink -f -- "$link"); then exit 1; fi
+      case "$resolved" in "$root"/*) ;; *) exit 1;; esac
+      test -e "$resolved" || exit 1
+    done
+  ' audit-python-links "$root" {} +; then return 1; fi
+}
+
+python_smoke() {
+  local executable="$1" expected_root="$2" resolved
+  if ! test -x "$executable"; then return 1; fi
+  if ! resolved=$(readlink -f -- "$executable"); then return 1; fi
+  case "$resolved" in "$expected_root"/*) ;; *) return 1;; esac
+  env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    "$executable" -I -S -B -c "$SMOKE_CODE" </dev/null >/dev/null 2>&1
+}'''
 
 
 def bash_command(script: str, arguments: tuple[str, ...] = ()) -> str:
@@ -1047,6 +1196,8 @@ def preflight_command() -> str:
 def remote_install_script() -> str:
     template = r'''set -Eeuo pipefail
 export LC_ALL=C LANG=C
+exec 3>&1 4>&2
+exec >/dev/null 2>&1
 ARCHIVE="$1"
 PAYLOAD_SIZE="$2"
 PAYLOAD_SHA="$3"
@@ -1064,10 +1215,14 @@ WORK="$RUNTIME_ROOT/.stage-$VERSION_DIR-$TOKEN"
 LINK_STAGE="/usr/local/bin/.python3.yiyunying-$TOKEN"
 ROLLBACK_LINK="/usr/local/bin/.python3.rollback-$TOKEN"
 LOCK_HELD=0
+WORK_HELD=0
+LINK_STAGE_HELD=0
+ROLLBACK_LINK_HELD=0
 SWITCHED=0
 PREVIOUS_KIND=missing
 PREVIOUS_TARGET=''
 REPEAT=false
+PHASE=archive
 
 fail() { return "$1"; }
 
@@ -1081,39 +1236,7 @@ validate_root_directory() {
   if ! test $((0$mode & 022)) -eq 0; then return 1; fi
 }
 
-audit_tree() {
-  local root="$1" found
-  if ! test -d "$root" || test -L "$root"; then return 1; fi
-  if ! found=$(stat -c '%a|%U|%G' -- "$root"); then return 1; fi
-  if [ "$found" != '755|root|root' ]; then return 1; fi
-  if ! found=$(find "$root" -xdev \( ! -user root -o ! -group root \) -print -quit); then return 1; fi
-  if test -n "$found"; then return 1; fi
-  if ! found=$(find "$root" -xdev ! -type l -perm /022 -print -quit); then return 1; fi
-  if test -n "$found"; then return 1; fi
-  if ! found=$(find "$root" -xdev ! -type l -perm /7000 -print -quit); then return 1; fi
-  if test -n "$found"; then return 1; fi
-  if ! found=$(find "$root" -xdev -type f -links +1 -print -quit); then return 1; fi
-  if test -n "$found"; then return 1; fi
-  if ! found=$(find "$root" -xdev ! -type f ! -type d ! -type l -print -quit); then return 1; fi
-  if test -n "$found"; then return 1; fi
-  if ! find "$root" -xdev -type l -exec /bin/bash --noprofile --norc -c '
-    root=$1; shift
-    for link do
-      if ! resolved=$(readlink -f -- "$link"); then exit 1; fi
-      case "$resolved" in "$root"/*) ;; *) exit 1;; esac
-      test -e "$resolved" || exit 1
-    done
-  ' audit-python-links "$root" {} +; then return 1; fi
-}
-
-python_smoke() {
-  local executable="$1" expected_root="$2" resolved
-  if ! test -x "$executable"; then return 1; fi
-  if ! resolved=$(readlink -f -- "$executable"); then return 1; fi
-  case "$resolved" in "$expected_root"/*) ;; *) return 1;; esac
-  env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
-    "$executable" -I -S -B -c "$SMOKE_CODE" </dev/null >/dev/null 2>&1
-}
+@VALIDATION_FUNCTIONS@
 
 validate_stable_target() {
   local target="$1" version suffix root
@@ -1173,12 +1296,15 @@ cleanup_owned_link() {
 
 cleanup_work() {
   local state
+  if [ "$WORK_HELD" -eq 0 ]; then return 0; fi
   if [ ! -e "$WORK" ] && [ ! -L "$WORK" ]; then return 0; fi
   if ! test -d "$WORK" || test -L "$WORK"; then return 1; fi
   if ! state=$(stat -c '%a|%U|%G' -- "$WORK"); then return 1; fi
   case "$state" in '700|root|root'|'755|root|root') ;; *) return 1;; esac
   case "$WORK" in "$RUNTIME_ROOT"/.stage-"$VERSION_DIR"-"$TOKEN") ;; *) return 1;; esac
-  rm -rf -- "$WORK"
+  rm -rf -- "$WORK" || return 1
+  if [ -e "$WORK" ] || [ -L "$WORK" ]; then return 1; fi
+  WORK_HELD=0
 }
 
 release_lock() {
@@ -1203,8 +1329,10 @@ rollback_stable() {
   if [ "$PREVIOUS_KIND" = link ]; then
     validate_stable_target "$PREVIOUS_TARGET" || return 1
     (umask 077; ln -s -- "$PREVIOUS_TARGET" "$ROLLBACK_LINK") || return 1
+    ROLLBACK_LINK_HELD=1
     chown -h root:root -- "$ROLLBACK_LINK" || return 1
     mv -Tf -- "$ROLLBACK_LINK" "$STABLE" || return 1
+    ROLLBACK_LINK_HELD=0
     if ! test -L "$STABLE"; then return 1; fi
     if ! current=$(readlink -- "$STABLE"); then return 1; fi
     if [ "$current" != "$PREVIOUS_TARGET" ]; then return 1; fi
@@ -1217,49 +1345,64 @@ rollback_stable() {
 }
 
 on_error() {
-  local status=$?
+  local status=$? failure_phase="$PHASE"
   trap - ERR INT TERM HUP
+  if [ "$status" -eq 0 ]; then status=130; fi
   if ! rollback_stable; then
-    printf 'RECOVERY_REQUIRED=python-runtime-stable-rollback\n' >&2
+    failure_phase=cleanup
     status=90
   fi
-  if ! cleanup_owned_link "$LINK_STAGE" "$TARGET/bin/python3"; then
-    printf 'RECOVERY_REQUIRED=python-runtime-link-stage:%s\n' "$LINK_STAGE" >&2
-    status=91
+  if [ "$LINK_STAGE_HELD" -eq 1 ]; then
+    if ! cleanup_owned_link "$LINK_STAGE" "$TARGET/bin/python3"; then
+      failure_phase=cleanup
+      status=91
+    else
+      LINK_STAGE_HELD=0
+    fi
   fi
-  if ! cleanup_owned_link "$ROLLBACK_LINK" "$PREVIOUS_TARGET"; then
-    printf 'RECOVERY_REQUIRED=python-runtime-rollback-link:%s\n' "$ROLLBACK_LINK" >&2
-    status=92
+  if [ "$ROLLBACK_LINK_HELD" -eq 1 ]; then
+    if ! cleanup_owned_link "$ROLLBACK_LINK" "$PREVIOUS_TARGET"; then
+      failure_phase=cleanup
+      status=92
+    else
+      ROLLBACK_LINK_HELD=0
+    fi
   fi
   if ! cleanup_work; then
-    printf 'RECOVERY_REQUIRED=python-runtime-work-stage:%s\n' "$WORK" >&2
+    failure_phase=cleanup
     status=93
   fi
   if ! release_lock; then
-    printf 'RECOVERY_REQUIRED=python-runtime-lock:%s\n' "$LOCK" >&2
+    failure_phase=cleanup
     status=94
   fi
+  case "$failure_phase" in
+    archive|parents|lock|extract|normalize|tree-audit|python-smoke|target-move|stable-switch|post-smoke|cleanup) ;;
+    *) failure_phase=cleanup; status=95;;
+  esac
+  printf 'PYTHON_RUNTIME_FAILURE_PHASE=%s;EXIT_CODE=%s\n' "$failure_phase" "$status" >&4
   exit "$status"
 }
 trap on_error ERR INT TERM HUP
 
-case "$TOKEN" in ''|*[!0-9a-f]* ) exit 20;; esac
+case "$TOKEN" in ''|*[!0-9a-f]* ) fail 20;; esac
 test "${#TOKEN}" -eq 32
-case "$PAYLOAD_SHA" in *[!0-9a-f]*|'') exit 21;; esac
+case "$PAYLOAD_SHA" in *[!0-9a-f]*|'') fail 21;; esac
 test "${#PAYLOAD_SHA}" -eq 64
-case "$PAYLOAD_SIZE" in ''|*[!0-9]*) exit 22;; esac
+case "$PAYLOAD_SIZE" in ''|*[!0-9]*) fail 22;; esac
 test "$PAYLOAD_SIZE" -gt 0 && test "$PAYLOAD_SIZE" -lt 536870912
 test -f "$ARCHIVE" && test ! -L "$ARCHIVE"
-if ! archive_state=$(stat -c '%a|%U|%G|%s' -- "$ARCHIVE"); then exit 23; fi
-if [ "$archive_state" != "600|root|root|$PAYLOAD_SIZE" ]; then exit 23; fi
-if ! archive_hash=$(sha256sum -- "$ARCHIVE" | awk 'NR==1 {print $1}'); then exit 24; fi
-if [ "$archive_hash" != "$PAYLOAD_SHA" ]; then exit 24; fi
-if ! identity=$(id -u); then exit 25; fi
-if [ "$identity" -ne 0 ]; then exit 25; fi
-if ! kernel=$(uname -s); then exit 26; fi
-if [ "$kernel" != Linux ]; then exit 26; fi
-if ! machine=$(uname -m); then exit 27; fi
-if [ "$machine" != x86_64 ]; then exit 27; fi
+if ! archive_state=$(stat -c '%a|%U|%G|%s' -- "$ARCHIVE"); then fail 23; fi
+if [ "$archive_state" != "600|root|root|$PAYLOAD_SIZE" ]; then fail 23; fi
+if ! archive_hash=$(sha256sum -- "$ARCHIVE" | awk 'NR==1 {print $1}'); then fail 24; fi
+if [ "$archive_hash" != "$PAYLOAD_SHA" ]; then fail 24; fi
+if ! identity=$(id -u); then fail 25; fi
+if [ "$identity" -ne 0 ]; then fail 25; fi
+if ! kernel=$(uname -s); then fail 26; fi
+if [ "$kernel" != Linux ]; then fail 26; fi
+if ! machine=$(uname -m); then fail 27; fi
+if [ "$machine" != x86_64 ]; then fail 27; fi
+PHASE=parents
 validate_root_directory /
 validate_root_directory /opt
 validate_root_directory /usr
@@ -1275,9 +1418,10 @@ if [ ! -e "$RUNTIME_ROOT" ] && [ ! -L "$RUNTIME_ROOT" ]; then
   install -d -m 0755 -o root -g root -- "$RUNTIME_ROOT"
 else
   validate_root_directory "$RUNTIME_ROOT"
-  if ! runtime_state=$(stat -c '%a|%U|%G' -- "$RUNTIME_ROOT"); then exit 28; fi
-  if [ "$runtime_state" != '755|root|root' ]; then exit 28; fi
+  if ! runtime_state=$(stat -c '%a|%U|%G' -- "$RUNTIME_ROOT"); then fail 28; fi
+  if [ "$runtime_state" != '755|root|root' ]; then fail 28; fi
 fi
+PHASE=lock
 test ! -e "$LOCK" && test ! -L "$LOCK"
 (umask 077; mkdir -- "$LOCK")
 LOCK_HELD=1
@@ -1294,28 +1438,39 @@ if [ -e "$STABLE" ] || [ -L "$STABLE" ]; then
 fi
 
 if [ -e "$TARGET" ] || [ -L "$TARGET" ]; then
+  PHASE=tree-audit
   audit_tree "$TARGET"
+  PHASE=python-smoke
   python_smoke "$TARGET/bin/python3" "$TARGET"
   REPEAT=true
 else
+  PHASE=extract
   test ! -e "$WORK" && test ! -L "$WORK"
   (umask 077; mkdir -- "$WORK")
+  WORK_HELD=1
   chown root:root -- "$WORK"; chmod 0700 -- "$WORK"
   tar -xzf "$ARCHIVE" -C "$WORK" --no-same-owner --same-permissions
+  PHASE=normalize
   chown -R root:root -- "$WORK"
   find "$WORK" -xdev -type l -exec chown -h root:root -- {} +
   find "$WORK" -xdev -type d -exec chmod 0755 -- {} +
   find "$WORK" -xdev -type f -perm /111 -exec chmod 0755 -- {} +
   find "$WORK" -xdev -type f ! -perm /111 -exec chmod 0644 -- {} +
+  PHASE=tree-audit
   audit_tree "$WORK"
+  PHASE=python-smoke
   python_smoke "$WORK/bin/python3" "$WORK"
+  PHASE=target-move
   test ! -e "$TARGET" && test ! -L "$TARGET"
   mv -T -- "$WORK" "$TARGET"
-  WORK="$RUNTIME_ROOT/.stage-$VERSION_DIR-$TOKEN-consumed"
+  WORK_HELD=0
+  PHASE=tree-audit
   audit_tree "$TARGET"
+  PHASE=python-smoke
   python_smoke "$TARGET/bin/python3" "$TARGET"
 fi
 
+PHASE=stable-switch
 if [ "$PREVIOUS_KIND" = link ]; then
   if ! test -L "$STABLE"; then fail 30; fi
   if ! stable_target=$(readlink -- "$STABLE"); then fail 30; fi
@@ -1330,17 +1485,20 @@ if [ "$PREVIOUS_KIND" != link ] || [ "$PREVIOUS_TARGET" != "$TARGET/bin/python3"
   ensure_previous_receipt "$PREVIOUS_VALUE"
   test ! -e "$LINK_STAGE" && test ! -L "$LINK_STAGE"
   (umask 077; ln -s -- "$TARGET/bin/python3" "$LINK_STAGE")
+  LINK_STAGE_HELD=1
   chown -h root:root -- "$LINK_STAGE"
   if ! link_state=$(stat -c '%U|%G|%F' -- "$LINK_STAGE"); then fail 31; fi
   if [ "$link_state" != 'root|root|symbolic link' ]; then fail 31; fi
-  mv -Tf -- "$LINK_STAGE" "$STABLE"
   SWITCHED=1
+  mv -Tf -- "$LINK_STAGE" "$STABLE"
+  LINK_STAGE_HELD=0
 fi
 if ! test -L "$STABLE"; then fail 32; fi
 if ! stable_target=$(readlink -- "$STABLE"); then fail 32; fi
 if [ "$stable_target" != "$TARGET/bin/python3" ]; then fail 32; fi
 if ! stable_state=$(stat -c '%U|%G|%F' -- "$STABLE"); then fail 32; fi
 if [ "$stable_state" != 'root|root|symbolic link' ]; then fail 32; fi
+PHASE=post-smoke
 audit_tree "$TARGET"
 python_smoke "$STABLE" "$TARGET"
 
@@ -1353,13 +1511,20 @@ if [ -e "$RECEIPT" ] || [ -L "$RECEIPT" ]; then
   read_previous_receipt >/dev/null
   RECEIPT_VALUE="$RECEIPT"
 fi
-cleanup_owned_link "$LINK_STAGE" "$TARGET/bin/python3"
-cleanup_owned_link "$ROLLBACK_LINK" "$PREVIOUS_TARGET"
+PHASE=cleanup
+if [ "$LINK_STAGE_HELD" -eq 1 ]; then
+  cleanup_owned_link "$LINK_STAGE" "$TARGET/bin/python3"
+  LINK_STAGE_HELD=0
+fi
+if [ "$ROLLBACK_LINK_HELD" -eq 1 ]; then
+  cleanup_owned_link "$ROLLBACK_LINK" "$PREVIOUS_TARGET"
+  ROLLBACK_LINK_HELD=0
+fi
 cleanup_work
 release_lock
 trap - ERR INT TERM HUP
 printf '{"PYTHON_RUNTIME_INSTALL":"pass","artifact_sha256":"%s","payload_sha256":"%s","platform":"linux/amd64","previous":"%s","repeat":%s,"rollback_receipt":"%s","stable":"%s","switched":%s,"target":"%s","version":"%s"}\n' \
-  "$ARTIFACT_SHA" "$PAYLOAD_SHA" "$PREVIOUS_VALUE" "$REPEAT" "$RECEIPT_VALUE" "$STABLE" "$SWITCH_VALUE" "$TARGET" "$VERSION"
+  "$ARTIFACT_SHA" "$PAYLOAD_SHA" "$PREVIOUS_VALUE" "$REPEAT" "$RECEIPT_VALUE" "$STABLE" "$SWITCH_VALUE" "$TARGET" "$VERSION" >&3
 '''
     return (
         template.replace("@RUNTIME_ROOT@", shlex.quote(RUNTIME_ROOT))
@@ -1371,6 +1536,108 @@ printf '{"PYTHON_RUNTIME_INSTALL":"pass","artifact_sha256":"%s","payload_sha256"
         .replace("@VERSION_DIR@", shlex.quote(VERSION_DIRECTORY))
         .replace("@ARTIFACT_SHA@", shlex.quote(ARTIFACT_SHA256))
         .replace("@SMOKE_CODE@", shlex.quote(python_smoke_code()))
+        .replace("@VALIDATION_FUNCTIONS@", remote_tree_and_smoke_functions())
+    )
+
+
+def remote_validate_script() -> str:
+    """Validate the exact payload under /tmp without touching install state."""
+    template = r'''set -Eeuo pipefail
+export LC_ALL=C LANG=C
+exec 3>&1 4>&2
+exec >/dev/null 2>&1
+ARCHIVE="$1"
+PAYLOAD_SIZE="$2"
+PAYLOAD_SHA="$3"
+TOKEN="$4"
+VERSION=@VERSION@
+SMOKE_CODE=@SMOKE_CODE@
+WORK="/tmp/.yiyunying-python-runtime-validate-$VERSION-$TOKEN"
+WORK_HELD=0
+PHASE=archive
+
+fail() { return "$1"; }
+
+@VALIDATION_FUNCTIONS@
+
+cleanup_validate_work() {
+  local state
+  if [ "$WORK_HELD" -eq 0 ]; then return 0; fi
+  if [ ! -e "$WORK" ] && [ ! -L "$WORK" ]; then return 0; fi
+  case "$WORK" in /tmp/.yiyunying-python-runtime-validate-"$VERSION"-"$TOKEN") ;; *) return 1;; esac
+  if ! test -d "$WORK" || test -L "$WORK"; then return 1; fi
+  if ! state=$(stat -c '%a|%U|%G' -- "$WORK"); then return 1; fi
+  case "$state" in '700|root|root'|'755|root|root') ;; *) return 1;; esac
+  rm -rf -- "$WORK" || return 1
+  if [ -e "$WORK" ] || [ -L "$WORK" ]; then return 1; fi
+  WORK_HELD=0
+}
+
+on_error() {
+  local status=$? failure_phase="$PHASE"
+  trap - ERR INT TERM HUP
+  if [ "$status" -eq 0 ]; then status=130; fi
+  if ! cleanup_validate_work; then
+    failure_phase=cleanup
+    status=93
+  fi
+  case "$failure_phase" in
+    archive|extract|normalize|tree-audit|python-smoke|cleanup) ;;
+    *) failure_phase=cleanup; status=95;;
+  esac
+  printf 'PYTHON_RUNTIME_FAILURE_PHASE=%s;EXIT_CODE=%s\n' "$failure_phase" "$status" >&4
+  exit "$status"
+}
+trap on_error ERR INT TERM HUP
+
+case "$TOKEN" in ''|*[!0-9a-f]* ) fail 20;; esac
+test "${#TOKEN}" -eq 32
+case "$PAYLOAD_SHA" in *[!0-9a-f]*|'') fail 21;; esac
+test "${#PAYLOAD_SHA}" -eq 64
+case "$PAYLOAD_SIZE" in ''|*[!0-9]*) fail 22;; esac
+test "$PAYLOAD_SIZE" -gt 0 && test "$PAYLOAD_SIZE" -lt 536870912
+test -f "$ARCHIVE" && test ! -L "$ARCHIVE"
+if ! archive_state=$(stat -c '%a|%U|%G|%s' -- "$ARCHIVE"); then fail 23; fi
+if [ "$archive_state" != "600|root|root|$PAYLOAD_SIZE" ]; then fail 23; fi
+if ! archive_hash=$(sha256sum -- "$ARCHIVE" | awk 'NR==1 {print $1}'); then fail 24; fi
+if [ "$archive_hash" != "$PAYLOAD_SHA" ]; then fail 24; fi
+if ! identity=$(id -u); then fail 25; fi
+if [ "$identity" -ne 0 ]; then fail 25; fi
+if ! kernel=$(uname -s); then fail 26; fi
+if [ "$kernel" != Linux ]; then fail 26; fi
+if ! machine=$(uname -m); then fail 27; fi
+if [ "$machine" != x86_64 ]; then fail 27; fi
+test -d /tmp && test ! -L /tmp
+
+PHASE=extract
+test ! -e "$WORK" && test ! -L "$WORK"
+(umask 077; mkdir -- "$WORK")
+WORK_HELD=1
+chown root:root -- "$WORK"
+chmod 0700 -- "$WORK"
+tar -xzf "$ARCHIVE" -C "$WORK" --no-same-owner --same-permissions
+
+PHASE=normalize
+chown -R root:root -- "$WORK"
+find "$WORK" -xdev -type l -exec chown -h root:root -- {} +
+find "$WORK" -xdev -type d -exec chmod 0755 -- {} +
+find "$WORK" -xdev -type f -perm /111 -exec chmod 0755 -- {} +
+find "$WORK" -xdev -type f ! -perm /111 -exec chmod 0644 -- {} +
+
+PHASE=tree-audit
+audit_tree "$WORK"
+PHASE=python-smoke
+python_smoke "$WORK/bin/python3" "$WORK"
+PHASE=cleanup
+cleanup_validate_work
+trap - ERR INT TERM HUP
+printf '{"PYTHON_RUNTIME_REMOTE_VALIDATE":"pass","payload_sha256":"%s","platform":"linux/amd64","version":"%s"}\n' \
+  "$PAYLOAD_SHA" "$VERSION" >&3
+'''
+    return (
+        template.replace("@VERSION@", shlex.quote(VERSION))
+        .replace("@SMOKE_CODE@", shlex.quote(python_smoke_code()))
+        .replace("@VALIDATION_FUNCTIONS@", remote_tree_and_smoke_functions())
     )
 
 
@@ -1392,6 +1659,28 @@ def installer_command(remote_stage: str, payload: dict[str, Any]) -> str:
     )
 
 
+def remote_validate_command(remote_stage: str, payload: dict[str, Any]) -> str:
+    match = REMOTE_STAGE_RE.fullmatch(remote_stage)
+    size = int(payload["size"])
+    digest = str(payload["sha256"])
+    if match is None or size < 1 or size >= 512 * 1024 * 1024:
+        raise RuntimeError("derived payload validation stage contract is invalid")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or size != DERIVED_PAYLOAD_SIZE
+        or digest != DERIVED_PAYLOAD_SHA256
+    ):
+        raise RuntimeError("derived payload validation hash contract is invalid")
+    token = match.group(1)
+    work = f"/tmp/.yiyunying-python-runtime-validate-{VERSION}-{token}"
+    if REMOTE_VALIDATE_WORK_RE.fullmatch(work) is None:
+        raise RuntimeError("remote validation work contract is invalid")
+    return bash_command(
+        remote_validate_script(),
+        (remote_stage, str(size), digest, token),
+    )
+
+
 def duplicate_rejecting_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -1402,8 +1691,8 @@ def duplicate_rejecting_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def parse_install_receipt(output: str, payload_sha256: str) -> dict[str, Any]:
-    lines = [line for line in output.splitlines() if line.strip()]
-    if len(lines) != 1:
+    lines = output.splitlines()
+    if len(lines) != 1 or not lines[0] or lines[0].strip() != lines[0]:
         raise RuntimeError("remote installer did not return exactly one receipt")
     try:
         receipt = json.loads(lines[0], object_pairs_hook=duplicate_rejecting_object)
@@ -1452,6 +1741,25 @@ def parse_install_receipt(output: str, payload_sha256: str) -> dict[str, Any]:
     return receipt
 
 
+def parse_remote_validate_receipt(output: str, payload_sha256: str) -> dict[str, Any]:
+    lines = output.splitlines()
+    if len(lines) != 1 or not lines[0] or lines[0].strip() != lines[0]:
+        raise RuntimeError("remote validation did not return exactly one receipt")
+    try:
+        receipt = json.loads(lines[0], object_pairs_hook=duplicate_rejecting_object)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("remote validation receipt is invalid JSON") from exc
+    expected = {
+        "PYTHON_RUNTIME_REMOTE_VALIDATE": "pass",
+        "payload_sha256": payload_sha256,
+        "platform": "linux/amd64",
+        "version": VERSION,
+    }
+    if not isinstance(receipt, dict) or receipt != expected:
+        raise RuntimeError("remote validation receipt does not prove the pinned payload")
+    return receipt
+
+
 def stage_marker(remote_stage: str) -> bytes:
     match = REMOTE_STAGE_RE.fullmatch(remote_stage)
     if match is None:
@@ -1485,14 +1793,18 @@ def create_stage_command(remote_stage: str) -> str:
 
 def cleanup_stage_command(
     remote_stage: str,
-    payload: dict[str, Any] | None,
-    ownership_confirmed: bool = False,
+    *,
+    ownership_confirmed: bool,
 ) -> str:
+    stage_marker(remote_stage)
+    if not ownership_confirmed:
+        raise RuntimeError(
+            "automatic stage cleanup requires confirmed creation ownership"
+        )
     quoted = shlex.quote(remote_stage)
-    marker = stage_marker(remote_stage).decode("ascii").rstrip("\n")
     recovery = (
         "printf "
-        + shlex.quote("RECOVERY_REQUIRED=unowned-or-partial-python-stage\n")
+        + shlex.quote("RECOVERY_REQUIRED=confirmed-python-stage-cleanup\n")
         + " >&2; exit 3"
     )
     command = (
@@ -1514,45 +1826,17 @@ def cleanup_stage_command(
         + recovery
         + "; fi; "
     )
-    if ownership_confirmed:
-        return command + "rm -f -- " + quoted
-    command += (
-        "if ! size=$(stat -c '%s' "
-        + quoted
-        + "); then "
-        + recovery
-        + "; fi; owned=0; if [ \"$size\" -eq "
-        + str(len(stage_marker(remote_stage)))
-        + " ]; then if ! marker_value=$(cat -- "
-        + quoted
-        + "); then "
-        + recovery
-        + "; fi; if [ \"$marker_value\" = "
-        + shlex.quote(marker)
-        + " ]; then owned=1; fi; fi; "
-    )
-    if payload is not None:
-        size = int(payload["size"])
-        digest = str(payload["sha256"])
-        if size < 1 or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-            raise RuntimeError("unreviewed payload cleanup fingerprint")
-        command += (
-            "if [ \"$owned\" -eq 0 ] && [ \"$size\" -eq "
-            + str(size)
-            + " ]; then if ! payload_hash=$(sha256sum -- "
-            + quoted
-            + " | awk 'NR==1 {print $1}'); then "
-            + recovery
-            + "; fi; if [ \"$payload_hash\" = "
-            + shlex.quote(digest)
-            + " ]; then owned=1; fi; fi; "
-        )
     return (
         command
-        + "if [ \"$owned\" -ne 1 ]; then "
-        + recovery
-        + "; fi; rm -f -- "
+        + "rm -f -- "
         + quoted
+        + "; if [ -e "
+        + quoted
+        + " ] || [ -L "
+        + quoted
+        + " ]; then "
+        + recovery
+        + "; fi"
     )
 
 
@@ -1614,7 +1898,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--user", default="root")
     result.add_argument("--known-hosts", required=True)
     result.add_argument("--artifact", required=True)
-    result.add_argument("--execute", action="store_true")
+    mode = result.add_mutually_exclusive_group()
+    mode.add_argument("--execute", action="store_true")
+    mode.add_argument("--remote-validate", action="store_true")
     result.add_argument("--confirm", default="")
     result.add_argument("--maintenance-confirmed", default="")
     return result
@@ -1631,8 +1917,14 @@ def main(argv: list[str] | None = None) -> int:
         or args.maintenance_confirmed != MAINTENANCE_CONFIRMATION
     ):
         raise RuntimeError("execute requires both reviewed confirmation tokens")
-    if not args.execute and (args.confirm or args.maintenance_confirmed):
-        raise RuntimeError("confirmation tokens are only valid with --execute")
+    if args.remote_validate and (
+        args.confirm != REMOTE_VALIDATE_CONFIRMATION or args.maintenance_confirmed
+    ):
+        raise RuntimeError("remote validation requires its exact validation confirmation")
+    if not args.execute and not args.remote_validate and (
+        args.confirm or args.maintenance_confirmed
+    ):
+        raise RuntimeError("confirmation tokens require an explicit stateful mode")
     password = os.environ.get("YY_SSH_PASSWORD", "")
     if not password:
         raise RuntimeError("YY_SSH_PASSWORD is required and is never accepted on the command line")
@@ -1655,12 +1947,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     client = connect(args, password)
     remote_stage: str | None = None
+    token: str | None = None
     stage_created = False
     payload: dict[str, Any] | None = None
+    success_line: str | None = None
     primary_failure: BaseException | None = None
     try:
         run_remote(client, preflight_command(), "Python runtime preflight", password)
-        if not args.execute:
+        if not args.execute and not args.remote_validate:
             print(
                 "[dry-run] pinned source and remote prerequisites passed; no derived payload "
                 "upload, extraction, installation, or stable-link switch occurred"
@@ -1679,93 +1973,143 @@ def main(argv: list[str] | None = None) -> int:
         )
         stage_created = True
         upload_payload(client, payload, remote_stage)
-        try:
-            _status, install_output = run_remote(
-                client,
-                installer_command(remote_stage, payload),
-                "Python runtime install",
-                password,
-                emit_output=False,
-                require_empty_stderr=True,
+        if args.remote_validate:
+            validation_work = (
+                f"/tmp/.yiyunying-python-runtime-validate-{VERSION}-{token}"
             )
-            receipt = parse_install_receipt(install_output, str(payload["sha256"]))
-        except BaseException as exc:
-            recovery_identifiers = {
-                "lock": LOCK_DIRECTORY,
-                "receipt": PREVIOUS_TARGET_RECEIPT,
-                "remote_stage": remote_stage,
-                "stable": STABLE_PATH,
-                "target": TARGET_DIRECTORY,
-                "token": token,
-                "work": f"{RUNTIME_ROOT}/.stage-{VERSION_DIRECTORY}-{token}",
-            }
-            raise RuntimeError(
-                "RECOVERY_REQUIRED: remote Python runtime install result uncertain; "
-                "recovery_identifiers="
-                + json.dumps(recovery_identifiers, sort_keys=True, separators=(",", ":"))
-            ) from exc
-        print(
-            "PYTHON_RUNTIME_RECEIPT="
-            + json.dumps(receipt, sort_keys=True, separators=(",", ":"))
-        )
-        return 0
+            try:
+                validation_output = run_remote_phased(
+                    client,
+                    remote_validate_command(remote_stage, payload),
+                    "Python runtime remote validation",
+                    password,
+                    allowed_phases=REMOTE_VALIDATE_FAILURE_PHASES,
+                )
+                validation_receipt = parse_remote_validate_receipt(
+                    validation_output, str(payload["sha256"])
+                )
+            except BaseException as exc:
+                failure_phase = (
+                    exc.phase if isinstance(exc, RemotePhaseFailure) else "unavailable"
+                )
+                recovery_identifiers = {
+                    "failure_phase": failure_phase,
+                    "remote_stage": remote_stage,
+                    "token": token,
+                    "work": validation_work,
+                }
+                raise RecoveryRequired(
+                    "remote Python payload validation result uncertain",
+                    recovery_identifiers,
+                ) from exc
+            success_line = (
+                "PYTHON_RUNTIME_REMOTE_VALIDATE_RECEIPT="
+                + json.dumps(
+                    validation_receipt, sort_keys=True, separators=(",", ":")
+                )
+            )
+        else:
+            try:
+                install_output = run_remote_phased(
+                    client,
+                    installer_command(remote_stage, payload),
+                    "Python runtime install",
+                    password,
+                )
+                receipt = parse_install_receipt(
+                    install_output, str(payload["sha256"])
+                )
+            except BaseException as exc:
+                failure_phase = (
+                    exc.phase if isinstance(exc, RemotePhaseFailure) else "unavailable"
+                )
+                recovery_identifiers = {
+                    "failure_phase": failure_phase,
+                    "link_stage": f"/usr/local/bin/.python3.yiyunying-{token}",
+                    "lock": LOCK_DIRECTORY,
+                    "receipt": PREVIOUS_TARGET_RECEIPT,
+                    "remote_stage": remote_stage,
+                    "rollback_link": f"/usr/local/bin/.python3.rollback-{token}",
+                    "stable": STABLE_PATH,
+                    "target": TARGET_DIRECTORY,
+                    "token": token,
+                    "work": f"{RUNTIME_ROOT}/.stage-{VERSION_DIRECTORY}-{token}",
+                }
+                raise RecoveryRequired(
+                    "remote Python runtime install result uncertain",
+                    recovery_identifiers,
+                ) from exc
+            success_line = (
+                "PYTHON_RUNTIME_RECEIPT="
+                + json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+            )
     except BaseException as exc:
         primary_failure = exc
-        raise
     finally:
         cleanup_failure: BaseException | None = None
         close_failure: BaseException | None = None
         local_cleanup_failure: BaseException | None = None
-        if remote_stage is not None:
+        if remote_stage is not None and stage_created:
             try:
                 run_remote(
                     client,
-                    cleanup_stage_command(
-                        remote_stage, payload, ownership_confirmed=stage_created
-                    ),
+                    cleanup_stage_command(remote_stage, ownership_confirmed=True),
                     "Python payload stage cleanup",
                     password,
                     timeout=60,
+                    emit_output=False,
+                    require_empty_stdout=True,
+                    require_empty_stderr=True,
                 )
             except BaseException as exc:
-                print(
-                    "RECOVERY_REQUIRED=python-runtime-stage-cleanup:"
-                    + remote_stage
-                    + "; "
-                    + sanitize_for_log(exc, (password,)),
-                    file=sys.stderr,
-                )
                 cleanup_failure = exc
         try:
             client.close()
         except BaseException as exc:
             close_failure = exc
-            print(
-                "RECOVERY_REQUIRED=python-runtime-ssh-close; "
-                + sanitize_for_log(exc, (password,)),
-                file=sys.stderr,
-            )
         if payload is not None:
             try:
                 remove_derived_payload(payload)
             except BaseException as exc:
                 local_cleanup_failure = exc
-                print(
-                    "RECOVERY_REQUIRED=local-derived-python-payload; "
-                    + sanitize_for_log(exc),
-                    file=sys.stderr,
-                )
-        if primary_failure is None:
-            if cleanup_failure is not None:
-                raise RuntimeError(
-                    "RECOVERY_REQUIRED: Python payload stage cleanup failed"
-                ) from cleanup_failure
-            if close_failure is not None:
-                raise RuntimeError("RECOVERY_REQUIRED: Python SSH close failed") from close_failure
-            if local_cleanup_failure is not None:
-                raise RuntimeError(
-                    "RECOVERY_REQUIRED: local derived Python payload cleanup failed"
-                ) from local_cleanup_failure
+        uncertainties: list[str] = []
+        if remote_stage is not None and not stage_created:
+            uncertainties.append("stage_creation_ownership_unconfirmed")
+        if cleanup_failure is not None:
+            uncertainties.append("remote_stage_cleanup_unconfirmed")
+        if close_failure is not None:
+            uncertainties.append("ssh_close_unconfirmed")
+        if local_cleanup_failure is not None:
+            uncertainties.append("local_payload_cleanup_unconfirmed")
+        if uncertainties:
+            if isinstance(primary_failure, RecoveryRequired):
+                reason = primary_failure.reason
+                identifiers = primary_failure.identifiers
+            else:
+                identifiers = {}
+                if remote_stage is not None:
+                    identifiers = {"remote_stage": remote_stage, "token": token}
+                if "stage_creation_ownership_unconfirmed" in uncertainties:
+                    reason = "Python payload stage creation ownership was not confirmed"
+                elif primary_failure is not None:
+                    reason = "primary operation failed and cleanup result is uncertain"
+                else:
+                    reason = "post-operation cleanup result is uncertain"
+            cause = (
+                primary_failure
+                or cleanup_failure
+                or close_failure
+                or local_cleanup_failure
+            )
+            raise RecoveryRequired(
+                reason, identifiers, tuple(uncertainties)
+            ) from cause
+        if primary_failure is not None:
+            raise primary_failure
+        if success_line is not None:
+            print(success_line)
+
+    return 0
 
 
 def cli(argv: list[str] | None = None) -> int:
@@ -1783,7 +2127,9 @@ def cli(argv: list[str] | None = None) -> int:
 
     password = os.environ.get("YY_SSH_PASSWORD", "")
     detail = sanitize_for_log(failure, (password,))
-    if "--execute" in actual_argv and "RECOVERY_REQUIRED" not in detail:
+    if (
+        "--execute" in actual_argv or "--remote-validate" in actual_argv
+    ) and "RECOVERY_REQUIRED" not in detail:
         detail = "RECOVERY_REQUIRED: production execute ended without proof: " + detail
     print(
         "production Python runtime installation failed: " + detail,

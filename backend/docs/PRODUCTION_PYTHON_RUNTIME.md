@@ -128,6 +128,50 @@ Success prints `PYTHON_ARTIFACT_PIN`, `PYTHON_RUNTIME_PREFLIGHT=pass`, and an
 explicit statement that no payload upload, extraction, installation, or
 stable-link switch occurred.
 
+## Remote payload validation without installation
+
+The default dry run intentionally does not prove that the production kernel,
+mount policy, GNU tar, normalized tree and pinned static interpreter work
+together. Before another install attempt, run the explicit remote validation
+mode with the exact validation-only confirmation:
+
+```text
+--remote-validate
+--confirm validate-production-python-runtime-3.12.13
+```
+
+Use the same PowerShell wrapper, artifact, pinned host key and in-process DPAPI
+credential handling shown above. Do not add `--execute` or the maintenance
+confirmation. The validation confirmation does not authorize installation.
+
+This mode rebuilds and rescans the same deterministic derived payload. It
+creates one unique root-owned `0600` archive at
+`/tmp/.yiyunying-python-runtime-3.12.13-<token>.tar.gz` and one unique
+root-owned `0700` work directory at
+`/tmp/.yiyunying-python-runtime-validate-3.12.13-<token>`. It extracts,
+normalizes, audits and runs the pinned interpreter smoke test there, then
+removes both exact temporary nodes and proves their absence. It never creates
+or changes `/opt`, the install lock, rollback receipt, immutable target,
+`/usr/local/bin/python3`, or any stable-link staging node. Cleanup is permitted
+only for a node this process proved it created; a correct-looking pre-existing
+node is not adopted or removed.
+
+If the exclusive stage-creation command reports a collision or its SSH reply
+is lost, creation ownership is unconfirmed. The wrapper does not run automatic
+cleanup and does not adopt the path merely because its marker, size or payload
+hash looks correct. It returns the exact `remote_stage` and `token` as
+`RECOVERY_REQUIRED` evidence for read-only reconciliation.
+
+Success emits one strictly parsed `PYTHON_RUNTIME_REMOTE_VALIDATE_RECEIPT`.
+Any timeout, interrupt, malformed response, failed smoke test or cleanup that
+cannot be proven is `RECOVERY_REQUIRED`. Reconcile only the exact
+`remote_stage` and `work` paths from its `recovery_identifiers`; never use a
+wildcard. A successful remote validation is evidence for payload/runtime
+compatibility, not evidence that the runtime was installed.
+The PASS receipt is printed only after the confirmed remote stage is removed
+with empty stdout/stderr, SSH closes successfully, and the identity-bound local
+derived payload is removed successfully.
+
 ## Execute
 
 Execute only in a reviewed maintenance window after the same source commit and
@@ -161,7 +205,25 @@ atomic operations. An existing exact target is fully audited and smoke-tested
 instead of overwritten. If post-switch verification fails, the exact previous
 reviewed runtime symlink (or absence) is restored and read back. A successful
 run emits exactly one duplicate-key-free JSON receipt, which the local wrapper
-strictly parses before printing `PYTHON_RUNTIME_RECEIPT`.
+strictly parses. `PYTHON_RUNTIME_RECEIPT` is not printed until the confirmed
+remote stage is removed and read back absent, the cleanup command returns
+strictly empty stdout/stderr, SSH closes successfully, and the identity-bound
+local derived payload is removed. Any secondary failure suppresses PASS.
+
+The remote installer suppresses command output and preserves only two private
+protocol descriptors. On `ERR`, `INT`, `TERM` or `HUP`, it attempts the exact
+rollback and cleanup and emits exactly one diagnostic line:
+
+```text
+PYTHON_RUNTIME_FAILURE_PHASE=<allowlisted-phase>;EXIT_CODE=<matching-status>
+```
+
+The fixed phases are `archive`, `parents`, `lock`, `extract`, `normalize`,
+`tree-audit`, `python-smoke`, `target-move`, `stable-switch`, `post-smoke` and
+`cleanup`. The local wrapper rejects an unknown phase, a second line, free-form
+stderr, stdout on failure, or an exit-code mismatch. A valid phase is copied
+into `recovery_identifiers.failure_phase`; if the SSH result is lost or the
+success receipt is malformed, the value is `unavailable` rather than a guess.
 
 Immediately before the first stable-link switch, the installer create-once
 records `missing` or the exact previous reviewed target in root-owned mode
@@ -173,12 +235,24 @@ the current pre-switch state blocks the switch for recovery review.
 ## Recovery boundary
 
 Once the remote install command begins, a lost SSH status, timeout, malformed
-receipt, operator interrupt, stderr, or any ambiguous response is
+receipt, operator interrupt, non-protocol output, or any ambiguous response is
 `RECOVERY_REQUIRED`; it is never success. The local error includes a
-`recovery_identifiers` JSON object containing the exact non-secret 32-hex
-transaction token and its `work`, `remote_stage`, `lock`, `target`, `stable`
-and `receipt` paths. It deliberately does not echo the SSH password or remote
-stdout/stderr. Preserve that one object with the maintenance record.
+`recovery_identifiers` JSON object containing the allowlisted failure phase (or
+`unavailable`), exact non-secret 32-hex transaction token, and its `work`,
+`remote_stage`, `link_stage`, `rollback_link`, `lock`, `target`, `stable` and
+`receipt` paths. It deliberately does not echo the SSH password, commands or
+remote stdout/stderr. Preserve that one object with the maintenance record.
+If stage cleanup, SSH close or local-payload cleanup is also uncertain, the
+primary recovery reason and all its identifiers remain intact and a fixed
+`cleanup_uncertainties` list is appended. Secondary exception text is never
+substituted for the primary evidence.
+
+The earlier failed transaction that predates this phase protocol cannot be
+retrospectively assigned a proven phase. A clean rollback readback proves only
+that its reviewed paths are absent; it does not distinguish extraction, tree
+audit and interpreter-smoke failures. Use `--remote-validate` to close that
+diagnostic gap without installing anything, and do not weaken a safety gate on
+the basis of a guessed root cause.
 
 Reconnect through the pinned host key and perform read-only reconciliation of
 all reported exact paths before retrying:
@@ -190,12 +264,18 @@ all reported exact paths before retrying:
 /opt/yiyunying/python-runtime/.previous-target-3.12.13-20260718
 /opt/yiyunying/python-runtime/.stage-3.12.13-20260718-<reported-token>
 /tmp/.yiyunying-python-runtime-3.12.13-<reported-token>.tar.gz
+/usr/local/bin/.python3.yiyunying-<reported-token>
+/usr/local/bin/.python3.rollback-<reported-token>
 ```
 
-Never use wildcard cleanup. Remove a stage only after checking its exact path,
-owner, mode, link state and the reported marker or payload fingerprint. Do not
-substitute `/www`, an application or STT virtual environment, the BaoTa panel
-Python, PATH lookup, or a caller-provided interpreter.
+Never use wildcard cleanup. The installer automatically removes a stage only
+after the same process received positive proof that its exclusive creation
+succeeded. It never uses a marker, size or payload hash to take ownership of an
+unconfirmed or collided path. During manual recovery, first record the exact
+path, owner, mode, link state, marker and payload fingerprint as read-only
+evidence; removal requires a separate reviewed decision. Do not substitute
+`/www`, an application or STT virtual environment, the BaoTa panel Python,
+PATH lookup, or a caller-provided interpreter.
 
 For each exact reported path, first use `stat -c '%n|%a|%U|%G|%F' -- <path>`;
 use `readlink -- <path>` only when `stat` proves it is a symbolic link, and use
