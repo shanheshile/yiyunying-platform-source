@@ -12,6 +12,7 @@ import posixpath
 import re
 import secrets
 import shlex
+import socket
 import sys
 import tarfile
 import time
@@ -32,6 +33,8 @@ MYSQL_BIN_FALLBACK = "/www/server/mysql/bin/mysql"
 MYSQLDUMP_BIN_FALLBACK = "/www/server/mysql/bin/mysqldump"
 PHP_FPM82_INIT_SCRIPT = "/etc/init.d/php-fpm-82"
 PHP_FPM82_SYSTEMD_SERVICE = "php8.2-fpm.service"
+SSH_KEEPALIVE_SECONDS = 15
+REMOTE_COMMAND_TIMEOUT_SECONDS = 20 * 60
 
 
 def quote(value: str) -> str:
@@ -135,11 +138,27 @@ def run(client: paramiko.SSHClient, command: str, label: str) -> str:
 def run_with_status(
     client: paramiko.SSHClient, command: str, label: str, allowed_statuses: set[int]
 ) -> str:
-    stdin, stdout, stderr = client.exec_command(command, get_pty=False)
-    del stdin
-    output = stdout.read().decode("utf-8", errors="replace")
-    error = stderr.read().decode("utf-8", errors="replace")
-    status = stdout.channel.recv_exit_status()
+    channel = None
+    try:
+        stdin, stdout, stderr = client.exec_command(
+            command,
+            get_pty=False,
+            timeout=REMOTE_COMMAND_TIMEOUT_SECONDS,
+        )
+        del stdin
+        channel = stdout.channel
+        channel.settimeout(REMOTE_COMMAND_TIMEOUT_SECONDS)
+        output = stdout.read().decode("utf-8", errors="replace")
+        error = stderr.read().decode("utf-8", errors="replace")
+        status = channel.recv_exit_status()
+    except (TimeoutError, socket.timeout) as exc:
+        try:
+            if channel is not None:
+                channel.close()
+        finally:
+            raise RuntimeError(
+                f"{label} timed out after {REMOTE_COMMAND_TIMEOUT_SECONDS} seconds"
+            ) from exc
     if status not in allowed_statuses:
         raise RuntimeError(f"{label} failed ({status}): {error or output}")
     if output.strip():
@@ -337,7 +356,11 @@ def main() -> int:
         },
     )
     try:
-        fingerprint = client.get_transport().get_remote_server_key().get_fingerprint().hex()
+        transport = client.get_transport()
+        if transport is None or not transport.is_active():
+            raise RuntimeError("SSH transport is not active after connect")
+        transport.set_keepalive(SSH_KEEPALIVE_SECONDS)
+        fingerprint = transport.get_remote_server_key().get_fingerprint().hex()
         print(f"[ssh] connected; host-key={fingerprint}")
         run(
             client,

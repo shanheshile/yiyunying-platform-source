@@ -31,6 +31,82 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertIn("paramiko.RejectPolicy()", SOURCE)
         self.assertNotIn("AutoAddPolicy", SOURCE)
 
+    def test_remote_command_timeout_is_forwarded_and_output_is_preserved(self) -> None:
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.timeout: int | None = None
+
+            def settimeout(self, timeout: int) -> None:
+                self.timeout = timeout
+
+            def recv_exit_status(self) -> int:
+                return 0
+
+        class FakeStream:
+            def __init__(self, payload: bytes, channel: FakeChannel) -> None:
+                self.payload = payload
+                self.channel = channel
+
+            def read(self) -> bytes:
+                return self.payload
+
+        channel = FakeChannel()
+        observed: dict[str, object] = {}
+
+        class FakeClient:
+            def exec_command(self, command: str, **kwargs: object) -> tuple[object, FakeStream, FakeStream]:
+                observed["command"] = command
+                observed.update(kwargs)
+                return object(), FakeStream(b"offline output\n", channel), FakeStream(b"", channel)
+
+        with mock.patch("builtins.print") as print_mock:
+            output = DEPLOY.run_with_status(
+                FakeClient(), "offline-command", "offline-timeout-contract", {0}
+            )
+
+        self.assertEqual(DEPLOY.REMOTE_COMMAND_TIMEOUT_SECONDS, 1200)
+        self.assertEqual(observed["command"], "offline-command")
+        self.assertFalse(observed["get_pty"])
+        self.assertEqual(observed["timeout"], 1200)
+        self.assertEqual(channel.timeout, 1200)
+        self.assertEqual(output, "offline output\n")
+        print_mock.assert_called_once_with("[offline-timeout-contract] offline output")
+
+    def test_remote_command_timeout_fails_closed_and_closes_channel(self) -> None:
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.timeout: int | None = None
+                self.closed = False
+
+            def settimeout(self, timeout: int) -> None:
+                self.timeout = timeout
+
+            def close(self) -> None:
+                self.closed = True
+
+        class TimeoutStream:
+            def __init__(self, channel: FakeChannel) -> None:
+                self.channel = channel
+
+            def read(self) -> bytes:
+                raise TimeoutError("offline timeout")
+
+        channel = FakeChannel()
+
+        class FakeClient:
+            def exec_command(self, *_args: object, **_kwargs: object) -> tuple[object, TimeoutStream, TimeoutStream]:
+                stream = TimeoutStream(channel)
+                return object(), stream, stream
+
+        with self.assertRaisesRegex(
+            RuntimeError, "offline-timeout timed out after 1200 seconds"
+        ) as raised:
+            DEPLOY.run_with_status(FakeClient(), "offline-command", "offline-timeout", {0})
+
+        self.assertIsInstance(raised.exception.__cause__, TimeoutError)
+        self.assertEqual(channel.timeout, 1200)
+        self.assertTrue(channel.closed)
+
     def test_database_backup_is_checked_before_compression(self) -> None:
         self.assertIn('dump_sql_q = quote(backup_dir + "/database.sql")', SOURCE)
         self.assertIn("--triggers {database_q} > {dump_sql_q}", SOURCE)
@@ -109,6 +185,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
 
     def test_failed_runtime_preflight_never_enters_backup_or_maintenance(self) -> None:
         labels: list[str] = []
+        keepalive_intervals: list[int] = []
 
         def fake_run(_client: object, _command: str, label: str) -> str:
             labels.append(label)
@@ -123,6 +200,18 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             def close(self) -> None:
                 return None
 
+        class FakeTransport:
+            def is_active(self) -> bool:
+                return True
+
+            def set_keepalive(self, interval: int) -> None:
+                keepalive_intervals.append(interval)
+
+            def get_remote_server_key(self) -> object:
+                return SimpleNamespace(get_fingerprint=lambda: b"\x01\x02")
+
+        transport = FakeTransport()
+
         class FakeClient:
             def load_host_keys(self, _path: str) -> None:
                 return None
@@ -133,9 +222,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             def connect(self, *_args: object, **_kwargs: object) -> None:
                 return None
 
-            def get_transport(self) -> object:
-                key = SimpleNamespace(get_fingerprint=lambda: b"\x01\x02")
-                return SimpleNamespace(get_remote_server_key=lambda: key)
+            def get_transport(self) -> FakeTransport:
+                return transport
 
             def open_sftp(self) -> FakeSftp:
                 return FakeSftp()
@@ -188,6 +276,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             labels,
             ["preflight", "archive-check", "stage-files", "runtime-dependency-preflight"],
         )
+        self.assertEqual(DEPLOY.SSH_KEEPALIVE_SECONDS, 15)
+        self.assertEqual(keepalive_intervals, [15])
         self.assertNotIn("backup-directory", labels)
         self.assertNotIn("catalog-maintenance", labels)
 
