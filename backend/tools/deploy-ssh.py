@@ -34,7 +34,7 @@ MYSQLDUMP_BIN_FALLBACK = "/www/server/mysql/bin/mysqldump"
 PHP_FPM82_INIT_SCRIPT = "/etc/init.d/php-fpm-82"
 PHP_FPM82_SYSTEMD_SERVICE = "php8.2-fpm.service"
 SSH_KEEPALIVE_SECONDS = 15
-REMOTE_COMMAND_TIMEOUT_SECONDS = 20 * 60
+REMOTE_COMMAND_TIMEOUT_SECONDS = 2 * 60 * 60
 
 
 def quote(value: str) -> str:

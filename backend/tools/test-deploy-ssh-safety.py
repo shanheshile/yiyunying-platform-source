@@ -64,11 +64,11 @@ class DeploySshSafetyContractTest(unittest.TestCase):
                 FakeClient(), "offline-command", "offline-timeout-contract", {0}
             )
 
-        self.assertEqual(DEPLOY.REMOTE_COMMAND_TIMEOUT_SECONDS, 1200)
+        self.assertEqual(DEPLOY.REMOTE_COMMAND_TIMEOUT_SECONDS, 7200)
         self.assertEqual(observed["command"], "offline-command")
         self.assertFalse(observed["get_pty"])
-        self.assertEqual(observed["timeout"], 1200)
-        self.assertEqual(channel.timeout, 1200)
+        self.assertEqual(observed["timeout"], 7200)
+        self.assertEqual(channel.timeout, 7200)
         self.assertEqual(output, "offline output\n")
         print_mock.assert_called_once_with("[offline-timeout-contract] offline output")
 
@@ -99,12 +99,12 @@ class DeploySshSafetyContractTest(unittest.TestCase):
                 return object(), stream, stream
 
         with self.assertRaisesRegex(
-            RuntimeError, "offline-timeout timed out after 1200 seconds"
+            RuntimeError, "offline-timeout timed out after 7200 seconds"
         ) as raised:
             DEPLOY.run_with_status(FakeClient(), "offline-command", "offline-timeout", {0})
 
         self.assertIsInstance(raised.exception.__cause__, TimeoutError)
-        self.assertEqual(channel.timeout, 1200)
+        self.assertEqual(channel.timeout, 7200)
         self.assertTrue(channel.closed)
 
     def test_database_backup_is_checked_before_compression(self) -> None:
