@@ -3,13 +3,16 @@ param(
     [string] $ReleaseRoot,
     [string] $ExpectedTag,
     [ValidateSet('Debug', 'Stable')]
-    [string] $Channel = 'Debug'
+    [string] $Channel = 'Debug',
+    [string] $RiskWaiverConfirmationToken
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseIdentityFile = Join-Path $projectRoot 'backend\config\release-identity.json'
 $downloadMetadataFile = Join-Path $projectRoot 'download-site\release-metadata.json'
+$deviceGateScript = Join-Path $projectRoot 'android\tools\verify-release-device-gate.ps1'
+$riskWaiverPublicNotice = '真机验证待用户完成（不得声明真机通过）'
 
 function Get-Sha256([string] $Path) {
     $stream = [System.IO.File]::OpenRead($Path)
@@ -20,6 +23,24 @@ function Get-Sha256([string] $Path) {
     finally {
         $sha256.Dispose()
         $stream.Dispose()
+    }
+}
+
+function Assert-DeviceGateArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string] $Directory,
+        [Parameter(Mandatory = $true)] $DeviceValidation
+    )
+
+    $path = Join-Path $Directory ([string] $DeviceValidation.evidenceFileName)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw '真机门禁证据在 Finalize staging 中缺失。'
+    }
+    $item = Get-Item -LiteralPath $path -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $item.Length -le 0 -or
+        (Get-Sha256 $path) -cne [string] $DeviceValidation.evidenceSha256) {
+        throw '真机门禁证据在验证后发生替换，拒绝 Finalize。'
     }
 }
 
@@ -193,8 +214,14 @@ if (([string] $releaseManifest.releaseIdentitySha256).ToLowerInvariant() -ne $id
 }
 Assert-ConnectionIdentityEvidence -Value $releaseManifest.connectionIdentity -Source 'Build 发布清单'
 if ([string] $releaseManifest.finalizationStatus -ne 'pending' -or
-    -not [string]::IsNullOrWhiteSpace([string] $releaseManifest.releaseEvidenceCommit)) {
+    -not [string]::IsNullOrWhiteSpace([string] $releaseManifest.releaseEvidenceCommit) -or
+    $null -ne $releaseManifest.PSObject.Properties['deviceValidation']) {
     throw '发布目录不是未收口的 Build 产物；拒绝覆盖或二次生成同版本项目资产。'
+}
+$deviceValidationPlan = [string] $releaseManifest.deviceValidationPlan
+if (($Channel -eq 'Stable' -and $deviceValidationPlan -notin @('device-evidence', 'risk-waiver')) -or
+    ($Channel -eq 'Debug' -and $deviceValidationPlan -notin @('', 'not-required-debug'))) {
+    throw '发布清单的 deviceValidationPlan 与通道不匹配。'
 }
 
 if (-not (Test-Path -LiteralPath $downloadMetadataFile)) {
@@ -216,6 +243,8 @@ if ([int] $downloadMetadata.schemaVersion -ne 4 -or
     [string] $downloadMetadata.releaseTag -ne $expectedTagForChannel -or
     [string] $downloadMetadata.finalizationStatus -ne 'pending' -or
     -not [string]::IsNullOrWhiteSpace([string] $downloadMetadata.releaseEvidenceCommit) -or
+    [string] $downloadMetadata.deviceValidationPlan -cne $deviceValidationPlan -or
+    $null -ne $downloadMetadata.PSObject.Properties['deviceValidation'] -or
     -not (Test-ConnectionIdentityEvidenceEqual -Left $downloadMetadata.connectionIdentity -Right $releaseManifest.connectionIdentity) -or
     ([string] $downloadMetadata.pendingManifestSha256).ToLowerInvariant() -ne $pendingManifestSha256) {
     throw 'B 提交中的下载元数据未精确绑定当前 pending 发布清单、Build 提交或发布身份；拒绝 Finalize。'
@@ -272,12 +301,6 @@ foreach ($entry in $releases) {
         throw "Build APK 体积或 SHA-256 不一致：$fileName"
     }
 }
-$actualBuildFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -File | ForEach-Object { $_.Name } | Sort-Object)
-$actualBuildDirectories = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -Directory)
-if ($actualBuildDirectories.Count -ne 0 -or (Compare-Object ($expectedBuildFiles | Sort-Object) $actualBuildFiles)) {
-    throw 'Build 发布目录包含缺失、额外或已提前生成的项目资产；拒绝 Finalize。'
-}
-
 $dirty = Invoke-GitText -Arguments @('status', '--porcelain', '--untracked-files=all') -Operation '读取 Git 工作区状态'
 if (-not [string]::IsNullOrWhiteSpace($dirty)) {
     throw 'Finalize 必须从完全干净且已提交的 main 证据提交执行（包括未跟踪文件）。'
@@ -306,6 +329,81 @@ if ($tagCommit -ne $evidenceCommit) {
 }
 [void] (Invoke-GitText -Arguments @('ls-files', '--error-unmatch', '--', 'backend/config/release-identity.json') -Operation '确认发布身份已提交')
 
+$deviceValidation = $null
+if ($Channel -eq 'Stable') {
+    if (-not (Test-Path -LiteralPath $deviceGateScript -PathType Leaf)) {
+        throw "缺少 Stable Finalize 真机门禁验证器：$deviceGateScript"
+    }
+    $gateArguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $deviceGateScript,
+        '-ReleaseDirectory', $releaseDirectory,
+        '-ExpectedVersionName', $version,
+        '-ExpectedVersionCode', [string] $versionCode,
+        '-ExpectedChannel', 'Stable',
+        '-ExpectedBuildSourceCommit', $buildCommit,
+        '-ExpectedReleaseEvidenceCommit', $evidenceCommit,
+        '-ExpectedReleaseTag', $tag,
+        '-ExpectedPendingManifestSha256', $pendingManifestSha256,
+        '-ExpectedStableSignerSha256', $stableSignerSha256
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RiskWaiverConfirmationToken)) {
+        $gateArguments += @('-RiskWaiverConfirmationToken', $RiskWaiverConfirmationToken)
+    }
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $gateOutput = @(& powershell.exe @gateArguments 2>&1)
+        $gateExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($gateExitCode -ne 0) {
+        throw "Stable Finalize 真机证据/风险豁免门禁失败：$($gateOutput -join [Environment]::NewLine)"
+    }
+    try {
+        $gateSummary = $gateOutput | Select-Object -Last 1 | ConvertFrom-Json
+    }
+    catch {
+        throw 'Stable Finalize 真机门禁未返回有效结构化摘要。'
+    }
+    if ([string] $gateSummary.evidenceSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Stable Finalize 真机门禁证据摘要无效。'
+    }
+    if ($deviceValidationPlan -eq 'risk-waiver') {
+        if ([string] $gateSummary.mode -cne 'risk-waiver' -or
+            [string] $gateSummary.status -cne 'pending-user-validation' -or
+            [string] $gateSummary.evidenceFileName -cne 'release-risk-waiver.json' -or
+            [string] $gateSummary.publicNotice -cne $riskWaiverPublicNotice -or
+            $riskWaiverPublicNotice -cnotin @($releaseManifest.releaseNotes | ForEach-Object { [string] $_ })) {
+            throw '风险豁免计划不得被写成真机通过，且必须在官网发布说明显示待用户完成。'
+        }
+    }
+    elseif ([string] $gateSummary.mode -cne 'device-evidence' -or
+        [string] $gateSummary.status -cne 'passed' -or
+        [string] $gateSummary.evidenceFileName -cne 'device-upgrade-evidence.json' -or
+        -not [string]::IsNullOrWhiteSpace($RiskWaiverConfirmationToken)) {
+        throw '真机证据计划必须提供四角色完整真机证据，且不得使用豁免令牌。'
+    }
+    $expectedBuildFiles += [string] $gateSummary.evidenceFileName
+    $deviceValidation = [ordered]@{
+        plan = $deviceValidationPlan
+        status = [string] $gateSummary.status
+        evidenceFileName = [string] $gateSummary.evidenceFileName
+        evidenceSha256 = [string] $gateSummary.evidenceSha256
+        publicNotice = [string] $gateSummary.publicNotice
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($RiskWaiverConfirmationToken)) {
+    throw 'Debug Finalize 不得使用 Stable 真机风险豁免令牌。'
+}
+
+$actualBuildFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -File | ForEach-Object { $_.Name } | Sort-Object)
+$actualBuildDirectories = @(Get-ChildItem -LiteralPath $releaseDirectory -Force -Directory)
+if ($actualBuildDirectories.Count -ne 0 -or (Compare-Object ($expectedBuildFiles | Sort-Object) $actualBuildFiles)) {
+    throw 'Build 发布目录包含缺失、额外或未经严格验证的门禁/项目资产；拒绝 Finalize。'
+}
+
 $token = [Guid]::NewGuid().ToString('N')
 $stagingDirectory = Join-Path $resolvedReleaseRoot ".$version.$token.finalizing"
 $backupDirectory = Join-Path $resolvedReleaseRoot ".$version.$token.build-backup"
@@ -326,6 +424,9 @@ try {
     $finalManifest.releaseEvidenceCommit = $evidenceCommit
     $finalManifest.releaseTag = $tag
     $finalManifest.finalizationStatus = 'finalized'
+    if ($Channel -eq 'Stable') {
+        $finalManifest | Add-Member -NotePropertyName deviceValidation -NotePropertyValue $deviceValidation -Force
+    }
     $finalManifest | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
     $stagedManifestPath = Join-Path $stagingDirectory 'release-manifest.json'
     Write-Utf8JsonAtomic -Path $stagedManifestPath -Value $finalManifest
@@ -416,6 +517,9 @@ try {
         }
         assets = $assets
     }
+    if ($Channel -eq 'Stable') {
+        $assetsManifest['deviceValidation'] = $deviceValidation
+    }
     Write-Utf8JsonAtomic -Path (Join-Path $stagingDirectory $assetsManifestName) -Value $assetsManifest
 
     foreach ($name in @($sourceName, $historyName, $deliveryName, $assetsManifestName)) {
@@ -432,6 +536,9 @@ try {
             (Get-Sha256 $original) -ne (Get-Sha256 $staged)) {
             throw "Finalize staging 改变了 Build APK：$fileName"
         }
+    }
+    if ($Channel -eq 'Stable') {
+        Assert-DeviceGateArtifact -Directory $stagingDirectory -DeviceValidation $deviceValidation
     }
 
     Move-Item -LiteralPath $releaseDirectory -Destination $backupDirectory
@@ -473,3 +580,6 @@ Write-Host "Build 源码提交：$buildCommit"
 Write-Host "发布证据提交：$evidenceCommit"
 Write-Host "最终注释标签：$tag"
 Write-Host "Git Bundle 引用：refs/heads/main, refs/tags/$tag"
+if ($Channel -eq 'Stable') {
+    Write-Host "真机门禁状态：$($deviceValidation.status)"
+}

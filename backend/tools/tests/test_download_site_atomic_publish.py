@@ -179,6 +179,15 @@ class ReleaseFixture:
 
     def make_stable(self) -> None:
         stable_signer = "9" * 64
+        role_identities = {
+            "user": ("xyz.jjmxg.yiyunying.user", "user"),
+            "admin": ("xyz.jjmxg.yiyunying.admin", "admin"),
+            "authorized": (
+                "xyz.jjmxg.yiyunying.authorized",
+                "authorized-platform",
+            ),
+            "owner": ("xyz.jjmxg.yiyunying.platformowner", "platform-owner"),
+        }
         identity_path = (
             self.repository / "backend" / "config" / "release-identity.json"
         )
@@ -200,8 +209,9 @@ class ReleaseFixture:
         for entry in self.manifest["releases"]:
             old_path = self.release_dir / entry["fileName"]
             entry["fileName"] = entry["fileName"].replace("-debug.apk", ".apk")
-            entry["packageName"] = entry["packageName"].removesuffix(".debug")
-            entry["versionName"] = entry["versionName"].removesuffix("-debug")
+            package_name, suffix = role_identities[entry["id"]]
+            entry["packageName"] = package_name
+            entry["versionName"] = f"{self.version}-{suffix}"
             entry["signerSha256"] = stable_signer
             new_path = self.release_dir / entry["fileName"]
             old_path.rename(new_path)
@@ -209,6 +219,52 @@ class ReleaseFixture:
             entry["sha256"] = digest(new_path)
             renamed.append(entry["fileName"])
         self.apk_names = renamed
+        device_roles = []
+        for index, role in enumerate(("user", "admin", "authorized", "owner"), start=1):
+            package_name, suffix = role_identities[role]
+            device_roles.append(
+                {
+                    "status": "PASS",
+                    "gate": "android-device-upgrade",
+                    "target": f"sha256:{index:012x}",
+                    "role": role,
+                    "packageName": package_name,
+                    "fromVersionCode": 62,
+                    "fromVersionName": f"2.8.0-{suffix}",
+                    "toVersionCode": self.version_code,
+                    "versionName": f"{self.version}-{suffix}",
+                    "signerSha256": stable_signer,
+                    "signatureSchemeV2Verified": True,
+                    "uidPreserved": True,
+                    "dataDirPreserved": True,
+                    "launchVerifiedBeforeAndAfter": True,
+                }
+            )
+        evidence = {
+            "schemaVersion": 1,
+            "evidenceType": "android-device-upgrade",
+            "versionName": self.version,
+            "versionCode": self.version_code,
+            "channel": "Stable",
+            "createdAt": "2026-08-15T12:00:00Z",
+            "status": "PASS",
+            "roles": device_roles,
+            "buildSourceCommit": self.build_commit,
+            "releaseEvidenceCommit": self.evidence_commit,
+            "releaseTag": self.tag,
+            "pendingManifestSha256": "5" * 64,
+        }
+        evidence_path = self.release_dir / "device-upgrade-evidence.json"
+        write_json(evidence_path, evidence)
+        device_validation = {
+            "plan": "device-evidence",
+            "status": "passed",
+            "evidenceFileName": "device-upgrade-evidence.json",
+            "evidenceSha256": digest(evidence_path),
+            "publicNotice": "真机升级验证已由完整证据通过",
+        }
+        self.manifest["deviceValidationPlan"] = "device-evidence"
+        self.manifest["deviceValidation"] = device_validation
         self.rewrite_manifest()
 
         self.project_manifest["channel"] = "Stable"
@@ -219,6 +275,7 @@ class ReleaseFixture:
             "refs/heads/main",
             f"refs/tags/{self.tag}",
         ]
+        self.project_manifest["deviceValidation"] = device_validation
         self.rewrite_project_manifest()
 
         sums = "".join(
@@ -233,6 +290,7 @@ class ReleaseFixture:
         self.metadata["finalizationStatus"] = "pending"
         self.metadata["releaseEvidenceCommit"] = None
         self.metadata.pop("finalizedAt")
+        self.metadata.pop("deviceValidation")
         self.metadata["pendingManifestSha256"] = "5" * 64
         self.rewrite_metadata()
 
@@ -383,6 +441,67 @@ class DownloadSiteAtomicPublishTests(unittest.TestCase):
                 channel="Stable",
                 manifest=self.fixture.manifest,
             )
+
+    def test_risk_waiver_site_must_show_pending_and_never_passed(self) -> None:
+        self.fixture.make_stable()
+        self.fixture.write_stable_site()
+        risk_manifest = copy.deepcopy(self.fixture.manifest)
+        risk_manifest["deviceValidationPlan"] = "risk-waiver"
+        with self.assertRaisesRegex(RuntimeError, "pending user"):
+            MODULE.validate_site_tree(
+                self.fixture.site_dir,
+                self.fixture.version,
+                channel="Stable",
+                manifest=risk_manifest,
+            )
+
+        site_js = self.fixture.site_dir / "site.js"
+        site_js.write_text(
+            MODULE.DEVICE_PENDING_NOTICE,
+            encoding="utf-8",
+            newline="\n",
+        )
+        MODULE.validate_site_tree(
+            self.fixture.site_dir,
+            self.fixture.version,
+            channel="Stable",
+            manifest=risk_manifest,
+        )
+        site_js.write_text(
+            MODULE.DEVICE_PENDING_NOTICE + " 真机验证已通过",
+            encoding="utf-8",
+            newline="\n",
+        )
+        with self.assertRaisesRegex(RuntimeError, "may not claim"):
+            MODULE.validate_site_tree(
+                self.fixture.site_dir,
+                self.fixture.version,
+                channel="Stable",
+                manifest=risk_manifest,
+            )
+
+    def test_future_risk_waiver_cannot_forge_passed_device_status(self) -> None:
+        self.fixture.make_stable()
+        self.fixture.manifest["deviceValidationPlan"] = "risk-waiver"
+        self.fixture.manifest["deviceValidation"] = {
+            "plan": "risk-waiver",
+            "status": "passed",
+            "evidenceFileName": "device-upgrade-evidence.json",
+            "evidenceSha256": "6" * 64,
+            "publicNotice": "真机验证已通过",
+        }
+        self.fixture.metadata["deviceValidationPlan"] = "risk-waiver"
+        self.fixture.rewrite_manifest()
+        self.fixture.project_manifest["releaseManifestSha256"] = digest(
+            self.fixture.manifest_path
+        )
+        self.fixture.project_manifest["deviceValidation"] = copy.deepcopy(
+            self.fixture.manifest["deviceValidation"]
+        )
+        self.fixture.rewrite_project_manifest()
+        self.fixture.rewrite_metadata()
+        with self.assertRaisesRegex(RuntimeError, "restricted|invalid"):
+            self.load()
 
     def test_stable_site_rejects_private_metadata_even_without_private_files(self) -> None:
         self.fixture.make_stable()

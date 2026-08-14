@@ -23,6 +23,11 @@ import urllib.request
 
 import paramiko
 
+TOOLS_ROOT = Path(__file__).resolve().parent
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+from release_device_gate import validate_final_release_device_gate  # noqa: E402
+
 
 EDITION_BY_RELEASE_ID = {
     "owner": "platform_owner",
@@ -385,6 +390,12 @@ def load_release_evidence(
     expected_tag = f"v{version_name}" + ("" if channel == "Stable" else "-debug")
     if release_tag != expected_tag:
         raise RuntimeError(f"release manifest tag does not match {expected_tag}")
+
+    validate_final_release_device_gate(
+        manifest,
+        manifest_path,
+        Path(__file__).resolve().parents[2],
+    )
 
     releases = manifest.get("releases")
     if not isinstance(releases, list) or len(releases) != 4:

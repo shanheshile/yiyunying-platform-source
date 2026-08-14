@@ -16,6 +16,7 @@
 - [ ] PHP 全量语法检查通过
 - [ ] 下载中心 build、lint、rendered HTML test 通过
 - [ ] Android 16 多品牌真机回归完成
+- [ ] Stable Finalize 已二选一通过完整四角色 `device-upgrade-evidence.json`，或仅对 `1.0.0/code66` 使用显式单次 `release-risk-waiver.json`；豁免必须在官网显示“真机验证待用户完成”，不得写成真机通过
 - [ ] 至少验证一次从上一正式版覆盖安装到本版
 - [ ] 公网 APK 前四字节为 `PK\x03\x04`，不是 HTML 错误页
 

@@ -369,7 +369,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             "$downloadMetadata['pendingManifestSha256'] = $pendingManifestSha256",
             "'ls-files', '--error-unmatch'",
             "if ($Phase -eq 'Finalize')",
-            "-ReleaseRoot $releaseRoot -ExpectedTag $expectedTag",
+            "'-ReleaseRoot', $releaseRoot, '-ExpectedTag', $expectedTag",
             "releaseEvidenceCommit -ne $evidenceCommit",
             "finalizationStatus -ne 'finalized'",
             "项目资产清单未同时绑定 Build 源码提交与 Finalize 证据提交",
@@ -378,7 +378,7 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertIn("$Bump -ne 'none'", source)
         finalize_start = source.index("if ($Phase -eq 'Finalize')")
-        package_call = source.index("-ReleaseRoot $releaseRoot -ExpectedTag $expectedTag")
+        package_call = source.index("'-ReleaseRoot', $releaseRoot, '-ExpectedTag', $expectedTag")
         build_start = source.index("$releaseEvidence = Read-CommittedReleaseEvidence")
         self.assertLess(finalize_start, package_call)
         self.assertLess(package_call, build_start)

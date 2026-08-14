@@ -15,6 +15,7 @@ const IMMUTABLE_FIELDS = [
   "channel",
   "versionName",
   "versionCode",
+  "deviceValidationPlan",
   "buildSourceCommit",
   "releaseTag",
   "releaseIdentitySha256",
@@ -28,6 +29,8 @@ const IMMUTABLE_FIELDS = [
 ];
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
+const DEVICE_PENDING_NOTICE = "真机验证待用户完成（不得声明真机通过）";
+const DEVICE_PASSED_NOTICE = "真机升级验证已由完整证据通过";
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -108,6 +111,54 @@ function validateFourStableReleases(finalManifest) {
   return ROLE_ORDER.map((role) => byRole.get(role));
 }
 
+function validateDeviceValidation(finalManifest) {
+  const plan = String(finalManifest.deviceValidationPlan ?? "");
+  if (!plan) {
+    if (finalManifest.versionCode >= 66) {
+      throw new Error("Final public projection requires a device validation plan");
+    }
+    return;
+  }
+  if (plan !== "device-evidence" && plan !== "risk-waiver") {
+    throw new Error("Final public projection device validation plan is invalid");
+  }
+  const value = finalManifest.deviceValidation;
+  const expectedFields = ["evidenceFileName", "evidenceSha256", "plan", "publicNotice", "status"];
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !exactlyEqual(Object.keys(value).sort(), expectedFields) ||
+    value.plan !== plan
+  ) {
+    throw new Error("Final public projection device validation evidence is invalid");
+  }
+  requireDigest(value.evidenceSha256, "deviceValidation.evidenceSha256");
+  if (plan === "risk-waiver") {
+    if (
+      finalManifest.versionName !== "1.0.0" ||
+      finalManifest.versionCode !== 66 ||
+      value.status !== "pending-user-validation" ||
+      value.evidenceFileName !== "release-risk-waiver.json" ||
+      value.publicNotice !== DEVICE_PENDING_NOTICE ||
+      !Array.isArray(finalManifest.releaseNotes) ||
+      !finalManifest.releaseNotes.includes(DEVICE_PENDING_NOTICE) ||
+      finalManifest.releaseNotes.some(
+        (note) => String(note).includes("真机验证已通过") || note === DEVICE_PASSED_NOTICE,
+      )
+    ) {
+      throw new Error("Risk-waiver release must remain pending user device validation");
+    }
+    return;
+  }
+  if (
+    value.status !== "passed" ||
+    value.evidenceFileName !== "device-upgrade-evidence.json" ||
+    finalManifest.releaseNotes?.includes(DEVICE_PENDING_NOTICE)
+  ) {
+    throw new Error("Device-evidence release validation status is invalid");
+  }
+}
+
 export function createPublicReleaseProjection(pendingMetadata, finalManifest) {
   if (
     pendingMetadata?.schemaVersion !== 4 ||
@@ -147,6 +198,7 @@ export function createPublicReleaseProjection(pendingMetadata, finalManifest) {
   }
   validateConnectionIdentity(finalManifest.connectionIdentity);
   const releases = validateFourStableReleases(finalManifest);
+  validateDeviceValidation(finalManifest);
 
   return Object.freeze({
     versionName: finalManifest.versionName,

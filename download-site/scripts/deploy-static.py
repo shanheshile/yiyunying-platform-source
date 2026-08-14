@@ -21,6 +21,15 @@ from urllib.parse import urlsplit, urlunsplit
 
 import paramiko
 
+BACKEND_TOOLS = Path(__file__).resolve().parents[2] / "backend" / "tools"
+if str(BACKEND_TOOLS) not in sys.path:
+    sys.path.insert(0, str(BACKEND_TOOLS))
+from release_device_gate import (  # noqa: E402
+    DEVICE_PASSED_NOTICE,
+    DEVICE_PENDING_NOTICE,
+    validate_final_release_device_gate,
+)
+
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -42,6 +51,7 @@ IMMUTABLE_METADATA_FIELDS = (
     "channel",
     "versionName",
     "versionCode",
+    "deviceValidationPlan",
     "buildSourceCommit",
     "releaseTag",
     "releaseIdentitySha256",
@@ -415,6 +425,15 @@ def validate_site_tree(
             raise RuntimeError(f"Stable site references a non-public asset: {relative}")
 
     if manifest is not None:
+        if manifest.get("deviceValidationPlan") == "risk-waiver":
+            if DEVICE_PENDING_NOTICE not in public_text:
+                raise RuntimeError(
+                    "Risk-waiver site must display pending user device validation"
+                )
+            if DEVICE_PASSED_NOTICE in public_text or "真机验证已通过" in public_text:
+                raise RuntimeError(
+                    "Risk-waiver site may not claim that device validation passed"
+                )
         private_values: list[str] = []
         for entry in manifest.get("releases", []):
             if isinstance(entry, dict) and str(entry.get("id")) not in PUBLIC_RELEASE_IDS:
@@ -629,6 +648,12 @@ def load_release_files(
             actual = actual.lower()
         if actual != expected:
             raise RuntimeError(f"Project assets manifest mismatch: {field}")
+
+    validate_final_release_device_gate(
+        manifest,
+        manifest_path,
+        repository_root,
+    )
 
     asset_entries = project_manifest.get("assets")
     if not isinstance(asset_entries, list) or len(asset_entries) != 3:

@@ -296,6 +296,96 @@ test("formal public projection rejects immutable, identity and pending-evidence 
   );
 });
 
+test("future Stable code >=66 cannot omit the device validation plan", () => {
+  const pending = structuredClone(releaseMetadata);
+  pending.versionName = "1.0.1";
+  pending.versionCode = 67;
+  pending.releaseTag = "v1.0.1";
+  delete pending.deviceValidationPlan;
+  const stems = {
+    user: "user",
+    admin: "admin",
+    authorized: "authorized-platform",
+    owner: "platform-owner",
+  };
+  pending.releases = pending.releases.map((release) => ({
+    ...release,
+    fileName: `yiyunying-${stems[release.id]}-v1.0.1.apk`,
+    versionName: `1.0.1-${stems[release.id]}`,
+    versionCode: 67,
+  }));
+  const finalManifest = structuredClone(pending);
+  delete finalManifest.pendingManifestSha256;
+  finalManifest.finalizationStatus = "finalized";
+  finalManifest.releaseEvidenceCommit = "b".repeat(40);
+  assert.throws(
+    () => createPublicReleaseProjection(pending, finalManifest),
+    /requires a device validation plan/,
+  );
+});
+
+test("risk-waiver projection stays pending and publishes the user-validation notice", async () => {
+  const notice = "真机验证待用户完成（不得声明真机通过）";
+  const pending = structuredClone(releaseMetadata);
+  pending.versionCode = 66;
+  pending.deviceValidationPlan = "risk-waiver";
+  pending.releaseNotes = [...pending.releaseNotes, notice];
+  pending.releases = pending.releases.map((release) => ({ ...release, versionCode: 66 }));
+  const finalManifest = structuredClone(pending);
+  delete finalManifest.pendingManifestSha256;
+  finalManifest.finalizationStatus = "finalized";
+  finalManifest.releaseEvidenceCommit = "b".repeat(40);
+  finalManifest.deviceValidation = {
+    plan: "risk-waiver",
+    status: "pending-user-validation",
+    evidenceFileName: "release-risk-waiver.json",
+    evidenceSha256: "e".repeat(64),
+    publicNotice: notice,
+  };
+  const projection = createPublicReleaseProjection(pending, finalManifest);
+  assert.ok(projection.releaseNotes.includes(notice));
+
+  const forgedPass = structuredClone(finalManifest);
+  forgedPass.deviceValidation.status = "passed";
+  assert.throws(
+    () => createPublicReleaseProjection(pending, forgedPass),
+    /must remain pending user device validation/,
+  );
+  const forgedNotes = structuredClone(finalManifest);
+  forgedNotes.releaseNotes.push("真机验证已通过");
+  const matchingForgedPending = structuredClone(pending);
+  matchingForgedPending.releaseNotes.push("真机验证已通过");
+  assert.throws(
+    () => createPublicReleaseProjection(matchingForgedPending, forgedNotes),
+    /must remain pending user device validation/,
+  );
+
+  const temporary = await mkdtemp(join(tmpdir(), "yiyunying-waiver-export-"));
+  try {
+    const metadataPath = join(temporary, "release-metadata.json");
+    const manifestPath = join(temporary, "release-manifest.json");
+    const outputPath = join(temporary, "public");
+    await writeFile(metadataPath, JSON.stringify(pending), "utf8");
+    await writeFile(manifestPath, JSON.stringify(finalManifest), "utf8");
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/export-static.mjs", import.meta.url)),
+        `--metadata=${metadataPath}`,
+        `--final-manifest=${manifestPath}`,
+        `--output-dir=${outputPath}`,
+      ],
+      { encoding: "utf8", windowsHide: true },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const html = await readFile(join(outputPath, "index.html"), "utf8");
+    assert.ok(html.includes(notice));
+    assert.doesNotMatch(html, /真机验证已通过/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test("renders audited four-role and per-system API guides", async () => {
   const html = await renderedHtml("/api-docs/");
   for (const text of [

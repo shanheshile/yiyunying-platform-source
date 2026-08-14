@@ -23,6 +23,11 @@ from dataclasses import dataclass, replace
 
 import paramiko
 
+TOOLS_ROOT = Path(__file__).resolve().parent
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+from release_device_gate import validate_final_release_device_gate  # noqa: E402
+
 
 EDITIONS = {"platform_owner", "authorized_platform", "admin", "user"}
 MANIFEST_IDS = {
@@ -511,6 +516,12 @@ def validate_release_plan(
     manifest_connection_identity = validate_manifest_connection_identity(manifest)
     if channel == "Stable" and urlsplit(manifest_connection_identity["apiBaseUrl"]).scheme.lower() != "https":
         raise RuntimeError("Stable release connectionIdentity.apiBaseUrl must use HTTPS")
+
+    validate_final_release_device_gate(
+        manifest,
+        Path(manifest_path),
+        Path(__file__).resolve().parents[2],
+    )
 
     entries = manifest.get("releases")
     if not isinstance(entries, list) or len(entries) != len(EDITIONS):

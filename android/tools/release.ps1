@@ -8,6 +8,9 @@ param(
     [string] $Bump = 'none',
     [string] $JavaHome = $env:JAVA_HOME,
     [string] $DownloadRootBase = '/downloads',
+    [ValidateSet('DeviceEvidence', 'UserRiskWaiver')]
+    [string] $DeviceValidationPlan = 'DeviceEvidence',
+    [string] $RiskWaiverConfirmationToken,
     [switch] $SkipVerification,
     [switch] $SkipDownloadMetadata,
     [switch] $DryRun,
@@ -25,6 +28,8 @@ $verifyScript = Join-Path $PSScriptRoot 'verify.ps1'
 $packageScript = Join-Path $workspaceRoot 'scripts\package-project.ps1'
 $releaseIdentityFile = Join-Path $workspaceRoot 'backend\config\release-identity.json'
 $releaseRoot = Join-Path $workspaceRoot 'releases'
+$riskWaiverConfirmation = 'I_ACCEPT_1.0.0_CODE66_RELEASE_WITH_DEVICE_VALIDATION_PENDING'
+$riskWaiverPublicNotice = '真机验证待用户完成（不得声明真机通过）'
 
 function Invoke-VersionCommand {
     param(
@@ -551,10 +556,25 @@ $buildTypeDirectory = $buildType.ToLowerInvariant()
 $tagSuffix = if ($isStable) { '' } else { '-debug' }
 $packageDebugSuffix = if ($isStable) { '' } else { '.debug' }
 $expectedTag = "v$($version.versionName)$tagSuffix"
+if ($DeviceValidationPlan -eq 'UserRiskWaiver') {
+    if (-not $isStable) {
+        throw '真机风险豁免只能用于 Stable 正式发布。'
+    }
+    if ($version.versionName -cne '1.0.0' -or [int] $version.versionCode -ne 66) {
+        throw '真机风险豁免仅适用于本次 1.0.0/code66。'
+    }
+    if ($RiskWaiverConfirmationToken -cne $riskWaiverConfirmation) {
+        throw 'RISK_WAIVER_EXACT_CONFIRMATION_REQUIRED: Build/Finalize 都必须显式传入本次精确确认令牌。'
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($RiskWaiverConfirmationToken)) {
+    throw '使用真机证据计划时不得传入风险豁免令牌。'
+}
 if ($DryRun) {
     Write-Host "计划阶段：$Phase"
     Write-Host "计划通道：$Channel"
     Write-Host "计划发布：$($version.versionName) ($($version.versionCode))"
+    Write-Host "真机门禁计划：$DeviceValidationPlan"
     Write-Host '干运行结束：未构建 APK、未生成项目资产、未写入版本和下载站元数据。'
     exit 0
 }
@@ -564,8 +584,14 @@ if ($Phase -eq 'Finalize') {
     if (-not (Test-Path -LiteralPath $releaseDirectory)) {
         throw "缺少 Build 阶段发布目录：$releaseDirectory"
     }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
-        -ReleaseRoot $releaseRoot -ExpectedTag $expectedTag -Channel $Channel
+    $packageArguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $packageScript,
+        '-ReleaseRoot', $releaseRoot, '-ExpectedTag', $expectedTag, '-Channel', $Channel
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RiskWaiverConfirmationToken)) {
+        $packageArguments += @('-RiskWaiverConfirmationToken', $RiskWaiverConfirmationToken)
+    }
+    & powershell.exe @packageArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Finalize 阶段项目资产生成失败，退出码：$LASTEXITCODE"
     }
@@ -578,8 +604,21 @@ if ($Phase -eq 'Finalize') {
         [string] $finalManifest.channel -ne $Channel -or
         [string] $finalManifest.releaseEvidenceCommit -ne $evidenceCommit -or
         [string] $finalManifest.releaseTag -ne $expectedTag -or
-        [string] $finalManifest.finalizationStatus -ne 'finalized') {
+        [string] $finalManifest.finalizationStatus -ne 'finalized' -or
+        ($isStable -and [string] $finalManifest.deviceValidation.plan -ne $(if ($DeviceValidationPlan -eq 'UserRiskWaiver') { 'risk-waiver' } else { 'device-evidence' }))) {
         throw 'Finalize 后发布清单未绑定到当前证据提交、最终标签和版本。'
+    }
+    if ($isStable -and $DeviceValidationPlan -eq 'UserRiskWaiver') {
+        if ([string] $finalManifest.deviceValidation.status -cne 'pending-user-validation' -or
+            [string] $finalManifest.deviceValidation.evidenceFileName -cne 'release-risk-waiver.json' -or
+            [string] $finalManifest.deviceValidation.publicNotice -cne $riskWaiverPublicNotice -or
+            $riskWaiverPublicNotice -cnotin @($finalManifest.releaseNotes | ForEach-Object { [string] $_ })) {
+            throw 'Finalize 后风险豁免必须保持“真机验证待用户完成”，不得写成通过。'
+        }
+    }
+    elseif ($isStable -and ([string] $finalManifest.deviceValidation.status -cne 'passed' -or
+        [string] $finalManifest.deviceValidation.evidenceFileName -cne 'device-upgrade-evidence.json')) {
+        throw 'Finalize 后缺少完整真机证据通过状态。'
     }
     $projectAssetsManifestPath = Join-Path $releaseDirectory 'project-assets-manifest.json'
     $projectAssetsManifest = Get-Content -LiteralPath $projectAssetsManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -595,6 +634,9 @@ if ($Phase -eq 'Finalize') {
         ([string] $projectAssetsManifest.connectionIdentity.appKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.appKeySha256).ToLowerInvariant() -or
         ([string] $projectAssetsManifest.connectionIdentity.platformKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.platformKeySha256).ToLowerInvariant() -or
         ([string] $projectAssetsManifest.connectionIdentity.authorizedPlatformKeySha256).ToLowerInvariant() -cne ([string] $finalManifest.connectionIdentity.authorizedPlatformKeySha256).ToLowerInvariant() -or
+        ($isStable -and [string] $projectAssetsManifest.deviceValidation.status -cne [string] $finalManifest.deviceValidation.status) -or
+        ($isStable -and [string] $projectAssetsManifest.deviceValidation.evidenceFileName -cne [string] $finalManifest.deviceValidation.evidenceFileName) -or
+        ($isStable -and [string] $projectAssetsManifest.deviceValidation.evidenceSha256 -cne [string] $finalManifest.deviceValidation.evidenceSha256) -or
         ([string] $projectAssetsManifest.releaseManifestSha256).ToLowerInvariant() -ne $finalManifestSha256) {
         throw '项目资产清单未同时绑定 Build 源码提交与 Finalize 证据提交。'
     }
@@ -621,6 +663,9 @@ if ($Phase -eq 'Finalize') {
     Write-Host "Build 源码提交：$($finalManifest.buildSourceCommit)"
     Write-Host "发布证据提交：$evidenceCommit"
     Write-Host "最终注释标签：$expectedTag"
+    if ($isStable) {
+        Write-Host "真机门禁状态：$($finalManifest.deviceValidation.status)"
+    }
     exit 0
 }
 
@@ -776,6 +821,15 @@ try {
         )
     }
     Assert-ReleaseNotes -Notes $notes
+    if ($DeviceValidationPlan -eq 'UserRiskWaiver') {
+        if ($riskWaiverPublicNotice -cnotin $notes) {
+            $notes += $riskWaiverPublicNotice
+        }
+    }
+    elseif ($riskWaiverPublicNotice -cin $notes) {
+        throw '真机证据计划不得将官网发布说明标记为待用户验证。'
+    }
+    Assert-ReleaseNotes -Notes $notes
 
     $projectAssets = @(
         [ordered]@{
@@ -813,6 +867,7 @@ try {
         releaseEvidenceCommit = $null
         releaseTag = $expectedTag
         finalizationStatus = 'pending'
+        deviceValidationPlan = $(if (-not $isStable) { 'not-required-debug' } elseif ($DeviceValidationPlan -eq 'UserRiskWaiver') { 'risk-waiver' } else { 'device-evidence' })
         releaseIdentitySha256 = $releaseIdentitySha256
         connectionIdentity = $connectionIdentity.evidence
         releaseDate = (Get-Date -Format 'yyyy-MM-dd')
