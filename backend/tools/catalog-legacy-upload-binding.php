@@ -145,13 +145,32 @@ function catalogLegacyResolveBinding(
  * @param array<string,mixed> $catalog
  * @return array{ok:bool,reason?:string}
  */
-function catalogLegacyQuarantineEligibility(array $catalog): array
+function catalogLegacyQuarantineEligibility(array $catalog, string $resolutionReason = ''): array
 {
     if (($catalog['source_upload_id'] ?? null) !== null) {
         return ['ok' => false, 'reason' => 'source_upload_present'];
     }
-    if ((bool) ($catalog['has_purchase'] ?? false)) {
-        return ['ok' => false, 'reason' => 'purchase_requires_private_file'];
+    $hasPurchase = (bool) ($catalog['has_purchase'] ?? false);
+    if ($hasPurchase) {
+        $legacyUrl = trim((string) ($catalog['legacy_url'] ?? ''));
+        $host = strtolower((string) (parse_url($legacyUrl, PHP_URL_HOST) ?? ''));
+        $reservedDemoOrigin = $resolutionReason === 'foreign_origin'
+            && in_array($host, ['example.com', 'www.example.com'], true);
+        if (!$reservedDemoOrigin) {
+            return ['ok' => false, 'reason' => 'purchase_requires_private_file'];
+        }
+        $status = (int) ($catalog['status'] ?? -1);
+        $auditStatus = strtolower(trim((string) ($catalog['audit_status'] ?? '')));
+        $beforeMigration = $status === 1 && $auditStatus === 'approved';
+        $afterMigration = $status === 0 && $auditStatus === 'on_hold';
+        if ((!$beforeMigration && !$afterMigration) || $legacyUrl === '') {
+            return ['ok' => false, 'reason' => 'purchased_demo_state_drift'];
+        }
+        return [
+            'ok' => true,
+            'reason_code' => 'reserved_example_origin_purchase_unavailable',
+            'purchased_unavailable' => true,
+        ];
     }
     if ((int) ($catalog['status'] ?? 1) !== 0) {
         return ['ok' => false, 'reason' => 'catalog_row_still_active'];
@@ -163,5 +182,5 @@ function catalogLegacyQuarantineEligibility(array $catalog): array
     if (trim((string) ($catalog['legacy_url'] ?? '')) === '') {
         return ['ok' => false, 'reason' => 'legacy_url_missing'];
     }
-    return ['ok' => true];
+    return ['ok' => true, 'reason_code' => $resolutionReason !== '' ? $resolutionReason : 'unresolved'];
 }

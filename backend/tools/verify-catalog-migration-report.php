@@ -260,16 +260,14 @@ function assertDatabaseAndPrivateFilesReady(): void
             foreach ($rows as $row) {
                 $afterId = (int) $row['id'];
                 $quarantineEvidence = Database::one(
-                    'SELECT legacy_url_sha256 FROM catalog_legacy_url_quarantines
+                    'SELECT legacy_url, legacy_url_sha256, reason_code FROM catalog_legacy_url_quarantines
                      WHERE catalog_kind = ? AND catalog_id = ? AND admin_id = ? AND app_id = ? LIMIT 1',
                     [$definition['kind'], (int) $row['id'], (int) $row['admin_id'], (int) $row['app_id']]
                 );
-                $hasQuarantineEvidence = $quarantineEvidence !== null
-                    && preg_match('/^[a-f0-9]{64}$/D', strtolower((string) ($quarantineEvidence['legacy_url_sha256'] ?? ''))) === 1;
                 if (catalogPrivateRowIsInert(
                     $row,
                     (int) ($row['has_purchase'] ?? 0) === 1,
-                    $hasQuarantineEvidence
+                    $quarantineEvidence
                 )) continue;
                 $uploadId = (int) ($row['source_upload_id'] ?? 0);
                 if ($uploadId <= 0) throw new RuntimeException('仍需保留的目录条目缺少私有上传');

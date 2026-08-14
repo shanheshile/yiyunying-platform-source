@@ -38,6 +38,32 @@ $quarantineBase = array_replace($catalog, [
 ]);
 $checks['inactive unpurchased on-hold row may quarantine'] = catalogLegacyQuarantineEligibility($quarantineBase)['ok'] ?? false;
 $checks['purchased row cannot quarantine'] = (catalogLegacyQuarantineEligibility(array_replace($quarantineBase, ['has_purchase' => true]))['reason'] ?? '') === 'purchase_requires_private_file';
+$reservedPurchased = array_replace($quarantineBase, [
+    'legacy_url' => 'https://example.com/retired-demo-resource.zip',
+    'has_purchase' => true,
+    'status' => 1,
+    'audit_status' => 'approved',
+]);
+$reservedEligibility = catalogLegacyQuarantineEligibility($reservedPurchased, 'foreign_origin');
+$checks['purchased reserved-domain fixture is disabled with explicit evidence'] =
+    ($reservedEligibility['ok'] ?? false)
+    && ($reservedEligibility['purchased_unavailable'] ?? false)
+    && ($reservedEligibility['reason_code'] ?? '') === 'reserved_example_origin_purchase_unavailable';
+$checks['migration-63 on-hold state remains eligible for reserved fixture quarantine'] =
+    (catalogLegacyQuarantineEligibility(
+        array_replace($reservedPurchased, ['status' => 0, 'audit_status' => 'on_hold']),
+        'foreign_origin'
+    )['reason_code'] ?? '') === 'reserved_example_origin_purchase_unavailable';
+$checks['purchased non-reserved foreign origin still blocks'] =
+    (catalogLegacyQuarantineEligibility(
+        array_replace($reservedPurchased, ['legacy_url' => 'https://vendor.example.net/asset.zip']),
+        'foreign_origin'
+    )['reason'] ?? '') === 'purchase_requires_private_file';
+$checks['purchased reserved-domain fixture state drift blocks'] =
+    (catalogLegacyQuarantineEligibility(
+        array_replace($reservedPurchased, ['audit_status' => 'pending']),
+        'foreign_origin'
+    )['reason'] ?? '') === 'purchased_demo_state_drift';
 $checks['active row cannot quarantine'] = (catalogLegacyQuarantineEligibility(array_replace($quarantineBase, ['status' => 1]))['reason'] ?? '') === 'catalog_row_still_active';
 $checks['pending row cannot quarantine'] = (catalogLegacyQuarantineEligibility(array_replace($quarantineBase, ['audit_status' => 'pending']))['reason'] ?? '') === 'catalog_row_not_quarantined';
 

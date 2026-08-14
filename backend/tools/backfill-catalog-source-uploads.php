@@ -69,11 +69,15 @@ foreach ($definitions as $definition) {
         $scene = $definition['kind'] === 'resource'
             ? SubmissionInspectionService::catalogScene((string) $row['resource_type'])
             : 'store_app_package';
-        $hasPurchase = Database::one(
-            "SELECT id FROM {$definition['purchase_table']} WHERE {$definition['purchase_column']} = ? LIMIT 1",
+        $purchaseCount = (int) (Database::one(
+            "SELECT COUNT(*) AS total FROM {$definition['purchase_table']} WHERE {$definition['purchase_column']} = ?",
             [(int) $row['id']]
-        ) !== null;
-        $catalog = $row + ['scene' => $scene, 'has_purchase' => $hasPurchase];
+        )['total'] ?? 0);
+        $catalog = $row + [
+            'scene' => $scene,
+            'has_purchase' => $purchaseCount > 0,
+            'purchase_count' => $purchaseCount,
+        ];
         $canonical = catalogLegacyCanonicalPath((string) $row['legacy_url'], (int) $row['app_id'], $applicationUrl);
         $uploads = [];
         if ($canonical['ok'] ?? false) {
@@ -86,7 +90,8 @@ foreach ($definitions as $definition) {
         $result = catalogLegacyResolveBinding($catalog, $uploads, $applicationUrl, 'inspectPublicUpload');
         $identity = ['kind' => $definition['kind'], 'id' => (int) $row['id'], 'admin_id' => (int) $row['admin_id'], 'app_id' => (int) $row['app_id']];
         if (!($result['ok'] ?? false)) {
-            $eligibility = catalogLegacyQuarantineEligibility($catalog);
+            $resolutionReason = (string) ($result['reason'] ?? 'unresolved');
+            $eligibility = catalogLegacyQuarantineEligibility($catalog, $resolutionReason);
             if ($eligibility['ok'] ?? false) {
                 $legacyUrl = (string) $row['legacy_url'];
                 $quarantinePlans[] = $identity + [
@@ -99,7 +104,10 @@ foreach ($definitions as $definition) {
                     'updated_at' => (string) $row['updated_at'],
                     'audit_status' => (string) $row['audit_status'], 'status' => (int) $row['status'],
                     'deleted_at' => $row['deleted_at'],
-                    'reason' => (string) ($result['reason'] ?? 'unresolved'),
+                    'resolution_reason' => $resolutionReason,
+                    'reason' => (string) ($eligibility['reason_code'] ?? $resolutionReason),
+                    'purchase_count' => $purchaseCount,
+                    'purchased_unavailable' => (bool) ($eligibility['purchased_unavailable'] ?? false),
                 ];
                 continue;
             }
@@ -164,16 +172,21 @@ if ($apply && $issues === []) {
                      FROM {$plan['table']} WHERE id = ? AND admin_id = ? AND app_id = ? FOR UPDATE",
                     [$plan['id'], $plan['admin_id'], $plan['app_id']]
                 );
-                $hasPurchase = Database::one(
-                    "SELECT id FROM {$plan['purchase_table']} WHERE {$plan['purchase_column']} = ? LIMIT 1 FOR UPDATE",
+                $purchaseCount = (int) (Database::one(
+                    "SELECT COUNT(*) AS total FROM {$plan['purchase_table']} WHERE {$plan['purchase_column']} = ? FOR UPDATE",
                     [$plan['id']]
-                ) !== null;
+                )['total'] ?? 0);
                 if ($row === null || (string) ($row['legacy_url'] ?? '') !== $plan['legacy_url']
                     || (string) ($row['updated_at'] ?? '') !== $plan['updated_at']) {
                     throw new RuntimeException('Catalog quarantine row changed after preflight');
                 }
-                $eligibility = catalogLegacyQuarantineEligibility($row + ['has_purchase' => $hasPurchase]);
-                if (!($eligibility['ok'] ?? false)) {
+                $eligibility = catalogLegacyQuarantineEligibility(
+                    $row + ['has_purchase' => $purchaseCount > 0, 'purchase_count' => $purchaseCount],
+                    (string) $plan['resolution_reason']
+                );
+                if (!($eligibility['ok'] ?? false)
+                    || $purchaseCount !== (int) $plan['purchase_count']
+                    || (string) ($eligibility['reason_code'] ?? '') !== (string) $plan['reason']) {
                     throw new RuntimeException('Catalog quarantine eligibility changed after preflight');
                 }
                 $existing = Database::one(
@@ -195,6 +208,7 @@ if ($apply && $issues === []) {
                         ]
                     );
                 } elseif ((string) $existing['legacy_url'] !== $plan['legacy_url']
+                    || (string) $existing['reason_code'] !== (string) $plan['reason']
                     || !hash_equals($plan['legacy_url_sha256'], strtolower((string) $existing['legacy_url_sha256']))) {
                     throw new RuntimeException('Existing catalog quarantine evidence does not match the source row');
                 }
@@ -206,7 +220,9 @@ if ($apply && $issues === []) {
                      WHERE id = ? AND admin_id = ? AND app_id = ? AND source_upload_id IS NULL
                        AND {$plan['url_column']} = ? AND updated_at = ?",
                     [
-                        'Legacy public URL quarantined; controlled re-upload and review are required.',
+                        ($plan['purchased_unavailable'] ?? false)
+                            ? 'Reserved-domain demo asset disabled; purchase history preserved; controlled re-upload is required.'
+                            : 'Legacy public URL quarantined; controlled re-upload and review are required.',
                         $plan['id'], $plan['admin_id'], $plan['app_id'], $plan['legacy_url'], $plan['updated_at'],
                     ]
                 );
@@ -244,6 +260,14 @@ $report = [
     'status' => $status, 'generated_at_utc' => gmdate(DATE_ATOM),
     'summary' => [
         'resolvable' => count($bindingPlans), 'quarantinable' => count($quarantinePlans),
+        'purchased_unavailable' => count(array_filter(
+            $quarantinePlans,
+            static fn (array $plan): bool => (bool) ($plan['purchased_unavailable'] ?? false)
+        )),
+        'preserved_purchase_count' => array_sum(array_map(
+            static fn (array $plan): int => (int) ($plan['purchase_count'] ?? 0),
+            $quarantinePlans
+        )),
         'unresolved' => count($issues),
         'applied' => $status === 'applied_verified' ? count($bindingPlans) : 0,
         'quarantined' => $status === 'applied_verified' ? count($quarantinePlans) : 0,
@@ -303,14 +327,21 @@ function verifyAppliedBindings(array $bindingPlans, array $quarantinePlans): voi
             [$plan['id'], $plan['admin_id'], $plan['app_id']]
         );
         $evidence = Database::one(
-            'SELECT legacy_url_sha256 FROM catalog_legacy_url_quarantines
+            'SELECT legacy_url, legacy_url_sha256, reason_code FROM catalog_legacy_url_quarantines
              WHERE catalog_kind = ? AND catalog_id = ? AND admin_id = ? AND app_id = ?',
             [$plan['kind'], $plan['id'], $plan['admin_id'], $plan['app_id']]
         );
+        $purchaseCount = (int) (Database::one(
+            "SELECT COUNT(*) AS total FROM {$plan['purchase_table']} WHERE {$plan['purchase_column']} = ?",
+            [$plan['id']]
+        )['total'] ?? 0);
         if ($row === null || $row['source_upload_id'] !== null || trim((string) $row['legacy_url']) !== ''
             || (int) $row['size_bytes'] !== 0 || trim((string) $row['file_sha256']) !== ''
             || (int) $row['status'] !== 0 || (string) $row['audit_status'] !== 'on_hold'
             || $evidence === null
+            || $purchaseCount !== (int) $plan['purchase_count']
+            || (string) ($evidence['legacy_url'] ?? '') !== (string) $plan['legacy_url']
+            || (string) ($evidence['reason_code'] ?? '') !== (string) $plan['reason']
             || !hash_equals($plan['legacy_url_sha256'], strtolower((string) $evidence['legacy_url_sha256']))) {
             throw new RuntimeException('Post-commit quarantine readback failed');
         }

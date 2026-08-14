@@ -341,16 +341,14 @@ function inspectCatalogRow(array $definition, array $row): array
         [(int) $row['id']]
     ) !== null;
     $quarantineEvidence = Database::one(
-        'SELECT legacy_url_sha256 FROM catalog_legacy_url_quarantines
+        'SELECT legacy_url, legacy_url_sha256, reason_code FROM catalog_legacy_url_quarantines
          WHERE catalog_kind = ? AND catalog_id = ? AND admin_id = ? AND app_id = ? LIMIT 1',
         [$definition['kind'], $item['id'], $item['admin_id'], $item['app_id']]
     );
-    $hasQuarantineEvidence = $quarantineEvidence !== null
-        && preg_match('/^[a-f0-9]{64}$/D', strtolower((string) ($quarantineEvidence['legacy_url_sha256'] ?? ''))) === 1;
-    // Purchased/live rows always retain private bytes.  A non-deleted stopped
-    // row becomes inert only after the maintenance tool preserved its legacy
-    // URL in the private quarantine ledger and cleared the public URL.
-    $inert = catalogPrivateRowIsInert($row, $hasPurchase, $hasQuarantineEvidence);
+    // Purchased rows normally retain private bytes. Reserved example.com demo
+    // records are the fail-closed exception: their purchase history remains,
+    // but the unusable public URL is privately preserved and disabled.
+    $inert = catalogPrivateRowIsInert($row, $hasPurchase, $quarantineEvidence);
     $uploadId = max(0, (int) ($row['source_upload_id'] ?? 0));
     if ($uploadId <= 0) {
         if ($inert && $legacyUrl === '') {
@@ -608,7 +606,9 @@ function countCatalogMetadataMismatches(): int
            ON q.catalog_kind = 'resource' AND q.catalog_id = r.id AND q.admin_id = r.admin_id AND q.app_id = r.app_id
          WHERE r.deleted_at IS NULL
            AND NOT (q.id IS NOT NULL AND r.source_upload_id IS NULL AND TRIM(r.download_url) = ''
-             AND r.status = 0 AND r.audit_status IN ('on_hold','rejected'))
+             AND r.status = 0 AND r.audit_status IN ('on_hold','rejected')
+             AND (NOT EXISTS (SELECT 1 FROM resource_purchases rp WHERE rp.resource_id = r.id)
+               OR q.reason_code = 'reserved_example_origin_purchase_unavailable'))
            AND (up.id IS NULL OR up.file_path NOT LIKE 'private/%'
              OR LOWER(r.file_sha256) <> LOWER(up.sha256) OR r.size_bytes <> up.size_bytes)"
     );
@@ -619,7 +619,9 @@ function countCatalogMetadataMismatches(): int
            ON q.catalog_kind = 'store_app' AND q.catalog_id = s.id AND q.admin_id = s.admin_id AND q.app_id = s.app_id
          WHERE s.deleted_at IS NULL
            AND NOT (q.id IS NOT NULL AND s.source_upload_id IS NULL AND TRIM(s.apk_url) = ''
-             AND s.status = 0 AND s.audit_status IN ('on_hold','rejected'))
+             AND s.status = 0 AND s.audit_status IN ('on_hold','rejected')
+             AND (NOT EXISTS (SELECT 1 FROM store_app_purchases sp WHERE sp.store_app_id = s.id)
+               OR q.reason_code = 'reserved_example_origin_purchase_unavailable'))
            AND (up.id IS NULL OR up.file_path NOT LIKE 'private/%'
              OR LOWER(s.file_sha256) <> LOWER(up.sha256) OR s.size_bytes <> up.size_bytes)"
     );

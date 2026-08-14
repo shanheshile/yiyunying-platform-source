@@ -5,6 +5,7 @@ $root = dirname(__DIR__);
 $paths = [
     'migrator' => $root . '/tools/migrate-catalog-private-files.php',
     'verifier' => $root . '/tools/verify-catalog-migration-report.php',
+    'backfill' => $root . '/tools/backfill-catalog-source-uploads.php',
     'retention' => $root . '/tools/catalog-private-retention.php',
     'inspection' => $root . '/app/Services/SubmissionInspectionService.php',
     'app_service' => $root . '/app/Services/AppService.php',
@@ -42,20 +43,44 @@ $releaseChainMatches = is_array($releaseIdentity) && is_array($downloadPackage)
 $receiptWrite = strpos($source['verifier'], 'writeNewPrivateFile($pendingReceipt');
 $receiptPublish = strpos($source['verifier'], 'rename($pendingReceipt, $receiptPath)');
 $gateActivation = strpos($source['verifier'], 'setCatalogMigrationGate(true)');
+$legacyEvidenceUrl = 'https://old.example.test/retired.zip';
+$quarantineEvidence = [
+    'legacy_url' => $legacyEvidenceUrl,
+    'legacy_url_sha256' => hash('sha256', $legacyEvidenceUrl),
+    'reason_code' => 'foreign_origin',
+];
+$purchasedEvidenceUrl = 'https://example.com/retired-demo-resource.zip';
+$purchasedDemoEvidence = [
+    'legacy_url' => $purchasedEvidenceUrl,
+    'legacy_url_sha256' => hash('sha256', $purchasedEvidenceUrl),
+    'reason_code' => 'reserved_example_origin_purchase_unavailable',
+];
 $checks = [
-    'retention policy requires private bytes for purchases and live rows' =>
+    'retention policy only exempts purchased reserved-domain fixtures with private evidence' =>
         !catalogPrivateRowIsInert([
             'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
             'status' => 0, 'audit_status' => 'on_hold',
-        ], true, true)
-        && !catalogPrivateRowIsInert([
-            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
-            'status' => 1, 'audit_status' => 'on_hold',
-        ], false, true)
+        ], true, $quarantineEvidence)
         && catalogPrivateRowIsInert([
             'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
             'status' => 0, 'audit_status' => 'on_hold',
-        ], false, true),
+        ], true, $purchasedDemoEvidence)
+        && !catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 0, 'audit_status' => 'on_hold',
+        ], true, array_replace($purchasedDemoEvidence, ['legacy_url' => 'https://vendor.example.net/file.zip']))
+        && !catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 0, 'audit_status' => 'on_hold',
+        ], true, array_replace($purchasedDemoEvidence, ['legacy_url_sha256' => str_repeat('0', 64)]))
+        && !catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 1, 'audit_status' => 'on_hold',
+        ], false, $quarantineEvidence)
+        && catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 0, 'audit_status' => 'on_hold',
+        ], false, $quarantineEvidence),
     'apply binds evidence to a release and never opens runtime before a durable report' =>
         str_contains($source['migrator'], "cliOption(\$argv, '--release-version')")
         && str_contains($source['migrator'], "'release_version' => \$releaseVersion")
@@ -65,6 +90,9 @@ $checks = [
         && str_contains($source['migrator'], "'runtime_gate_activated' => false")
         && str_contains($source['migrator'], 'writeAtomicPrivateFile($reportPath')
         && !str_contains($source['migrator'], 'setCatalogMigrationGate(true)'),
+    'binding apply report proves purchased rows remain present after commit' =>
+        str_contains($source['backfill'], "'preserved_purchase_count'")
+        && str_contains($source['backfill'], '$purchaseCount !== (int) $plan'),
     'activation requires a fresh exact report and all residual counters at zero' =>
         str_contains($source['verifier'], "'mode'] ?? null) !== 'apply'")
         && str_contains($source['verifier'], "'release_version'] ?? null) !== \$releaseVersion")
@@ -120,7 +148,7 @@ $checks = [
         && str_contains($source['migrator'], '上传记录场景不匹配，必须人工核对其公开文件并修复引用')
         && str_contains($source['migrator'], 'catalogPrivateRowIsInert(')
         && str_contains($source['verifier'], 'catalogPrivateRowIsInert(')
-        && str_contains($source['retention'], "if (\$hasPurchase) return false")
+        && str_contains($source['retention'], 'reserved_example_origin_purchase_unavailable')
         && str_contains($source['retention'], "\$row['deleted_at']")
         && str_contains($source['retention'], "['on_hold', 'rejected']")
         && str_contains($source['migrator'], 'catalog_legacy_url_quarantines')
