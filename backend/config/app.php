@@ -21,17 +21,23 @@ $envBool = static function (string $name, bool $default) use ($env): bool {
 };
 
 $root = dirname(__DIR__);
-$bundledSttVenvPython = PHP_OS_FAMILY === 'Windows'
-    ? $root . '/storage/stt/venv/Scripts/python.exe'
-    : $root . '/storage/stt/venv/bin/python3';
+$bundledSttPythonCandidates = PHP_OS_FAMILY === 'Windows'
+    ? [$root . '/storage/stt/venv/Scripts/python.exe']
+    : [
+        $root . '/storage/stt/current/python/bin/python3',
+        $root . '/storage/stt/venv/bin/python3',
+    ];
 $bundledSttScript = $root . '/tools/stt/transcribe.py';
 $systemPythonCandidates = PHP_OS_FAMILY === 'Windows'
     ? ['python.exe', 'python']
     : ['/usr/bin/python3', '/usr/local/bin/python3', 'python3'];
-$bundledSttPython = is_file($bundledSttVenvPython)
-    && (PHP_OS_FAMILY === 'Windows' || is_executable($bundledSttVenvPython))
-    ? $bundledSttVenvPython
-    : '';
+$bundledSttPython = '';
+foreach ($bundledSttPythonCandidates as $candidate) {
+    if (is_file($candidate) && (PHP_OS_FAMILY === 'Windows' || is_executable($candidate))) {
+        $bundledSttPython = $candidate;
+        break;
+    }
+}
 if ($bundledSttPython === '') {
     foreach ($systemPythonCandidates as $candidate) {
         if (!str_contains($candidate, '/') || (is_file($candidate) && is_executable($candidate))) {

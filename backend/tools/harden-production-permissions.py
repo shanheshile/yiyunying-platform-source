@@ -27,8 +27,16 @@ EXPECTED_BACKUP_ROOT = "/www/backup/yiyunying"
 EXPECTED_RUNTIME_USER = "www"
 EXPECTED_RUNTIME_GROUP = "www"
 MAINTENANCE_ACK = "writes-stopped-and-backup-reviewed"
+STT_MAINTENANCE_ACK = "www-processes-stopped-stt-backup-reviewed"
 SSH_KEEPALIVE_SECONDS = 15
 REMOTE_TIMEOUT_SECONDS = 15 * 60
+PROTECTED_REMOTE_ANCESTORS = (
+    "/",
+    "/www",
+    "/www/wwwroot",
+    "/www/wwwroot/appht.jjmxg.xyz",
+)
+STT_RELEASE_ID_PATTERN = r"^py31115-fw121-ebe41f70d5b6-[0-9a-f]{12}$"
 
 IMMUTABLE_TREES = ("app", "config", "database", "deploy", "docs", "routes", "tools")
 APPLICATION_TOP_LEVEL_FILES = (
@@ -73,7 +81,11 @@ PUBLIC_TOP_LEVEL_DIRECTORY_ALLOWLIST = {
     *PUBLIC_IMMUTABLE_TREES,
     "uploads",
 }
-STT_TOP_LEVEL_DIRECTORY_ALLOWLIST = {"models", "python-runtime", "venv"}
+STT_LEGACY_REQUIRED_DIRECTORIES = ("models", "python-runtime", "venv")
+STT_TOP_LEVEL_DIRECTORY_ALLOWLIST = {
+    *STT_LEGACY_REQUIRED_DIRECTORIES,
+    "releases",
+}
 BACKUP_SNAPSHOT_RE = re.compile(
     r"^/www/backup/yiyunying/permission-hardening-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}/permissions-before\.acl$"
 )
@@ -124,6 +136,7 @@ def common_shell_prelude(root: str, runtime_user: str, runtime_group: str) -> st
     return "\n".join(
         (
             "set -eu",
+            "set -o pipefail",
             f"ROOT={quote(root)}",
             f"RUNTIME_USER={quote(runtime_user)}",
             f"RUNTIME_GROUP={quote(runtime_group)}",
@@ -144,6 +157,9 @@ def common_shell_prelude(root: str, runtime_user: str, runtime_group: str) -> st
             ),
             shell_array("STORAGE_ALLOWED", tuple(sorted(STORAGE_TOP_LEVEL_ALLOWLIST))),
             shell_array("STT_ALLOWED", tuple(sorted(STT_TOP_LEVEL_DIRECTORY_ALLOWLIST))),
+            shell_array("STT_LEGACY_REQUIRED", STT_LEGACY_REQUIRED_DIRECTORIES),
+            shell_array("PROTECTED_ANCESTORS", PROTECTED_REMOTE_ANCESTORS),
+            f"STT_RELEASE_ID_PATTERN={quote(STT_RELEASE_ID_PATTERN)}",
             "test \"$(id -u)\" -eq 0",
             "test -d \"$ROOT\" && test ! -L \"$ROOT\"",
             "test \"$(readlink -f -- \"$ROOT\")\" = \"$ROOT\"",
@@ -154,9 +170,119 @@ def common_shell_prelude(root: str, runtime_user: str, runtime_group: str) -> st
     )
 
 
+def protected_ancestor_gate_shell() -> str:
+    """Return the immutable parent-chain and maintenance quiescence gates."""
+    return r'''
+protected_ancestor_chain() {
+  for ancestor in "${PROTECTED_ANCESTORS[@]}"; do
+    test -d "$ancestor" && test ! -L "$ancestor" || return 81
+    test "$(readlink -f -- "$ancestor")" = "$ancestor" || return 82
+    test "$(stat -c '%U' -- "$ancestor")" = root || return 83
+    test -z "$(find "$ancestor" -xdev -maxdepth 0 -perm /022 -print)" || return 84
+  done
+}
+
+runtime_process_count() {
+  runtime_uid=$(id -u "$RUNTIME_USER")
+  ps -eo uid= | awk -v expected="$runtime_uid" '$1 == expected {count++} END {print count+0}'
+}
+
+assert_runtime_quiesced() {
+  active_runtime_processes=$(runtime_process_count)
+  printf 'MAINTENANCE_RUNTIME_PROCESSES|%s\n' "$active_runtime_processes"
+  test "$active_runtime_processes" -eq 0
+}
+'''
+
+
+def stt_permission_shell_library() -> str:
+    """Return fixable legacy and strict post-hardening STT permission gates."""
+    return r'''
+scan_stt_fixable_permissions() {
+  stt="$ROOT/storage/stt"
+  stt_unfixable_dirs=0
+  stt_unfixable_exec=0
+  stt_unfixable_data=0
+  stt_unfixable_links=0
+  while IFS= read -r -d '' path; do
+    state=$(stat -c '%a|%U|%G' -- "$path")
+    case "$state" in
+      "750|root|$RUNTIME_GROUP"|"775|root|$RUNTIME_GROUP"|\
+      "750|$RUNTIME_USER|$RUNTIME_GROUP"|"775|$RUNTIME_USER|$RUNTIME_GROUP") : ;;
+      *) stt_unfixable_dirs=$((stt_unfixable_dirs + 1)) ;;
+    esac
+  done < <(find "$stt" -xdev -type d -print0)
+  while IFS= read -r -d '' path; do
+    state=$(stat -c '%a|%U|%G' -- "$path")
+    case "$state" in
+      "640|root|$RUNTIME_GROUP"|"664|root|$RUNTIME_GROUP"|\
+      "750|root|$RUNTIME_GROUP"|"775|root|$RUNTIME_GROUP"|\
+      "640|$RUNTIME_USER|$RUNTIME_GROUP"|"664|$RUNTIME_USER|$RUNTIME_GROUP"|\
+      "750|$RUNTIME_USER|$RUNTIME_GROUP"|"775|$RUNTIME_USER|$RUNTIME_GROUP") : ;;
+      *) stt_unfixable_exec=$((stt_unfixable_exec + 1)) ;;
+    esac
+  done < <(find "$stt" -xdev -type f -path '*/bin/*' -print0)
+  while IFS= read -r -d '' path; do
+    state=$(stat -c '%a|%U|%G' -- "$path")
+    case "$state" in
+      "640|root|$RUNTIME_GROUP"|"664|root|$RUNTIME_GROUP"|\
+      "640|$RUNTIME_USER|$RUNTIME_GROUP"|"664|$RUNTIME_USER|$RUNTIME_GROUP") : ;;
+      *) stt_unfixable_data=$((stt_unfixable_data + 1)) ;;
+    esac
+  done < <(find "$stt" -xdev -type f ! -path '*/bin/*' -print0)
+  while IFS= read -r -d '' path; do
+    state=$(stat -c '%U|%G' -- "$path")
+    case "$state" in
+      "root|$RUNTIME_GROUP"|"$RUNTIME_USER|$RUNTIME_GROUP") : ;;
+      *) stt_unfixable_links=$((stt_unfixable_links + 1)) ;;
+    esac
+  done < <(find "$stt" -xdev -type l -print0)
+  test "$stt_unfixable_dirs" -eq 0 && test "$stt_unfixable_exec" -eq 0 && \
+    test "$stt_unfixable_data" -eq 0 && test "$stt_unfixable_links" -eq 0
+}
+
+validate_stt_strict_permissions() {
+  stt="$ROOT/storage/stt"
+  test "$(find "$stt" -xdev -type d \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)" -eq 0
+  test "$(find "$stt" -xdev -type f -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)" -eq 0
+  test "$(find "$stt" -xdev -type f ! -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0640 \) -print | wc -l)" -eq 0
+  test "$(find "$stt" -xdev -type l \( ! -user root -o ! -group "$RUNTIME_GROUP" \) -print | wc -l)" -eq 0
+  test "$(find "$stt" -xdev \( -type d -o -type f -o -type l \) -user "$RUNTIME_USER" -print | wc -l)" -eq 0
+}
+'''
+
+
+def stt_integrity_shell_library() -> str:
+    """Return a byte, inode, hardlink and symlink-topology commitment for STT."""
+    return r'''
+stt_content_topology_hash() {
+  stt="$ROOT/storage/stt"
+  while IFS= read -r -d '' path; do
+    {
+      relative=${path#"$stt"/}
+      [ "$path" != "$stt" ] || relative=.
+      printf '%s\0' "$relative"
+      find "$path" -xdev -maxdepth 0 -printf '%y\0%D\0%i\0%n\0%s\0%l\0'
+      if [ -f "$path" ] && [ ! -L "$path" ]; then
+        digest=$(sha256sum -- "$path")
+        digest=${digest%% *}
+        printf '%s\0' "$digest"
+      fi
+    } | sha256sum
+  done < <(find "$stt" -xdev \( -type d -o -type f -o -type l \) -print0 | LC_ALL=C sort -z) | sha256sum
+}
+'''
+
+
 def audit_command(root: str, runtime_user: str, runtime_group: str) -> str:
     prelude = common_shell_prelude(root, runtime_user, runtime_group)
-    return prelude + "\n" + r'''
+    return (
+        prelude
+        + "\n"
+        + protected_ancestor_gate_shell()
+        + stt_permission_shell_library()
+        + stt_integrity_shell_library()
+        + r'''
 drift=0
 apply_blocked=0
 expected_permission_drift=0
@@ -223,6 +349,16 @@ in_array() {
 
 shape_before=$(shape_hash)
 printf 'TREE_SHAPE_BEFORE|%s\n' "$shape_before"
+if protected_ancestor_chain; then
+  printf 'PROTECTED_ANCESTOR_CHAIN|pass\n'
+else
+  printf 'PROTECTED_ANCESTOR_CHAIN|blocked\n'
+  drift=1
+  apply_blocked=1
+fi
+active_runtime_processes=$(runtime_process_count)
+printf 'MAINTENANCE_RUNTIME_PROCESSES|%s\n' "$active_runtime_processes"
+printf 'MAINTENANCE_QUIESCENCE_REQUIRED|%s\n' "$([ "$active_runtime_processes" -eq 0 ] && echo no || echo yes)"
 
 specials=$(find "$ROOT" -xdev ! -type d ! -type f ! -type l -print | wc -l)
 unknown_links=$(find "$ROOT" -xdev -type l ! -path "$ROOT/storage/stt/*" -print | wc -l)
@@ -369,28 +505,68 @@ for relative in "${PRIVATE_ROOT_ONLY[@]}"; do
 done
 
 stt="$storage/stt"
-stt_bad=0
-expect_node storage/stt "$stt" directory root "$RUNTIME_GROUP" 750 functional
+stt_structure_bad=0
+stt_function_bad=0
+stt_permission_bad=0
+stt_unfixable=0
+stt_integrity_bad=0
+expect_node storage/stt "$stt" directory root "$RUNTIME_GROUP" 750
 unknown_stt=0
 if [ -d "$stt" ] && [ ! -L "$stt" ]; then
+  stt_integrity_before=$(stt_content_topology_hash)
+  printf 'STT_CONTENT_TOPOLOGY_BEFORE|%s\n' "$stt_integrity_before"
   while IFS= read -r -d '' entry; do
     base=${entry##*/}
-    if ! in_array "$base" "${STT_ALLOWED[@]}" || [ ! -d "$entry" ] || [ -L "$entry" ]; then
+    if [ "$base" = current ]; then
+      [ -L "$entry" ] || {
+        printf 'UNKNOWN_STT_ENTRY|%s\n' "$entry"
+        unknown_stt=$((unknown_stt + 1))
+      }
+    elif ! in_array "$base" "${STT_ALLOWED[@]}" || [ ! -d "$entry" ] || [ -L "$entry" ]; then
       printf 'UNKNOWN_STT_ENTRY|%s\n' "$entry"
       unknown_stt=$((unknown_stt + 1))
     fi
   done < <(find "$stt" -mindepth 1 -maxdepth 1 -print0)
-  for required in "${STT_ALLOWED[@]}"; do [ -d "$stt/$required" ] && [ ! -L "$stt/$required" ] || unknown_stt=$((unknown_stt + 1)); done
+  for required in "${STT_LEGACY_REQUIRED[@]}"; do [ -d "$stt/$required" ] && [ ! -L "$stt/$required" ] || unknown_stt=$((unknown_stt + 1)); done
+
+  release_pair_bad=0
+  has_releases=0
+  has_current=0
+  [ -d "$stt/releases" ] && [ ! -L "$stt/releases" ] && has_releases=1
+  [ -L "$stt/current" ] && has_current=1
+  if [ "$has_releases" -ne "$has_current" ]; then
+    release_pair_bad=1
+  elif [ "$has_current" -eq 1 ]; then
+    current_relative=$(readlink -- "$stt/current")
+    current_name=${current_relative#releases/}
+    case "$current_relative" in releases/*) ;; *) release_pair_bad=1;; esac
+    if ! [[ "$current_name" =~ $STT_RELEASE_ID_PATTERN ]]; then release_pair_bad=1; fi
+    current_release="$stt/$current_relative"
+    [ -d "$current_release" ] && [ ! -L "$current_release" ] || release_pair_bad=1
+  fi
 
   stt_specials=$(find "$stt" -xdev ! -type d ! -type f ! -type l -print | wc -l)
   stt_bad_dirs=$(find "$stt" -xdev -type d \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)
   stt_bad_exec=$(find "$stt" -xdev -type f -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)
   stt_bad_data=$(find "$stt" -xdev -type f ! -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0640 \) -print | wc -l)
   stt_bad_link_owner=$(find "$stt" -xdev -type l \( ! -user root -o ! -group "$RUNTIME_GROUP" \) -print | wc -l)
-  printf 'STT_MATRIX|unknown=%s|specials=%s|bad_dirs=%s|bad_exec=%s|bad_data=%s|bad_link_owner=%s\n' \
-    "$unknown_stt" "$stt_specials" "$stt_bad_dirs" "$stt_bad_exec" "$stt_bad_data" "$stt_bad_link_owner"
-  if [ "$unknown_stt" -ne 0 ] || [ "$stt_specials" -ne 0 ] || [ "$stt_bad_dirs" -ne 0 ] || \
-     [ "$stt_bad_exec" -ne 0 ] || [ "$stt_bad_data" -ne 0 ] || [ "$stt_bad_link_owner" -ne 0 ]; then stt_bad=1; fi
+  new_release_hardlinks=0
+  if [ "$has_releases" -eq 1 ]; then
+    new_release_hardlinks=$(find "$stt/releases" -xdev -type f -links +1 -print | wc -l)
+  fi
+  printf 'STT_MATRIX|unknown=%s|specials=%s|bad_dirs=%s|bad_exec=%s|bad_data=%s|bad_link_owner=%s|release_pair_bad=%s|new_release_hardlinks=%s\n' \
+    "$unknown_stt" "$stt_specials" "$stt_bad_dirs" "$stt_bad_exec" "$stt_bad_data" "$stt_bad_link_owner" "$release_pair_bad" "$new_release_hardlinks"
+  if [ "$unknown_stt" -ne 0 ] || [ "$stt_specials" -ne 0 ] || \
+     [ "$release_pair_bad" -ne 0 ] || [ "$new_release_hardlinks" -ne 0 ]; then stt_structure_bad=1; fi
+  if [ "$stt_bad_dirs" -ne 0 ] || [ "$stt_bad_exec" -ne 0 ] || \
+     [ "$stt_bad_data" -ne 0 ] || [ "$stt_bad_link_owner" -ne 0 ]; then stt_permission_bad=1; fi
+  if scan_stt_fixable_permissions; then
+    printf 'STT_FIXABLE_PERMISSION_MATRIX|yes\n'
+  else
+    printf 'STT_FIXABLE_PERMISSION_MATRIX|no|dirs=%s|exec=%s|data=%s|links=%s\n' \
+      "$stt_unfixable_dirs" "$stt_unfixable_exec" "$stt_unfixable_data" "$stt_unfixable_links"
+    stt_unfixable=1
+  fi
 
   outside=0
   broken=0
@@ -404,36 +580,65 @@ if [ -d "$stt" ] && [ ! -L "$stt" ]; then
   escaped_hardlinks=$(find "$stt" -xdev -type f -links +1 -printf '%D:%i %n\n' | \
     awk '{seen[$1]++; links[$1]=$2} END {bad=0; for(k in seen) if(seen[k] != links[k]) bad++; print bad+0}')
   printf 'STT_LINK_TOPOLOGY|outside=%s|broken=%s|escaped_hardlink_groups=%s\n' "$outside" "$broken" "$escaped_hardlinks"
-  if [ "$outside" -ne 0 ] || [ "$broken" -ne 0 ] || [ "$escaped_hardlinks" -ne 0 ]; then stt_bad=1; fi
+  if [ "$outside" -ne 0 ] || [ "$broken" -ne 0 ] || [ "$escaped_hardlinks" -ne 0 ]; then stt_structure_bad=1; fi
 
   python="$stt/venv/bin/python3"
+  if [ "$has_current" -eq 1 ]; then python="$stt/current/python/bin/python3"; fi
   python_target=missing
   if [ -e "$python" ] || [ -L "$python" ]; then
     if python_target=$(readlink -f -- "$python" 2>/dev/null); then :; else python_target=broken; fi
   fi
   if [ "$python_target" = missing ] || [ "$python_target" = broken ] || \
      { [ "$python_target" != "$stt" ] && [ "${python_target#"$stt"/}" = "$python_target" ]; } || \
-     [ ! -f "$python_target" ] || [ ! -x "$python_target" ] || \
-     [ "$(stat -c '%a|%U|%G' -- "$python_target" 2>/dev/null)" != "750|root|$RUNTIME_GROUP" ]; then
-    stt_bad=1
+     [ ! -f "$python_target" ]; then
+    stt_function_bad=1
   fi
-  if [ "$stt_bad" -eq 0 ]; then
-    if su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -S -B -c 'import encodings,json,ssl,sys; assert sys.flags.isolated == 1'" "$RUNTIME_USER" >/dev/null 2>&1 && \
+  stt_probe_deferred=0
+  if [ "$stt_function_bad" -eq 0 ] && [ ! -x "$python_target" ]; then
+    if [ "$stt_permission_bad" -eq 1 ] && [ "$stt_unfixable" -eq 0 ]; then
+      stt_probe_deferred=1
+    else
+      stt_function_bad=1
+    fi
+  fi
+  if [ "$stt_structure_bad" -eq 0 ] && [ "$stt_unfixable" -eq 0 ] && [ "$stt_function_bad" -eq 0 ]; then
+    if [ "$stt_probe_deferred" -eq 1 ]; then
+      printf 'STT_RUNTIME_WWW_PROBE|deferred_permission_repair\n'
+    elif su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -S -B -c 'import encodings,json,ssl,sys; assert sys.flags.isolated == 1'" "$RUNTIME_USER" >/dev/null 2>&1 && \
        su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -B -c 'from faster_whisper import WhisperModel; assert WhisperModel'" "$RUNTIME_USER" >/dev/null 2>&1; then
       printf 'STT_RUNTIME_WWW_PROBE|pass\n'
     else
       printf 'STT_RUNTIME_WWW_PROBE|blocked\n'
-      stt_bad=1
+      stt_function_bad=1
     fi
   else
     printf 'STT_RUNTIME_WWW_PROBE|skipped_matrix_blocked\n'
   fi
+  stt_integrity_after=$(stt_content_topology_hash)
+  printf 'STT_CONTENT_TOPOLOGY_AFTER|%s\n' "$stt_integrity_after"
+  if [ "$stt_integrity_before" != "$stt_integrity_after" ]; then stt_integrity_bad=1; fi
 else
   printf 'STT_MATRIX|missing_or_link\n'
-  stt_bad=1
+  stt_structure_bad=1
 fi
-printf 'STT_READ_ONLY_EXECUTABLE_READY|%s\n' "$([ "$stt_bad" -eq 0 ] && echo yes || echo no)"
-if [ "$stt_bad" -ne 0 ]; then drift=1; apply_blocked=1; fi
+stt_repair_ready=0
+if [ "$stt_structure_bad" -eq 0 ] && [ "$stt_function_bad" -eq 0 ] && \
+   [ "$stt_unfixable" -eq 0 ] && [ "$stt_integrity_bad" -eq 0 ]; then
+  stt_repair_ready=1
+fi
+printf 'STT_PERMISSION_REPAIR_READY|%s\n' "$([ "$stt_repair_ready" -eq 1 ] && echo yes || echo no)"
+printf 'STT_READ_ONLY_EXECUTABLE_READY|%s\n' "$([ "$stt_repair_ready" -eq 1 ] && [ "$stt_permission_bad" -eq 0 ] && echo yes || echo no)"
+if [ "$stt_repair_ready" -ne 1 ]; then
+  drift=1
+  apply_blocked=1
+elif [ "$stt_permission_bad" -ne 0 ]; then
+  drift=1
+  expected_permission_drift=1
+  apply_blocked=1
+  printf 'STT_PERMISSION_MUTATION_AUTHORIZATION|required\n'
+else
+  printf 'STT_PERMISSION_MUTATION_AUTHORIZATION|not-needed\n'
+fi
 
 socket=/tmp/php-cgi-82.sock
 if [ -S "$socket" ]; then
@@ -460,6 +665,7 @@ printf 'EXPECTED_PERMISSION_DRIFT|%s\n' "$([ "$expected_permission_drift" -eq 0 
 printf 'AUDIT_RESULT|%s\n' "$([ "$drift" -eq 0 ] && echo pass || { [ "$apply_blocked" -eq 0 ] && echo apply-ready-with-drift || echo blocked; })"
 [ "$drift" -eq 0 ] || exit 2
 '''
+    )
 
 def preflight_link_gate_shell() -> str:
     """Return the whole-tree type/link gate used before any permission write."""
@@ -480,12 +686,11 @@ def post_commit_integrity_shell_library() -> str:
     """Return exact path-set and inode/type identity checks used before commit."""
     return r'''
 managed_path_hash() {
-  find "$ROOT" -xdev \( -path "$ROOT/storage/stt" -o -path "$ROOT/storage/stt/*" \) -prune -o -print0 | \
-    LC_ALL=C sort -z | sha256sum
+  find "$ROOT" -xdev -print0 | LC_ALL=C sort -z | sha256sum
 }
 
 classified_path_stream() {
-  printf '%s\0' "$ROOT" "$ROOT/public" "$ROOT/storage" "$ROOT/storage/private"
+  printf '%s\0' "$ROOT" "$ROOT/public" "$ROOT/storage" "$ROOT/storage/private" "$ROOT/storage/stt"
   for inventory in "${inventory_files[@]}"; do cat "$inventory"; done
   for allowed_new_path in "$@"; do printf '%s\0' "$allowed_new_path"; done
 }
@@ -495,13 +700,17 @@ classified_path_hash() {
 }
 
 inventory_identity_hash() {
-  {
-    while IFS= read -r -d '' path; do
-      test ! -L "$path"
-      test -d "$path" || test -f "$path"
-      find "$path" -xdev -maxdepth 0 -printf '%p\0%y\0%D\0%i\0'
-    done < <(classified_path_stream | LC_ALL=C sort -z)
-  } | LC_ALL=C sort -z | sha256sum
+  while IFS= read -r -d '' path; do
+    {
+      printf '%s\0' "$path"
+      if [ -L "$path" ]; then
+        find "$path" -xdev -maxdepth 0 -printf '%y\0%D\0%i\0%l\0'
+      else
+        test -d "$path" || test -f "$path"
+        find "$path" -xdev -maxdepth 0 -printf '%y\0%D\0%i\0'
+      fi
+    } | sha256sum
+  done < <(classified_path_stream | LC_ALL=C sort -z) | sha256sum
 }
 
 node_identity() {
@@ -593,14 +802,39 @@ cleanup_transaction_artifacts() {
   return "$failed"
 }
 
+restore_stt_link_owners() {
+  if [ -z "${stt_link_owners:-}" ]; then return 0; fi
+  if [ ! -e "$stt_link_owners" ] && [ ! -L "$stt_link_owners" ] && \
+     [ ! -e "$BACKUP/stt-link-owner-count" ] && [ ! -L "$BACKUP/stt-link-owner-count" ]; then
+    test "${stt_link_owners_required:-0}" -eq 0
+    return
+  fi
+  test -f "$stt_link_owners" && test ! -L "$stt_link_owners"
+  test "$(stat -c '%a|%U|%G' -- "$stt_link_owners")" = '600|root|root'
+  test -f "$BACKUP/stt-link-owner-count" && test ! -L "$BACKUP/stt-link-owner-count"
+  test "$(stat -c '%a|%U|%G' -- "$BACKUP/stt-link-owner-count")" = '600|root|root'
+  (cd "$BACKUP" && sha256sum -c stt-link-owners.nul.sha256 stt-link-owner-count.sha256 >/dev/null)
+  stt_link_owner_count=$(cat "$BACKUP/stt-link-owner-count")
+  case "$stt_link_owner_count" in ''|*[!0-9]*) return 77;; esac
+  restored=0
+  while IFS= read -r -d '' uid && IFS= read -r -d '' gid && IFS= read -r -d '' path; do
+    case "$path" in "$ROOT/storage/stt"/*) :;; *) return 76;; esac
+    test -L "$path"
+    chown -h "$uid:$gid" -- "$path"
+    test "$(stat -c '%u|%g' -- "$path")" = "$uid|$gid"
+    restored=$((restored + 1))
+  done < "$stt_link_owners"
+  test "$restored" -eq "${stt_link_owner_count:-0}"
+}
+
 write_transaction_status() {
-  state="$1" original_status="$2" cleanup_status="$3" acl_status="$4" shape_status="$5"
+  state="$1" original_status="$2" cleanup_status="$3" link_status="$4" acl_status="$5" shape_status="$6"
   status_partial="$BACKUP/automatic-rollback.status.partial"
-  if printf 'state=%s\noriginal_status=%s\ncleanup_status=%s\nacl_status=%s\nshape_status=%s\n' \
-      "$state" "$original_status" "$cleanup_status" "$acl_status" "$shape_status" > "$status_partial" && \
+  if printf 'state=%s\noriginal_status=%s\ncleanup_status=%s\nlink_status=%s\nacl_status=%s\nshape_status=%s\n' \
+      "$state" "$original_status" "$cleanup_status" "$link_status" "$acl_status" "$shape_status" > "$status_partial" && \
      chmod 0600 "$status_partial" && mv -f -- "$status_partial" "$BACKUP/automatic-rollback.status"; then
-    printf 'AUTOMATIC_ROLLBACK|%s|cleanup=%s|acl=%s|shape=%s\n' \
-      "$state" "$cleanup_status" "$acl_status" "$shape_status" >&2
+    printf 'AUTOMATIC_ROLLBACK|%s|cleanup=%s|links=%s|acl=%s|shape=%s\n' \
+      "$state" "$cleanup_status" "$link_status" "$acl_status" "$shape_status" >&2
     return 0
   fi
   printf 'AUTOMATIC_ROLLBACK|recovery_required|status_file_write_failed\n' >&2
@@ -612,9 +846,11 @@ automatic_rollback() {
   trap - ERR
   set +e
   cleanup_status=failed
+  link_status=failed
   acl_status=failed
   shape_status=failed
   if cleanup_transaction_artifacts; then cleanup_status=clean; fi
+  if restore_stt_link_owners; then link_status=restored; fi
   if setfacl --restore="$snapshot"; then acl_status=restored; fi
   current_tree=
   expected_tree=
@@ -626,10 +862,11 @@ automatic_rollback() {
     shape_status=restored
   fi
   state=restored
-  if [ "$cleanup_status" != clean ] || [ "$acl_status" != restored ] || [ "$shape_status" != restored ]; then
+  if [ "$cleanup_status" != clean ] || [ "$link_status" != restored ] || \
+     [ "$acl_status" != restored ] || [ "$shape_status" != restored ]; then
     state=recovery_required
   fi
-  if ! write_transaction_status "$state" "$original_status" "$cleanup_status" "$acl_status" "$shape_status"; then
+  if ! write_transaction_status "$state" "$original_status" "$cleanup_status" "$link_status" "$acl_status" "$shape_status"; then
     state=recovery_required
   fi
   if [ "$state" = recovery_required ]; then exit 97; fi
@@ -655,6 +892,9 @@ def apply_command(
         prelude
         + "\n"
         + f"BACKUP={quote(backup_directory)}\n"
+        + protected_ancestor_gate_shell()
+        + stt_permission_shell_library()
+        + stt_integrity_shell_library()
         + preflight_link_gate_shell()
         + post_commit_integrity_shell_library()
         + r'''
@@ -663,6 +903,8 @@ command -v getfacl >/dev/null
 command -v setfacl >/dev/null
 command -v sha256sum >/dev/null
 command -v sort >/dev/null
+command -v ps >/dev/null
+protected_ancestor_chain
 test -d "$BACKUP_ROOT" && test ! -L "$BACKUP_ROOT"
 test "$(readlink -f -- "$BACKUP_ROOT")" = "$BACKUP_ROOT"
 test "$(stat -c '%a|%U|%G' -- "$BACKUP_ROOT")" = '700|root|root'
@@ -687,21 +929,35 @@ reject_plain_tree() {
   test "$(find "$path" -xdev ! -type d ! -type f ! -type l -print | wc -l)" -eq 0
 }
 
-validate_stt_gate() {
+validate_stt_structure_gate() {
   stt="$ROOT/storage/stt"
   test -d "$stt" && test ! -L "$stt"
   while IFS= read -r -d '' entry; do
     base=${entry##*/}
-    in_array "$base" "${STT_ALLOWED[@]}"
-    test -d "$entry" && test ! -L "$entry"
+    if [ "$base" = current ]; then
+      test -L "$entry"
+    else
+      in_array "$base" "${STT_ALLOWED[@]}"
+      test -d "$entry" && test ! -L "$entry"
+    fi
   done < <(find "$stt" -mindepth 1 -maxdepth 1 -print0)
-  for required in "${STT_ALLOWED[@]}"; do test -d "$stt/$required" && test ! -L "$stt/$required"; done
+  for required in "${STT_LEGACY_REQUIRED[@]}"; do test -d "$stt/$required" && test ! -L "$stt/$required"; done
+  has_releases=0
+  has_current=0
+  test ! -e "$stt/releases" && test ! -L "$stt/releases" || { test -d "$stt/releases" && test ! -L "$stt/releases" && has_releases=1; }
+  test ! -e "$stt/current" && test ! -L "$stt/current" || { test -L "$stt/current" && has_current=1; }
+  test "$has_releases" -eq "$has_current"
+  if [ "$has_current" -eq 1 ]; then
+    current_relative=$(readlink -- "$stt/current")
+    current_name=${current_relative#releases/}
+    case "$current_relative" in releases/*) ;; *) return 51;; esac
+    [[ "$current_name" =~ $STT_RELEASE_ID_PATTERN ]] || return 52
+    current_release="$stt/$current_relative"
+    test -d "$current_release" && test ! -L "$current_release"
+    test "$(find "$stt/releases" -xdev -type f -links +1 -print | wc -l)" -eq 0
+  fi
   test "$(find "$stt" -xdev ! -type d ! -type f ! -type l -print | wc -l)" -eq 0
-  test "$(find "$stt" -xdev -type d \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)" -eq 0
-  test "$(find "$stt" -xdev -type f -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0750 \) -print | wc -l)" -eq 0
-  test "$(find "$stt" -xdev -type f ! -path '*/bin/*' \( ! -user root -o ! -group "$RUNTIME_GROUP" -o ! -perm 0640 \) -print | wc -l)" -eq 0
-  test "$(find "$stt" -xdev -type l \( ! -user root -o ! -group "$RUNTIME_GROUP" \) -print | wc -l)" -eq 0
-  test "$(find "$stt" -xdev \( -type d -o -type f -o -type l \) -user "$RUNTIME_USER" -print | wc -l)" -eq 0
+  scan_stt_fixable_permissions
   outside=0
   broken=0
   while IFS= read -r -d '' link; do
@@ -716,12 +972,19 @@ validate_stt_gate() {
     awk '{seen[$1]++; links[$1]=$2} END {bad=0; for(k in seen) if(seen[k] != links[k]) bad++; print bad+0}')
   test "$escaped" -eq 0
   python="$stt/venv/bin/python3"
+  if [ "$has_current" -eq 1 ]; then python="$stt/current/python/bin/python3"; fi
   python_target=$(readlink -f -- "$python")
   test "$python_target" != "$stt" && test "${python_target#"$stt"/}" != "$python_target"
-  test -f "$python_target" && test -x "$python_target"
-  test "$(stat -c '%a|%U|%G' -- "$python_target")" = "750|root|$RUNTIME_GROUP"
-  su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -S -B -c 'import encodings,json,ssl,sys; assert sys.flags.isolated == 1'" "$RUNTIME_USER" >/dev/null 2>&1
-  su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -B -c 'from faster_whisper import WhisperModel; assert WhisperModel'" "$RUNTIME_USER" >/dev/null 2>&1
+  test -f "$python_target"
+  if [ -x "$python_target" ]; then
+    su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -S -B -c 'import encodings,json,ssl,sys; assert sys.flags.isolated == 1'" "$RUNTIME_USER" >/dev/null 2>&1
+    su -s /bin/sh -c "cd / && exec env -i HOME=/nonexistent PATH=/usr/bin:/bin '$python' -I -B -c 'from faster_whisper import WhisperModel; assert WhisperModel'" "$RUNTIME_USER" >/dev/null 2>&1
+  fi
+}
+
+validate_stt_gate() {
+  validate_stt_structure_gate
+  validate_stt_strict_permissions
 }
 
 validate_full_structure() {
@@ -787,14 +1050,14 @@ validate_full_structure() {
   test "$(find "$public" -mindepth 1 -maxdepth 1 \
     \( -name '.download-center-stage-*' -o -name '.download-center.previous-*' -o -name '.codex-deploy-*' \) \
     -print | wc -l)" -eq 0
-  validate_stt_gate
+  validate_stt_structure_gate
 }
 
 shape_preflight=$(shape_hash)
 validate_full_structure
+validate_stt_strict_permissions
 test "$shape_preflight" = "$(shape_hash)"
-test -S /tmp/php-cgi-82.sock
-test "$(stat -c '%a|%U|%G' /tmp/php-cgi-82.sock)" = "660|$RUNTIME_USER|$RUNTIME_GROUP"
+assert_runtime_quiesced
 
 umask 077
 mkdir -m 0700 -- "$BACKUP"
@@ -824,12 +1087,17 @@ inventory_root_only_files="$BACKUP/inventory-root-only-files.nul"
 inventory_private_upload_dirs="$BACKUP/inventory-private-upload-dirs.nul"
 inventory_private_upload_files="$BACKUP/inventory-private-upload-files.nul"
 inventory_storage_files="$BACKUP/inventory-storage-files.nul"
+inventory_stt_dirs="$BACKUP/inventory-stt-dirs.nul"
+inventory_stt_exec_files="$BACKUP/inventory-stt-exec-files.nul"
+inventory_stt_data_files="$BACKUP/inventory-stt-data-files.nul"
+inventory_stt_links="$BACKUP/inventory-stt-links.nul"
 inventory_files=(
   "$inventory_immutable_dirs" "$inventory_immutable_files" "$inventory_root_files"
   "$inventory_public_files" "$inventory_public_upload_dirs" "$inventory_public_upload_files"
   "$inventory_runtime_dirs" "$inventory_runtime_files" "$inventory_root_only_dirs"
   "$inventory_root_only_files" "$inventory_private_upload_dirs" "$inventory_private_upload_files"
-  "$inventory_storage_files"
+  "$inventory_storage_files" "$inventory_stt_dirs" "$inventory_stt_exec_files"
+  "$inventory_stt_data_files" "$inventory_stt_links"
 )
 for inventory in "${inventory_files[@]}"; do : > "$inventory"; done
 
@@ -854,6 +1122,10 @@ if [ -d "$ROOT/storage/private/uploads" ]; then
   inventory_tree_into "$ROOT/storage/private/uploads" "$inventory_private_upload_dirs" "$inventory_private_upload_files"
 fi
 printf '%s\0' "$ROOT/storage/voice-call-ice-servers.json" > "$inventory_storage_files"
+find "$ROOT/storage/stt" -xdev -mindepth 1 -type d -print0 > "$inventory_stt_dirs"
+find "$ROOT/storage/stt" -xdev -type f -path '*/bin/*' -print0 > "$inventory_stt_exec_files"
+find "$ROOT/storage/stt" -xdev -type f ! -path '*/bin/*' -print0 > "$inventory_stt_data_files"
+find "$ROOT/storage/stt" -xdev -type l -print0 > "$inventory_stt_links"
 chmod 0600 "${inventory_files[@]}"
 sha256sum "${inventory_files[@]}" > "$BACKUP/inventories.sha256"
 chmod 0600 "$BACKUP/inventories.sha256"
@@ -865,13 +1137,100 @@ test "$managed_hash" = "$classified_hash"
 inventory_identity_before="$BACKUP/inventory-identity-before.sha256"
 inventory_identity_hash > "$inventory_identity_before"
 chmod 0600 "$inventory_identity_before"
+stt_content_before="$BACKUP/stt-content-topology-before.sha256"
+stt_content_topology_hash > "$stt_content_before"
+chmod 0600 "$stt_content_before"
+stt_link_owners="$BACKUP/stt-link-owners.nul"
+stt_link_owners_required=1
+: > "$stt_link_owners"
+stt_link_owner_count=0
+while IFS= read -r -d '' path; do
+  test -L "$path"
+  uid=$(stat -c '%u' -- "$path")
+  gid=$(stat -c '%g' -- "$path")
+  printf '%s\0%s\0%s\0' "$uid" "$gid" "$path" >> "$stt_link_owners"
+  stt_link_owner_count=$((stt_link_owner_count + 1))
+done < "$inventory_stt_links"
+printf '%s\n' "$stt_link_owner_count" > "$BACKUP/stt-link-owner-count"
+chmod 0600 "$stt_link_owners" "$BACKUP/stt-link-owner-count"
+(cd "$BACKUP" && sha256sum stt-link-owners.nul > stt-link-owners.nul.sha256)
+(cd "$BACKUP" && sha256sum stt-link-owner-count > stt-link-owner-count.sha256)
+chmod 0600 "$BACKUP/stt-link-owners.nul.sha256" "$BACKUP/stt-link-owner-count.sha256"
 test "$shape_preflight" = "$(shape_hash)"
 '''
         + transaction_shell_library()
         + r'''
+harden_exact() {
+  path="$1" kind="$2" owner="$3" group="$4" mode="$5"
+  test ! -L "$path"
+  case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 68;; esac
+  chown -h "$owner:$group" -- "$path"
+  chmod "$mode" -- "$path"
+}
+
+harden_inventory() {
+  inventory="$1" kind="$2" owner="$3" group="$4" mode="$5"
+  while IFS= read -r -d '' path; do
+    case "$path" in "$ROOT"/*) :;; *) return 69;; esac
+    harden_exact "$path" "$kind" "$owner" "$group" "$mode"
+  done < "$inventory"
+}
+
+harden_stt_directory_inventory() {
+  inventory="$1"
+  while IFS= read -r -d '' path; do
+    case "$path" in "$ROOT/storage/stt"/*) :;; *) return 75;; esac
+    parent=${path%/*}
+    test "$(stat -c '%a|%U|%G' -- "$parent")" = "750|root|$RUNTIME_GROUP"
+    harden_exact "$path" directory root "$RUNTIME_GROUP" 750
+  done < "$inventory"
+}
+
+harden_link_inventory() {
+  inventory="$1" owner="$2" group="$3"
+  while IFS= read -r -d '' path; do
+    case "$path" in "$ROOT/storage/stt"/*) :;; *) return 74;; esac
+    test -L "$path"
+    chown -h "$owner:$group" -- "$path"
+  done < "$inventory"
+}
+
+verify_inventory() {
+  inventory="$1" kind="$2" owner="$3" group="$4" mode="$5"
+  while IFS= read -r -d '' path; do
+    test ! -L "$path"
+    case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 70;; esac
+    test "$(stat -c '%a|%U|%G' -- "$path")" = "$mode|$owner|$group"
+  done < "$inventory"
+}
+
+verify_link_inventory() {
+  inventory="$1" owner="$2" group="$3"
+  while IFS= read -r -d '' path; do
+    test -L "$path"
+    test "$(stat -c '%U|%G' -- "$path")" = "$owner|$group"
+  done < "$inventory"
+}
+
+verify_exact() {
+  path="$1" kind="$2" owner="$3" group="$4" mode="$5"
+  test ! -L "$path"
+  case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 71;; esac
+  test "$(stat -c '%a|%U|%G' -- "$path")" = "$mode|$owner|$group"
+}
+
 : > "$LEDGER"
 chmod 0600 "$LEDGER"
 trap automatic_rollback ERR
+
+# Freeze and re-commit every immutable input immediately before permission
+# changes. The explicit maintenance gate rejects retained www descriptors.
+protected_ancestor_chain
+assert_runtime_quiesced
+sha256sum -c "$BACKUP/inventories.sha256" >/dev/null
+test "$shape_preflight" = "$(shape_hash)"
+test "$(stt_content_topology_hash)" = "$(cat "$stt_content_before")"
+test "$(inventory_identity_hash)" = "$(cat "$inventory_identity_before")"
 
 private="$ROOT/storage/private"
 created_private_uploads=0
@@ -909,38 +1268,6 @@ else
   : > "$created_node_identity"
 fi
 chmod 0600 "$expected_post_classified" "$expected_post_shape" "$created_node_identity"
-
-harden_exact() {
-  path="$1" kind="$2" owner="$3" group="$4" mode="$5"
-  test ! -L "$path"
-  case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 68;; esac
-  chown -h "$owner:$group" -- "$path"
-  chmod "$mode" -- "$path"
-}
-
-harden_inventory() {
-  inventory="$1" kind="$2" owner="$3" group="$4" mode="$5"
-  while IFS= read -r -d '' path; do
-    case "$path" in "$ROOT"/*) :;; *) return 69;; esac
-    harden_exact "$path" "$kind" "$owner" "$group" "$mode"
-  done < "$inventory"
-}
-
-verify_inventory() {
-  inventory="$1" kind="$2" owner="$3" group="$4" mode="$5"
-  while IFS= read -r -d '' path; do
-    test ! -L "$path"
-    case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 70;; esac
-    test "$(stat -c '%a|%U|%G' -- "$path")" = "$mode|$owner|$group"
-  done < "$inventory"
-}
-
-verify_exact() {
-  path="$1" kind="$2" owner="$3" group="$4" mode="$5"
-  test ! -L "$path"
-  case "$kind" in directory) test -d "$path";; file) test -f "$path";; *) return 71;; esac
-  test "$(stat -c '%a|%U|%G' -- "$path")" = "$mode|$owner|$group"
-}
 
 verify_complete_permission_matrix() {
   verify_exact "$ROOT" directory root "$RUNTIME_GROUP" 750
@@ -1053,6 +1380,7 @@ test "$(classified_path_hash "${created_post_paths[@]}")" = "$(cat "$expected_po
 test "$(managed_path_hash)" = "$(cat "$expected_post_classified")"
 test "$(shape_hash)" = "$(cat "$expected_post_shape")"
 test "$(find "$ROOT/storage/stt" -xdev -printf '%P\0%y\0%D\0%i\0%n\0' | LC_ALL=C sort -z | sha256sum)" = "$(cat "$stt_hash")"
+test "$(stt_content_topology_hash)" = "$(cat "$stt_content_before")"
 find "$ROOT" -xdev -mindepth 1 -maxdepth 1 -printf '%m|%u|%g|%p\n' > "$BACKUP/permissions-after.txt"
 shape_hash > "$BACKUP/tree-after.sha256"
 chmod 0600 "$BACKUP/permissions-after.txt" "$BACKUP/tree-after.sha256"
@@ -1077,6 +1405,10 @@ def rollback_command(root: str, snapshot_path: str) -> str:
                 f"BACKUP={quote(backup_directory)}",
                 "snapshot=\"$SNAPSHOT\"",
                 "tree_hash=\"$BACKUP/tree-before.sha256\"",
+                "stt_link_owners=\"$BACKUP/stt-link-owners.nul\"",
+                "stt_link_owners_required=0",
+                f"RUNTIME_USER={quote(EXPECTED_RUNTIME_USER)}",
+                shell_array("PROTECTED_ANCESTORS", PROTECTED_REMOTE_ANCESTORS),
                 "test \"$(id -u)\" -eq 0",
                 "test -d \"$ROOT\" && test ! -L \"$ROOT\"",
                 "test \"$(readlink -f -- \"$ROOT\")\" = \"$ROOT\"",
@@ -1088,6 +1420,7 @@ def rollback_command(root: str, snapshot_path: str) -> str:
             )
         )
         + "\n"
+        + protected_ancestor_gate_shell()
         + transaction_shell_library()
         + r'''
 manual_rollback_failed() {
@@ -1104,10 +1437,13 @@ manual_rollback_failed() {
   exit 98
 }
 trap manual_rollback_failed ERR
+protected_ancestor_chain
+assert_runtime_quiesced
 cleanup_transaction_artifacts
 current_tree=$(find "$ROOT" -xdev -printf '%P\0%y\0%D\0%i\0%n\0' | LC_ALL=C sort -z | sha256sum)
 expected_tree=$(cat "$tree_hash")
 test "$current_tree" = "$expected_tree"
+restore_stt_link_owners
 setfacl --restore="$SNAPSHOT"
 status_partial="$BACKUP/manual-rollback.status.partial"
 printf 'state=rolled_back\n' > "$status_partial"
@@ -1177,6 +1513,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--runtime-group", default=EXPECTED_RUNTIME_GROUP)
     result.add_argument("--apply", action="store_true")
     result.add_argument("--maintenance-confirmed", default="")
+    result.add_argument("--stt-maintenance-confirmed", default="")
     result.add_argument("--rollback-snapshot")
     return result
 
@@ -1187,6 +1524,11 @@ def main(argv: list[str] | None = None) -> int:
     runtime_user, runtime_group = validate_runtime_identity(args.runtime_user, args.runtime_group)
     if (args.apply or args.rollback_snapshot) and args.maintenance_confirmed != MAINTENANCE_ACK:
         raise RuntimeError(f"state-changing actions require --maintenance-confirmed {MAINTENANCE_ACK}")
+    if (args.apply or args.rollback_snapshot) and args.stt_maintenance_confirmed != STT_MAINTENANCE_ACK:
+        raise RuntimeError(
+            "state-changing actions require --stt-maintenance-confirmed "
+            f"{STT_MAINTENANCE_ACK}"
+        )
     if args.rollback_snapshot and not args.apply:
         raise RuntimeError("rollback requires --apply")
 

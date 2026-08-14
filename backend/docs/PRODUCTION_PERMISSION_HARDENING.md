@@ -47,20 +47,20 @@
 | `storage/private/uploads` | `www:www` | `0700` | `0600` | 私有商品/论坛文件的必要读写 |
 | private 报告、quarantine、recovery、receipt | `root:root` | `0700` | `0600` | 不可访问 |
 | `storage/deploy-backups` | `root:root` | `0700` | `0600` | 不可访问 |
-| STT `python-runtime`、`venv`、预装模型 | `root:www` | `0750` | 所有 `*/bin/*` 普通文件 `0750`；其余数据/库 `0640`；symlink 的 lstat owner/group 为 `root:www` | www 只读；任何 `www:www` 依赖、可写位、越界/破损 symlink 或逃逸 hardlink 均拒绝 |
+| STT legacy `python-runtime`/`venv`/`models` 与正式 `releases`/`current` | `root:www` | `0750` | 所有 `*/bin/*` 普通文件 `0750`；其余数据/库 `0640`；symlink 的 lstat owner/group 为 `root:www` | `current` 只能相对指向同卷 `releases/<id>`；正式 release 禁止任何 hardlink，legacy 仅保留原有不逃逸拓扑；www 只读 |
 | `/srv/yiyunying-internal-apks/current` | `root:www` | `0750` | `0640` | Nginx/FPM 可读，不可写 |
 | 内部下载 secret | `root:root` | `0700` | `0600` | 不可访问 |
 
-不要对 STT 使用 `chmod -R 0640`、`chmod -R 0750` 或重新复制去重。必须从锁定版本的安装产物恢复运行时与 venv，再按上述固定矩阵设置执行位；否则会再次破坏 Python、动态工具和硬链接。`models` 应在维护期预下载后改为只读，运行时输出只进入 `storage/tmp`。权限工具不会修改 STT；apply 前会要求整树 owner 为 `root`、group 为 `www`，拒绝任何 owner 为 `www` 的依赖，并保持 2870 个 symlink 与 9713 组 hardlink 的拓扑。
+不要对 STT 使用 `chmod -R 0640`、`chmod -R 0750` 或重新复制去重。正式 runtime 必须按 `PRODUCTION_STT_RUNTIME.md` 从固定哈希的离线 bundle 新建到 `releases` 并原子切换 `current`；不得从旧 www 可写字节重建。legacy 三目录继续保留且不改拓扑，供旧 Debug 回退。权限工具不会修改 STT；apply 前会要求整树 owner 为 `root`、group 为 `www`，拒绝任何 owner 为 `www` 的依赖，验证 legacy 链接不逃逸，并对正式 releases 额外拒绝全部 hardlink。
 
-STT 门禁不是静态 `test -x`。矩阵和链接检查通过后，还必须以 `www` 的空环境、根目录工作目录运行两个无写入探针：`venv/bin/python3 -I -S -B -c` 导入隔离模式标准库，以及 `venv/bin/python3 -I -B -c` 导入 `faster_whisper.WhisperModel`。`-B` 禁止生成 pyc；探针失败即阻断，不会尝试在线修复或下载模型。
+STT 门禁不是静态 `test -x`。矩阵和链接检查通过后，有受信 `current` 时必须优先用 `current/python/bin/python3`，否则才用 legacy `venv/bin/python3`；随后以 `www` 的空环境、根目录工作目录运行隔离标准库与 `faster_whisper.WhisperModel` 两个无写入探针。`-B` 禁止生成 pyc；探针失败即阻断，不会尝试在线修复或下载模型。
 
 ## 最小可回滚维护顺序
 
 1. 进入维护并停止应用写入；确认当前 DB、public/uploads 和代码备份均完整可读。
 2. 使用面板/服务配置备份 Nginx 主站、扩展片段、PHP 8.2 FPM 和 php.ini；备份文件设为 root:root 0600，目录 0700。
 3. 清点 `/tmp/yiyunying-*` 和 public orphan 的创建时间、进程、哈希与所属部署；只处理已确认无进程占用的精确目标。不要通配删除。
-4. 从可信、锁定哈希的 STT 安装产物重建 `python-runtime` 和 `venv`，恢复执行位，验证所有符号链接不破损/不逃逸、所有硬链接名称均在 STT 树内；不要在本步骤启动业务转写。
+4. 按 `PRODUCTION_STT_RUNTIME.md` 从可信工作站构建固定哈希离线 bundle，以独立安装器新建正式 release；不要覆盖/删除 legacy 三目录，也不要在权限工具中重建 STT。
 5. 先运行权限工具默认 dry-run。当前生产会因 STT 不可执行、socket 0666、public orphan 和权限漂移返回 2，这是安全阻断，不是脚本失败。
 6. 用面板维护方式把 PHP 8.2 pool 配置为 `listen.owner=www`、`listen.group=www`、`listen.mode=0660`；不要对活动 socket 临时 `chmod`，因为 FPM 重启会覆盖且可能破坏面板管理。评审后设置 `clear_env=yes`，只保留显式 `env[...]`；把 `cgi.fix_pathinfo` 设为 0。分别执行 FPM 配置测试和面板回读。
 7. 用 `nginx-uploads-static-only.conf.example` 替换原主站的 `location /uploads/`，不能同时保留两个相同 location。先 `nginx -t`，暂不释放维护。

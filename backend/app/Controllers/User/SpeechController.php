@@ -24,11 +24,25 @@ final class SpeechController
             $attachment = self::accessibleAudioAttachment($user, $request);
             $directUploadId = (int) $attachment['upload_id'];
         }
-        $upload = Database::one(
-            'SELECT * FROM uploads
-             WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1 LIMIT 1',
-            [$directUploadId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
-        );
+        if ($attachment === null) {
+            // A raw upload_id is an owner-only editor flow.  It must never be
+            // usable to enumerate or transcribe another user's uploads.
+            $upload = Database::one(
+                'SELECT * FROM uploads
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1 LIMIT 1',
+                [$directUploadId, (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']]
+            );
+        } else {
+            // accessibleAudioAttachment already proves message membership and
+            // binds this exact attachment to this exact upload.  The receiver
+            // of a voice message is therefore allowed to read the sender-owned
+            // upload, while tenant/app/status constraints remain mandatory.
+            $upload = Database::one(
+                'SELECT * FROM uploads
+                 WHERE id = ? AND admin_id = ? AND app_id = ? AND status = 1 LIMIT 1',
+                [$directUploadId, (int) $user['admin_id'], (int) $user['app_id']]
+            );
+        }
         if ($upload === null) throw new HttpException('语音文件不存在或已失效', 0, 404);
         if (!str_starts_with(strtolower((string) $upload['mime_type']), 'audio/')) {
             throw new HttpException('所选附件不是可转写的语音文件', 0, 422);
@@ -178,7 +192,7 @@ final class SpeechController
         $command = self::resolveLocalCommand(trim((string) config('speech.command', '')));
         $rawArgs = trim((string) config('speech.command_args', ''));
         if ($rawArgs === '') {
-            throw new HttpException('易运盈本地语音转文字组件缺失，请重新部署后执行安装脚本', 0, 503);
+            throw new HttpException('易运盈本地语音转文字组件缺失，请重新部署离线 STT 运行时', 0, 503);
         }
         if (!function_exists('proc_open')) {
             throw new HttpException('服务器禁用了 proc_open，无法运行本地语音转文字程序', 0, 503);
@@ -262,7 +276,7 @@ final class SpeechController
         if ($exitCode > 0 || $text === '') {
             $detail = trim($stderr) !== '' ? trim($stderr) : ('退出码 ' . $exitCode);
             if (str_contains($detail, 'faster-whisper') || str_contains($detail, 'No module named')) {
-                throw new HttpException('本地语音转文字组件尚未安装，请在后端目录执行 deploy/install-local-stt.sh', 0, 503);
+                throw new HttpException('本地语音转文字组件尚未安装，请重新部署离线 STT 运行时', 0, 503);
             }
             if (str_contains(strtolower($detail), 'permission denied')
                 || str_contains(strtolower($detail), 'proc_open')
@@ -277,9 +291,19 @@ final class SpeechController
     private static function resolveLocalCommand(string $configured): string
     {
         $root = YIYUNYING_ROOT;
+        $currentPython = PHP_OS_FAMILY === 'Windows'
+            ? ''
+            : $root . '/storage/stt/current/python/bin/python3';
+        $legacyPython = PHP_OS_FAMILY === 'Windows'
+            ? $root . '/storage/stt/venv/Scripts/python.exe'
+            : $root . '/storage/stt/venv/bin/python3';
         $candidates = array_values(array_unique(array_filter([
+            // The atomically selected, root-owned offline runtime is
+            // authoritative whenever it is installed. The configured value
+            // remains next so explicit legacy/custom deployments keep working.
+            $currentPython,
             $configured,
-            PHP_OS_FAMILY === 'Windows' ? $root . '/storage/stt/venv/Scripts/python.exe' : $root . '/storage/stt/venv/bin/python3',
+            $legacyPython,
             PHP_OS_FAMILY === 'Windows' ? 'python.exe' : '/usr/bin/python3',
             PHP_OS_FAMILY === 'Windows' ? 'python' : '/usr/local/bin/python3',
             PHP_OS_FAMILY === 'Windows' ? '' : 'python3',
@@ -303,15 +327,54 @@ final class SpeechController
         return mb_substr($detail, 0, 120);
     }
 
-    private static function removeDirectory(string $directory): void
+    private static function removeDirectory(string $directory, ?string $root = null): void
     {
-        if (!is_dir($directory)) return;
+        $stat = @lstat($directory);
+        if ($stat === false) return;
+        if (is_link($directory) || @readlink($directory) !== false) {
+            // Never recurse through output created by the STT subprocess.
+            @unlink($directory);
+            return;
+        }
+        if (($stat['mode'] & 0170000) !== 0040000) return;
+
+        $resolved = realpath($directory);
+        if ($resolved === false) return;
+        if ($root === null) {
+            $root = $resolved;
+        } elseif (!self::pathIsInsideDirectory($resolved, $root)) {
+            return;
+        }
+
         foreach (scandir($directory) ?: [] as $name) {
             if ($name === '.' || $name === '..') continue;
-            $path = $directory . '/' . $name;
-            if (is_dir($path)) self::removeDirectory($path); else @unlink($path);
+            $path = $directory . DIRECTORY_SEPARATOR . $name;
+            $childStat = @lstat($path);
+            if ($childStat === false) continue;
+            if (is_link($path) || @readlink($path) !== false) {
+                @unlink($path);
+                continue;
+            }
+            $childResolved = realpath($path);
+            if ($childResolved === false || !self::pathIsInsideDirectory($childResolved, $root)) {
+                continue;
+            }
+            if (($childStat['mode'] & 0170000) === 0040000) {
+                self::removeDirectory($path, $root);
+            } else {
+                @unlink($path);
+            }
         }
-        @rmdir($directory);
+        $finalResolved = realpath($directory);
+        if ($finalResolved !== false && self::pathIsInsideDirectory($finalResolved, $root)) {
+            @rmdir($directory);
+        }
+    }
+
+    private static function pathIsInsideDirectory(string $path, string $root): bool
+    {
+        $root = rtrim($root, DIRECTORY_SEPARATOR);
+        return $path === $root || str_starts_with($path, $root . DIRECTORY_SEPARATOR);
     }
 
     private static function writeAttachmentTranscript(array $user, Request $request, string $transcript): void

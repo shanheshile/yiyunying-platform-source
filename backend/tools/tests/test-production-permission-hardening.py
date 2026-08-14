@@ -101,6 +101,14 @@ chmod() { return 0; }
             "STT_MATRIX",
             "STT_LINK_TOPOLOGY",
             "STT_RUNTIME_WWW_PROBE",
+            "STT_RUNTIME_WWW_PROBE|deferred_permission_repair",
+            "STT_FIXABLE_PERMISSION_MATRIX",
+            "STT_PERMISSION_REPAIR_READY",
+            "STT_PERMISSION_MUTATION_AUTHORIZATION|required",
+            "STT_CONTENT_TOPOLOGY_BEFORE",
+            "STT_CONTENT_TOPOLOGY_AFTER",
+            "PROTECTED_ANCESTOR_CHAIN",
+            "MAINTENANCE_QUIESCENCE_REQUIRED",
             "from faster_whisper import WhisperModel",
             "FPM_SOCKET",
             "APPLY_READY_STRUCTURE_FUNCTION",
@@ -128,6 +136,10 @@ chmod() { return 0; }
             "expected-post-shape.sha256",
             "created-node-identity.sha256",
             "inventory-immutable-dirs.nul",
+            "inventory-stt-dirs.nul",
+            "inventory-stt-exec-files.nul",
+            "inventory-stt-data-files.nul",
+            "inventory-stt-links.nul",
             "inventories.sha256",
             "harden_inventory",
             "verify_inventory",
@@ -141,12 +153,18 @@ chmod() { return 0; }
             'chmod 0600 "$LEDGER"',
             "verify_complete_permission_matrix",
             "validate_completed_ledger",
+            "protected_ancestor_chain",
+            "assert_runtime_quiesced",
+            "stt-content-topology-before.sha256",
+            "stt-link-owners.nul",
+            "restore_stt_link_owners",
         ):
             self.assertIn(marker, command)
         self.assertNotRegex(command, r"find[^\n]*-exec(?:dir)?\s+(?:chmod|chown)")
         self.assertNotRegex(command, r"rmdir[^\n]*\|\|\s*true")
         self.assertNotIn("created-paths.txt", command)
         self.assertLess(command.index("validate_full_structure"), command.index("getfacl -R -P -p"))
+        self.assertLess(command.index("validate_stt_strict_permissions"), command.index("getfacl -R -P -p"))
         self.assertLess(command.index("getfacl -R -P -p"), command.index("trap automatic_rollback ERR"))
         self.assertLess(command.index("trap automatic_rollback ERR"), command.index("ledger_append newdir"))
         commit = command.index("state=committed")
@@ -154,11 +172,13 @@ chmod() { return 0; }
         self.assertLess(command.rfind("verify_complete_permission_matrix"), commit)
         self.assertLess(command.rfind("inventory_identity_hash"), commit)
         self.assertLess(command.rfind("managed_path_hash"), commit)
+        self.assertLess(command.rfind("stt_content_topology_hash"), commit)
 
     def test_stt_gate_is_strict_root_www_read_only_and_executes_as_www(self) -> None:
         backup = "/www/backup/yiyunying/permission-hardening-20260814T120000Z-0123456789abcdef"
         command = self.module.apply_command(self.module.EXPECTED_REMOTE_ROOT, "www", "www", backup)
-        gate = command.split("validate_stt_gate()", 1)[1].split("validate_full_structure()", 1)[0]
+        structure = command.split("validate_stt_structure_gate()", 1)[1].split("validate_stt_gate()", 1)[0]
+        gate = self.module.stt_permission_shell_library() + structure
         for marker in (
             "! -user root",
             '! -group "$RUNTIME_GROUP"',
@@ -174,6 +194,64 @@ chmod() { return 0; }
             self.assertIn(marker, gate)
         self.assertNotIn("chmod", gate)
         self.assertNotIn("chown", gate)
+
+    def test_stt_gate_accepts_atomic_current_and_preserves_legacy_rollback(self) -> None:
+        self.assertEqual(
+            ("models", "python-runtime", "venv"),
+            self.module.STT_LEGACY_REQUIRED_DIRECTORIES,
+        )
+        self.assertIn("releases", self.module.STT_TOP_LEVEL_DIRECTORY_ALLOWLIST)
+        backup = "/www/backup/yiyunying/permission-hardening-20260814T120000Z-0123456789abcdef"
+        command = self.module.apply_command(self.module.EXPECTED_REMOTE_ROOT, "www", "www", backup)
+        gate = command.split("validate_stt_structure_gate()", 1)[1].split("validate_stt_gate()", 1)[0]
+        for marker in (
+            'if [ "$base" = current ]',
+            'current_relative=$(readlink -- "$stt/current")',
+            'current_name=${current_relative#releases/}',
+            '[[ "$current_name" =~ $STT_RELEASE_ID_PATTERN ]]',
+            'test "$has_releases" -eq "$has_current"',
+            'find "$stt/releases" -xdev -type f -links +1',
+            'python="$stt/current/python/bin/python3"',
+            'STT_LEGACY_REQUIRED',
+        ):
+            self.assertIn(marker, gate if marker != "STT_LEGACY_REQUIRED" else command)
+
+    def test_current_release_id_is_exact_and_dot_targets_are_rejected(self) -> None:
+        pattern = re.compile(self.module.STT_RELEASE_ID_PATTERN)
+        self.assertIsNotNone(pattern.fullmatch("py31115-fw121-ebe41f70d5b6-012345abcdef"))
+        for unsafe in (
+            ".",
+            "..",
+            "release-1",
+            "py31115-fw121-ebe41f70d5b6-012345ABCDEf",
+            "py31115-fw121-ebe41f70d5b6-012345abcdef-extra",
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertIsNone(pattern.fullmatch(unsafe))
+
+    def test_legacy_0664_bin_files_are_structurally_fixable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            stt = Path(temporary) / "root/storage/stt"
+            (stt / "venv/bin").mkdir(parents=True)
+            (stt / "models").mkdir()
+            (stt / "python-runtime").mkdir()
+            (stt / "venv/bin/python3").write_bytes(b"legacy")
+            (stt / "models/model.bin").write_bytes(b"model")
+            source = f'''set -eu
+ROOT={shell_quote(Path(temporary) / "root")}
+RUNTIME_USER=www
+RUNTIME_GROUP=www
+stat() {{
+  path="${{@: -1}}"
+  if [ -d "$path" ]; then printf '775|www|www\n'; else printf '664|www|www\n'; fi
+}}
+{self.module.stt_permission_shell_library()}
+scan_stt_fixable_permissions
+printf 'FIXABLE|%s|%s|%s|%s\n' "$stt_unfixable_dirs" "$stt_unfixable_exec" "$stt_unfixable_data" "$stt_unfixable_links"
+'''
+            result = self.run_bash(source)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("FIXABLE|0|0|0|0", result.stdout)
 
     def test_apply_failure_cleanup_is_ledgered_and_fail_closed(self) -> None:
         library = self.module.transaction_shell_library()
@@ -373,6 +451,14 @@ trap automatic_rollback ERR
         with mock.patch.object(self.module, "connect") as connect, self.assertRaises(RuntimeError):
             self.module.main(argv)
         connect.assert_not_called()
+        argv.extend(["--maintenance-confirmed", self.module.MAINTENANCE_ACK])
+        with mock.patch.object(self.module, "connect") as connect, self.assertRaises(RuntimeError):
+            self.module.main(argv)
+        connect.assert_not_called()
+        self.assertEqual(
+            "www-processes-stopped-stt-backup-reviewed",
+            self.module.STT_MAINTENANCE_ACK,
+        )
         snapshot = "/www/backup/yiyunying/permission-hardening-20260814T120000Z-0123456789abcdef/permissions-before.acl"
         rollback = self.module.rollback_command(self.module.EXPECTED_REMOTE_ROOT, snapshot)
         for marker in (

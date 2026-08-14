@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "bundle_id": "stt-cpython-3.11.15-faster-whisper-1.2.1-20260718",
+  "target": {
+    "os": "linux",
+    "architecture": "x86_64",
+    "python": "3.11.15",
+    "python_tag": "cp311",
+    "minimum_glibc": "2.17"
+  },
+  "python": {
+    "runtime": {
+      "filename": "cpython-3.11.15+20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 30930344,
+      "sha256": "23ccae6f1ff73e8aa8378436f869da003b8eb7d6c95f2bc706f494115ba1447d",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.11.15%2B20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "license": "MPL-2.0 AND PSF-2.0 AND bundled dependency licenses",
+      "role": "production-runtime"
+    },
+    "license_companion": {
+      "filename": "cpython-3.11.15+20260718-x86_64-unknown-linux-gnu-pgo+lto-full.tar.zst",
+      "size": 74967389,
+      "sha256": "73079de740939cae1ebe465d94fa5661995dd51d4015f1e4f7c31eaf88794c39",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.11.15%2B20260718-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst",
+      "license": "MPL-2.0 AND PSF-2.0 AND bundled dependency licenses",
+      "role": "connected-builder-license-evidence-only"
+    }
+  },
+  "wheels": [
+    {"name":"anyio","version":"4.14.2","filename":"anyio-4.14.2-py3-none-any.whl","size":125813,"sha256":"9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494","license":"MIT","url":"https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl"},
+    {"name":"av","version":"12.3.0","filename":"av-12.3.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl","size":34416598,"sha256":"ef9066fd8d86548e12d587cbfe7b852159e48ff3c732271c3032668d4bd7c599","license":"BSD-3-Clause; bundled FFmpeg notices required","url":"https://files.pythonhosted.org/packages/b4/6e/77426cb92117c941b0f759908bc83f34f259b11b353acb5de95972b452f7/av-12.3.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"},
+    {"name":"certifi","version":"2026.6.17","filename":"certifi-2026.6.17-py3-none-any.whl","size":133289,"sha256":"2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db","license":"MPL-2.0","url":"https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl"},
+    {"name":"click","version":"8.4.2","filename":"click-8.4.2-py3-none-any.whl","size":119243,"sha256":"e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl"},
+    {"name":"coloredlogs","version":"15.0.1","filename":"coloredlogs-15.0.1-py2.py3-none-any.whl","size":46018,"sha256":"612ee75c546f53e92e70049c9dbfcc18c935a2b9a53b66085ce9ef6a6e5c0934","license":"MIT","url":"https://files.pythonhosted.org/packages/a7/06/3d6badcf13db419e25b07041d9c7b4a2c331d3f4e7134445ec5df57714cd/coloredlogs-15.0.1-py2.py3-none-any.whl"},
+    {"name":"ctranslate2","version":"4.6.2","filename":"ctranslate2-4.6.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl","size":37835676,"sha256":"0a52715fd86c1b1a339b6f9f99449d375a2486f1a87c1066460f4c4e7491924c","license":"MIT","url":"https://files.pythonhosted.org/packages/82/a6/26d5d004717b923f6c46ab8495bb07b42f7a1003faefc6767c4f37bc9b57/ctranslate2-4.6.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+    {"name":"faster-whisper","version":"1.2.1","filename":"faster_whisper-1.2.1-py3-none-any.whl","size":1118909,"sha256":"79a66ad50688c0b794dd501dc340a736992a6342f7f95e5811be60b5224a26a7","license":"MIT","url":"https://files.pythonhosted.org/packages/05/99/49ee85903dee060d9f08297b4a342e5e0bcfca2f027a07b4ee0a38ab13f9/faster_whisper-1.2.1-py3-none-any.whl"},
+    {"name":"filelock","version":"3.29.7","filename":"filelock-3.29.7-py3-none-any.whl","size":46036,"sha256":"987db6f789a3a2a59f55081801b2b3697cb97e2a736b5f1a9e99b559285fbc51","license":"MIT","url":"https://files.pythonhosted.org/packages/60/02/be4a57b60c7149b55b9e3b3c13f609cd8eb5307c751f22bd8fb8d262e75b/filelock-3.29.7-py3-none-any.whl"},
+    {"name":"flatbuffers","version":"25.12.19","filename":"flatbuffers-25.12.19-py2.py3-none-any.whl","size":26661,"sha256":"7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl"},
+    {"name":"fsspec","version":"2026.6.0","filename":"fsspec-2026.6.0-py3-none-any.whl","size":203949,"sha256":"02e0b71817df9b2169dc30a16832045764def1191b43dcff5bb85bdee212d2a1","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/e5/22/4222d7ddf3da30f363edaa98e329c2bce6c65497c9cb2810931c8b2c0fbc/fsspec-2026.6.0-py3-none-any.whl"},
+    {"name":"h11","version":"0.16.0","filename":"h11-0.16.0-py3-none-any.whl","size":37515,"sha256":"63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86","license":"MIT","url":"https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl"},
+    {"name":"hf-xet","version":"1.5.1","filename":"hf_xet-1.5.1-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl","size":4514864,"sha256":"892e3a3a3aecc12aded8b93cf4f9cd059282c7de0732f7d55026f3abdf474350","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/de/cc/f99f4bc7295023d7bd9ebbfd51f75cc530ca262c1227666268b8208f4b77/hf_xet-1.5.1-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+    {"name":"httpcore","version":"1.0.9","filename":"httpcore-1.0.9-py3-none-any.whl","size":78784,"sha256":"2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl"},
+    {"name":"httpx","version":"0.28.1","filename":"httpx-0.28.1-py3-none-any.whl","size":73517,"sha256":"d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl"},
+    {"name":"huggingface-hub","version":"1.23.0","filename":"huggingface_hub-1.23.0-py3-none-any.whl","size":770336,"sha256":"b1d604788f5adc7f0eb246e03e0ec19011ca06e38400218c347dccc3dffa64a2","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/f1/ce/13b2ba57838b8db1e6bd033c1b21ce0b9f6153b87d4e4939f77074e41eb0/huggingface_hub-1.23.0-py3-none-any.whl"},
+    {"name":"humanfriendly","version":"10.0","filename":"humanfriendly-10.0-py2.py3-none-any.whl","size":86794,"sha256":"1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477","license":"MIT","url":"https://files.pythonhosted.org/packages/f0/0f/310fb31e39e2d734ccaa2c0fb981ee41f7bd5056ce9bc29b2248bd569169/humanfriendly-10.0-py2.py3-none-any.whl"},
+    {"name":"idna","version":"3.18","filename":"idna-3.18-py3-none-any.whl","size":65455,"sha256":"7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl"},
+    {"name":"mpmath","version":"1.3.0","filename":"mpmath-1.3.0-py3-none-any.whl","size":536198,"sha256":"a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl"},
+    {"name":"numpy","version":"1.26.4","filename":"numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl","size":18252005,"sha256":"666dbfb6ec68962c033a450943ded891bed2d54e6755e35e5835d63f4f6931d5","license":"BSD-3-Clause; bundled notices required","url":"https://files.pythonhosted.org/packages/3a/d0/edc009c27b406c4f9cbc79274d6e46d634d139075492ad055e3d68445925/numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"},
+    {"name":"onnxruntime","version":"1.16.3","filename":"onnxruntime-1.16.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl","size":6412538,"sha256":"3e253e572021563226a86f1c024f8f70cdae28f2fb1cc8c3a9221e8b1ce37db5","license":"MIT","url":"https://files.pythonhosted.org/packages/8a/12/ddbf34a866fd0022883bc14cbec3aa2429d54783fa0c90f1fcbc14206249/onnxruntime-1.16.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"},
+    {"name":"packaging","version":"26.2","filename":"packaging-26.2-py3-none-any.whl","size":100195,"sha256":"5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e","license":"Apache-2.0 OR BSD-2-Clause","url":"https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl"},
+    {"name":"pip","version":"26.1.2","filename":"pip-26.1.2-py3-none-any.whl","size":1813144,"sha256":"382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab","license":"MIT","url":"https://files.pythonhosted.org/packages/5d/95/6b5cb3461ea5673ba0995989746db58eb18b91b54dbf331e72f569540946/pip-26.1.2-py3-none-any.whl"},
+    {"name":"protobuf","version":"7.35.1","filename":"protobuf-7.35.1-cp310-abi3-manylinux2014_x86_64.whl","size":327130,"sha256":"74758715c53d7158fb76caf4f0cfdacc5329a4b1bb994f865d6cf302d413a1c4","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/e4/be/5b3cfe508bfab6761414ff944e3366eb13be4fd71efcd69450f89ba39f43/protobuf-7.35.1-cp310-abi3-manylinux2014_x86_64.whl"},
+    {"name":"PyYAML","version":"6.0.3","filename":"pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl","size":806638,"sha256":"b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d","license":"MIT","url":"https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"},
+    {"name":"setuptools","version":"84.0.0","filename":"setuptools-84.0.0-py3-none-any.whl","size":818216,"sha256":"51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670","license":"MIT","url":"https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl"},
+    {"name":"sympy","version":"1.14.0","filename":"sympy-1.14.0-py3-none-any.whl","size":6299353,"sha256":"e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5","license":"BSD-3-Clause","url":"https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl"},
+    {"name":"tokenizers","version":"0.23.1","filename":"tokenizers-0.23.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl","size":3346235,"sha256":"5075b405006415ea148a992d093699c66eb01952bf59f4d5727089a98bda45a4","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/0d/d5/1353e5f677ec27c2494fb6a6725e82d56c985f53e90ec511369e7e4f02c6/tokenizers-0.23.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"},
+    {"name":"tqdm","version":"4.68.4","filename":"tqdm-4.68.4-py3-none-any.whl","size":676612,"sha256":"5168118b2368f48c561afda8020fd79195b1bdb0bdf8086b88442c267a315dc2","license":"MPL-2.0 AND MIT","url":"https://files.pythonhosted.org/packages/22/2a/5e5e750890ada51017d18d0d4c30da696e5b5bd3180947729927628fc3cb/tqdm-4.68.4-py3-none-any.whl"},
+    {"name":"typing-extensions","version":"4.16.0","filename":"typing_extensions-4.16.0-py3-none-any.whl","size":45571,"sha256":"481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8","license":"PSF-2.0","url":"https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl"},
+    {"name":"wheel","version":"0.47.0","filename":"wheel-0.47.0-py3-none-any.whl","size":32218,"sha256":"212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced","license":"MIT","url":"https://files.pythonhosted.org/packages/87/1b/9e33c09813d65e248f7f773119148a612516a4bea93e9c6f545f78455b7c/wheel-0.47.0-py3-none-any.whl"}
+  ],
+  "model": {
+    "repository": "Systran/faster-whisper-base",
+    "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+    "license": "MIT",
+    "files": [
+      {"filename":"config.json","size":2309,"sha256":"56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a","url":"https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json?download=true"},
+      {"filename":"model.bin","size":145217532,"sha256":"d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9","url":"https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin?download=true"},
+      {"filename":"tokenizer.json","size":2203239,"sha256":"fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab","url":"https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json?download=true"},
+      {"filename":"vocabulary.txt","size":459861,"sha256":"34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913","url":"https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt?download=true"}
+    ],
+    "observed_legacy_symlink_targets": {
+      "config.json": "867cf1a0fece1394e01d55e287ba2f09a577c046",
+      "model.bin": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+      "tokenizer.json": "7818adb6de9fa3064d3ff81226fdd675be1f6344",
+      "vocabulary.txt": "c9074644d9d1205686f16d411564729461324b75"
+    }
+  },
+  "probe": {
+    "filename": "stt-runtime-probe.wav",
+    "size": 32044,
+    "sha256": "d13e4f6fd2e70b6d93dbc1029412c4a00716e5539a9840d2dd746b414170df94",
+    "format": "mono PCM16LE 16000 Hz 1 second",
+    "samples": "sample[i] = 8192 if ((i // 20) % 2 == 0) else -8192"
+  }
+}

@@ -4,17 +4,21 @@
 
 首次转写调用服务器配置的本地插件或 OpenAI 兼容语音接口，结果写入 `audio_transcriptions`，并同步写回 `media_attachments.metadata_json.transcript`。再次展开同一语音时直接读取缓存，不重复识别。
 
-## 推荐：随包本地插件
+## 推荐：正式离线本地插件
 
-源码包已经包含 `tools/stt/transcribe.py`。在 Linux/宝塔后端根目录执行：
+源码包已经包含 `tools/stt/transcribe.py`。正式生产按
+`docs/PRODUCTION_STT_RUNTIME.md` 使用固定 CPython、`--require-hashes` wheelhouse、
+固定 revision 模型、真实 `www` 推理探针和原子 `current`/回滚；生产主机不得联网下载。
+
+下面的旧脚本只供旧 Debug 环境兼容，不是正式生产安装方式：
 
 ```bash
 bash deploy/install-local-stt.sh
 ```
 
-安装脚本创建独立 Python 环境并安装 `faster-whisper 1.2.1`；没有系统 Python 3.10 及以上版本时，会自动安装项目专用运行时。安装完成后，后端自动检测本地插件，不需要 API 密钥。默认 `base` 模型保存在 `storage/stt/models`，首次使用时下载；PHP-FPM 运行用户必须能读写 `storage/stt`、`storage/tmp` 与 `public/uploads`。
+正式环境优先检测 `storage/stt/current/python/bin/python3` 与固定 `current/model/base`；没有受信 `current` 时仍保留 `storage/stt/venv`/`models` legacy 回退，保证旧 Debug 软件可继续使用。正式 release 为 `root:www` 只读，`www` 不得写入；业务临时目录权限维持原规则。
 
-服务器内存充足且追求更高准确率时可配置 `STT_MODEL=small` 或 `medium`。PHP 必须允许 `proc_open`；若主机禁止执行本地程序，再使用下面的兼容 API 方案。
+正式离线 release 的运行合同固定为 `base/cpu/int8`，`STT_MODEL`、`YIYUNYING_STT_DEVICE` 和 `YIYUNYING_STT_COMPUTE_TYPE` 不会覆盖已激活的 `current`；这样线上请求与安装验收使用完全相同的配置。`small`/`medium` 或 GPU 配置仅属于没有正式 `current` 时的旧 Debug/legacy 路径。PHP 必须允许 `proc_open`；若主机禁止执行本地程序，再使用下面的兼容 API 方案。
 
 ## 可选：OpenAI 兼容接口
 

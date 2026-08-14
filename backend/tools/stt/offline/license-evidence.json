@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "purpose": "license text evidence only; never used as executable or Python installation input",
+  "artifacts": [
+    {
+      "name": "ctranslate2",
+      "version": "4.6.2",
+      "filename": "ctranslate2-v4.6.2-LICENSE",
+      "size": 1115,
+      "sha256": "54aa79d9fe3c09e67a16dcd95b9e88676405a6ec174efda31036983cf7672ecb",
+      "url": "https://raw.githubusercontent.com/OpenNMT/CTranslate2/v4.6.2/LICENSE",
+      "license": "MIT"
+    },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "filename": "flatbuffers-v25.12.19-LICENSE",
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "url": "https://raw.githubusercontent.com/google/flatbuffers/v25.12.19/LICENSE",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.23.1",
+      "filename": "tokenizers-v0.23.1-LICENSE",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "url": "https://raw.githubusercontent.com/huggingface/tokenizers/v0.23.1/LICENSE",
+      "license": "Apache-2.0"
+    }
+  ]
+}
