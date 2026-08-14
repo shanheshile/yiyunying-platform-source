@@ -177,6 +177,8 @@ $required = @(
     'tools\tests\test_credential_console_server.py',
     'tools\tests\test-internal-download-secret.ps1',
     'tools\deploy-ssh.py',
+    'tools\install-production-python-runtime.py',
+    'docs\PRODUCTION_PYTHON_RUNTIME.md',
     'tools\install-production-media-runtime.py',
     'docs\PRODUCTION_MEDIA_RUNTIME.md',
     'tools\publish-android-ssh.py',
@@ -201,6 +203,7 @@ $required = @(
     'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_internal_apk_private_deploy.py',
     'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_python_runtime.py',
     'tools\tests\test_install_production_media_runtime.py',
     'tools\tests\test_catalog_server_local_preparation.py',
     'docs\CATALOG_CONFLICT_SERVER_LOCAL_PREPARATION.md',
@@ -323,6 +326,7 @@ if ($null -eq $python) {
 }
 $pythonFiles = @(
     'tools\deploy-ssh.py',
+    'tools\install-production-python-runtime.py',
     'tools\install-production-media-runtime.py',
     'tools\publish-android-ssh.py',
     'tools\verify-production-release-ssh.py',
@@ -342,6 +346,7 @@ $pythonFiles = @(
     '..\download-site\scripts\deploy-internal-apks.py',
     '..\download-site\scripts\deploy-site-security-remediation.py',
     'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_python_runtime.py',
     'tools\tests\test_install_production_media_runtime.py',
     'tools\tests\test_catalog_server_local_preparation.py',
     'tools\tests\test-production-permission-hardening.py'
@@ -363,6 +368,7 @@ foreach ($testFile in @(
     'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_internal_apk_private_deploy.py',
     'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_python_runtime.py',
     'tools\tests\test_install_production_media_runtime.py',
     'tools\tests\test_catalog_server_local_preparation.py',
     'tools\tests\test-production-permission-hardening.py'
