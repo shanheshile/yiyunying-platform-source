@@ -74,6 +74,14 @@ CATALOG_CONFLICT_SERVER_LOCAL_PATHS = {
         "6e2f1db260b172345f8890c5360f187d1c0a8e331c1e108167134d9fa1fbf83f",
 }
 
+DEPLOYMENT_ARCHIVE_RE = re.compile(
+    r"/tmp/yiyunying-backend-(?P<slug>[0-9]{8}-[0-9]{6}-[0-9a-f]{16})[.]tar[.]gz"
+)
+DEPLOYMENT_STAGE_RE = re.compile(
+    r"/tmp/yiyunying-stage-(?P<slug>[0-9]{8}-[0-9]{6}-[0-9a-f]{16})"
+)
+DEPLOYMENT_CLEANUP_FAILURE_STATUS = 97
+
 
 def quote(value: str) -> str:
     return shlex.quote(value)
@@ -312,8 +320,148 @@ def archive_sha256_check_command(remote_archive: str, expected_sha256: str) -> s
     return (
         "set -e; "
         f"test -s {quote(remote_archive)}; "
+        f"test -f {quote(remote_archive)}; test ! -L {quote(remote_archive)}; "
+        f"test \"$(stat -c '%U|%G|%a|%h' -- {quote(remote_archive)})\" = "
+        "'root|root|600|1'; "
         f"ACTUAL_ARCHIVE_SHA256=$(sha256sum {quote(remote_archive)}); "
         f'test "${{ACTUAL_ARCHIVE_SHA256%% *}}" = {quote(expected_sha256)}'
+    )
+
+
+def _deployment_temp_match(path: str, pattern: re.Pattern[str], label: str) -> re.Match[str]:
+    match = pattern.fullmatch(path)
+    if match is None:
+        raise ValueError(f"{label} is outside the reviewed deployment namespace")
+    return match
+
+
+def deployment_archive_marker(remote_archive: str) -> str:
+    match = _deployment_temp_match(
+        remote_archive, DEPLOYMENT_ARCHIVE_RE, "Remote deployment archive"
+    )
+    return f"YY_DEPLOY_ARCHIVE_V1:{match.group('slug')}\n"
+
+
+def deployment_archive_create_command(remote_archive: str) -> str:
+    marker = deployment_archive_marker(remote_archive)
+    quoted = quote(remote_archive)
+    return (
+        "set -euC; export LC_ALL=C LANG=C; "
+        f"test ! -e {quoted}; test ! -L {quoted}; "
+        f"(umask 077; printf %s {quote(marker)} > {quoted}); "
+        f"chown root:root -- {quoted}; chmod 0600 -- {quoted}; "
+        f"test \"$(stat -c '%F|%U|%G|%a|%h|%s' -- {quoted})\" = "
+        f"{quote('regular file|root|root|600|1|' + str(len(marker.encode('ascii'))))}"
+    )
+
+
+def deployment_archive_cleanup_command(
+    remote_archive: str,
+    expected_sha256: str,
+    ownership_confirmed: bool,
+) -> str:
+    marker = deployment_archive_marker(remote_archive).rstrip("\n")
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError("Expected archive SHA-256 must be lowercase hexadecimal")
+    quoted = quote(remote_archive)
+    command = (
+        "set -eu; export LC_ALL=C LANG=C; "
+        f"if [ ! -e {quoted} ] && [ ! -L {quoted} ]; then exit 0; fi; "
+        f"test -f {quoted}; test ! -L {quoted}; "
+        f"test \"$(stat -c '%U|%G|%a|%h' -- {quoted})\" = 'root|root|600|1'; "
+    )
+    if not ownership_confirmed:
+        command += (
+            f"owned=0; size=$(stat -c '%s' -- {quoted}); "
+            f"if [ \"$size\" -eq {len(deployment_archive_marker(remote_archive).encode('ascii'))} ] "
+            f"&& [ \"$(cat -- {quoted})\" = {quote(marker)} ]; then owned=1; "
+            f"elif [ \"$(sha256sum -- {quoted} | awk '{{print $1}}')\" = "
+            f"{quote(expected_sha256)} ]; then owned=1; fi; "
+            f"if [ \"$owned\" -ne 1 ]; then printf %s "
+            f"{quote('RECOVERY_REQUIRED=unowned-or-partial-deployment-archive\n')} >&2; "
+            f"exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        )
+    command += (
+        f"rm -f -- {quoted}; "
+        f"if [ -e {quoted} ] || [ -L {quoted} ]; then "
+        f"printf %s {quote('RECOVERY_REQUIRED=deployment-archive-cleanup-readback\n')} >&2; "
+        f"exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi"
+    )
+    return command
+
+
+def deployment_stage_marker_path(stage_dir: str) -> str:
+    match = _deployment_temp_match(
+        stage_dir, DEPLOYMENT_STAGE_RE, "Remote deployment stage"
+    )
+    return stage_dir + "/.yiyunying-deploy-owner-" + match.group("slug")
+
+
+def deployment_stage_marker(stage_dir: str) -> str:
+    match = _deployment_temp_match(
+        stage_dir, DEPLOYMENT_STAGE_RE, "Remote deployment stage"
+    )
+    return f"YY_DEPLOY_STAGE_V1:{match.group('slug')}\n"
+
+
+def deployment_stage_create_command(stage_dir: str) -> str:
+    marker_path = deployment_stage_marker_path(stage_dir)
+    marker = deployment_stage_marker(stage_dir)
+    stage_q = quote(stage_dir)
+    marker_q = quote(marker_path)
+    return (
+        "set -euC; export LC_ALL=C LANG=C; "
+        f"test ! -e {stage_q}; test ! -L {stage_q}; "
+        f"(umask 077; mkdir -- {stage_q}); "
+        f"chown root:root -- {stage_q}; chmod 0700 -- {stage_q}; "
+        f"test \"$(stat -c '%F|%U|%G|%a' -- {stage_q})\" = "
+        "'directory|root|root|700'; "
+        f"(umask 077; printf %s {quote(marker)} > {marker_q}); "
+        f"chown root:root -- {marker_q}; chmod 0600 -- {marker_q}; "
+        f"test \"$(stat -c '%F|%U|%G|%a|%h|%s' -- {marker_q})\" = "
+        f"{quote('regular file|root|root|600|1|' + str(len(marker.encode('ascii'))))}"
+    )
+
+
+def deployment_stage_cleanup_command(stage_dir: str) -> str:
+    marker_path = deployment_stage_marker_path(stage_dir)
+    marker = deployment_stage_marker(stage_dir).rstrip("\n")
+    stage_q = quote(stage_dir)
+    marker_q = quote(marker_path)
+    recovery = quote("RECOVERY_REQUIRED=deployment-stage-cleanup-boundary\n")
+    return (
+        "set -eu; export LC_ALL=C LANG=C; "
+        f"if [ ! -e {stage_q} ] && [ ! -L {stage_q} ]; then exit 0; fi; "
+        f"test -d {stage_q}; test ! -L {stage_q}; "
+        f"test \"$(stat -c '%F|%U|%G|%a' -- {stage_q})\" = "
+        "'directory|root|root|700'; "
+        f"test -f {marker_q}; test ! -L {marker_q}; "
+        f"test \"$(stat -c '%F|%U|%G|%a|%h' -- {marker_q})\" = "
+        "'regular file|root|root|600|1'; "
+        f"test \"$(cat -- {marker_q})\" = {quote(marker)}; "
+        f"if stage_symlinks=$(find {stage_q} -xdev -type l -print -quit); then :; "
+        f"else printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        f"if stage_hardlinks=$(find {stage_q} -xdev -type f -links +1 -print -quit); then :; "
+        f"else printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        f"if stage_specials=$(find {stage_q} -xdev ! -type d ! -type f -print -quit); then :; "
+        f"else printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        f"if [ -n \"$stage_symlinks\" ] || [ -n \"$stage_hardlinks\" ] "
+        f"|| [ -n \"$stage_specials\" ]; then "
+        f"printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        f"if stage_mounts=$(findmnt -rn -o TARGET); then :; "
+        f"else printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        "mount_guard_status=0; "
+        f"printf '%s\\n' \"$stage_mounts\" | awk -v root={stage_q} "
+        f"{quote('$0 == root || index($0, root "/") == 1 { found=1 } END { exit found ? 0 : 1 }')} "
+        "|| mount_guard_status=$?; "
+        "if [ \"$mount_guard_status\" -eq 0 ]; then "
+        f"printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        "if [ \"$mount_guard_status\" -ne 1 ]; then "
+        f"printf %s {recovery} >&2; exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi; "
+        f"rm -rf -- {stage_q}; "
+        f"if [ -e {stage_q} ] || [ -L {stage_q} ]; then "
+        f"printf %s {quote('RECOVERY_REQUIRED=deployment-stage-cleanup-readback\n')} >&2; "
+        f"exit {DEPLOYMENT_CLEANUP_FAILURE_STATUS}; fi"
     )
 
 
@@ -399,7 +547,7 @@ def runtime_dependency_preflight_command(
     return (
         "set -e; "
         + strict_php82_bootstrap(php_bin)
-        + 'for TOOL in tar sha256sum gzip rsync curl stat readlink mktemp grep find timeout; do '
+        + 'for TOOL in tar sha256sum gzip rsync curl stat readlink mktemp grep find findmnt awk timeout; do '
         + 'command -v "$TOOL" >/dev/null 2>&1; done; '
         + f'FFMPEG_BIN={quote(MEDIA_FFMPEG_BIN)}; FFPROBE_BIN={quote(MEDIA_FFPROBE_BIN)}; '
         + media_runtime_integrity_preflight_command()
@@ -1051,25 +1199,29 @@ def main() -> int:
     conflict_batch = f"catalog-repair-{deployment_slug}"
     remote_parent = posixpath.dirname(args.remote_root.rstrip("/"))
     remote_name = posixpath.basename(args.remote_root.rstrip("/"))
+    archive_intended = False
+    archive_ownership_confirmed = False
+    stage_intended = False
+    conflict_stage_intended = False
 
     client = paramiko.SSHClient()
     client.load_host_keys(args.known_hosts)
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    client.connect(
-        args.host,
-        port=args.port,
-        username=args.user,
-        password=ssh_password,
-        timeout=20,
-        banner_timeout=20,
-        auth_timeout=20,
-        look_for_keys=False,
-        allow_agent=False,
-        disabled_algorithms={
-            "kex": ["curve25519-sha256", "curve25519-sha256@libssh.org"]
-        },
-    )
     try:
+        client.connect(
+            args.host,
+            port=args.port,
+            username=args.user,
+            password=ssh_password,
+            timeout=20,
+            banner_timeout=20,
+            auth_timeout=20,
+            look_for_keys=False,
+            allow_agent=False,
+            disabled_algorithms={
+                "kex": ["curve25519-sha256", "curve25519-sha256@libssh.org"]
+            },
+        )
         transport = client.get_transport()
         if transport is None or not transport.is_active():
             raise RuntimeError("SSH transport is not active after connect")
@@ -1082,10 +1234,22 @@ def main() -> int:
             "preflight",
         )
 
+        archive_intended = True
+        run(
+            client,
+            deployment_archive_create_command(remote_archive),
+            "deployment-archive-create",
+        )
+        archive_ownership_confirmed = True
+
+        def upload_deployment_archive(sftp: Any) -> None:
+            sftp.put(args.archive, remote_archive, confirm=False)
+            sftp.chmod(remote_archive, 0o600)
+
         run_sftp_operation(
             client,
             "archive-upload",
-            lambda sftp: sftp.put(args.archive, remote_archive, confirm=False),
+            upload_deployment_archive,
         )
         run(
             client,
@@ -1095,9 +1259,20 @@ def main() -> int:
         print("[upload] archive uploaded and SHA-256 verified")
 
         run(client, f"tar -tzf {quote(remote_archive)} >/dev/null", "archive-check")
+        stage_intended = True
         run(
             client,
-            f"mkdir -p {quote(stage_dir)} && tar -xzf {quote(remote_archive)} -C {quote(stage_dir)} "
+            deployment_stage_create_command(stage_dir),
+            "deployment-stage-create",
+        )
+        stage_marker = deployment_stage_marker_path(stage_dir)
+        run(
+            client,
+            f"test -d {quote(stage_dir)} && test ! -L {quote(stage_dir)} "
+            f"&& test \"$(stat -c '%F|%U|%G|%a' -- {quote(stage_dir)})\" = "
+            "'directory|root|root|700' "
+            f"&& test -f {quote(stage_marker)} && test ! -L {quote(stage_marker)} "
+            f"&& tar -xzf {quote(remote_archive)} -C {quote(stage_dir)} "
             f"&& test -f {quote(stage_backend + '/public/index.php')} "
             f"&& test -f {quote(stage_backend + '/tools/audit-default-credentials.php')} "
             f"&& test -f {quote(stage_backend + '/config/release-identity.json')} "
@@ -1113,6 +1288,7 @@ def main() -> int:
             "runtime-dependency-preflight",
         )
         if conflict_mode == "local":
+            conflict_stage_intended = True
             run(
                 client,
                 f"mkdir {quote(conflict_stage)} && chmod 0700 {quote(conflict_stage)}",
@@ -1441,6 +1617,7 @@ def main() -> int:
             # Preparation is immediately bound to the same backups and repair.
             if conflict_enabled:
                 if conflict_mode == "server-local":
+                    conflict_stage_intended = True
                     preparation_output = run_redacted_capture(
                         client,
                         catalog_conflict_server_local_preparation_command(
@@ -1700,14 +1877,57 @@ def main() -> int:
                     f"{deployment_error}; rollback incomplete: {'; '.join(recovery_errors)}"
                 ) from deployment_error
             raise
-        run(
-            client,
-            f"rm -rf {quote(stage_dir)} && rm -f {quote(remote_archive)}",
-            "temporary-cleanup",
-        )
-        print(f"[complete] backup={backup_dir}")
     finally:
-        client.close()
+        primary_failure = sys.exc_info()[1]
+        cleanup_failures: list[tuple[str, BaseException]] = []
+        if conflict_stage_intended:
+            try:
+                run(
+                    client,
+                    catalog_conflict_stage_cleanup_command(conflict_stage),
+                    "catalog-conflict-stage-cleanup-finally",
+                )
+            except BaseException as cleanup_error:
+                cleanup_failures.append(("catalog-conflict-stage", cleanup_error))
+        if stage_intended:
+            try:
+                run(
+                    client,
+                    deployment_stage_cleanup_command(stage_dir),
+                    "deployment-stage-cleanup",
+                )
+            except BaseException as cleanup_error:
+                cleanup_failures.append(("stage", cleanup_error))
+        if archive_intended:
+            try:
+                run(
+                    client,
+                    deployment_archive_cleanup_command(
+                        remote_archive,
+                        archive_sha256,
+                        archive_ownership_confirmed,
+                    ),
+                    "deployment-archive-cleanup",
+                )
+            except BaseException as cleanup_error:
+                cleanup_failures.append(("archive", cleanup_error))
+        try:
+            client.close()
+        except BaseException as cleanup_error:
+            cleanup_failures.append(("ssh-close", cleanup_error))
+        if cleanup_failures:
+            labels = ",".join(label for label, _error in cleanup_failures)
+            recovery_message = (
+                "RECOVERY_REQUIRED: deployment temporary cleanup is not proven; "
+                f"failed={labels}"
+            )
+            if primary_failure is not None:
+                primary_message = str(primary_failure).strip()
+                if primary_message:
+                    recovery_message = primary_message + "; " + recovery_message
+                raise RuntimeError(recovery_message) from primary_failure
+            raise RuntimeError(recovery_message) from cleanup_failures[0][1]
+    print(f"[complete] backup={backup_dir}")
     return 0
 
 

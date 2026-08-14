@@ -157,6 +157,190 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lowercase hexadecimal"):
             DEPLOY.archive_sha256_check_command("/tmp/release.tar.gz", "not-a-hash")
 
+    def test_deployment_temporary_paths_are_exclusive_root_only_and_exactly_cleaned(self) -> None:
+        slug = "20260815-120102-0123456789abcdef"
+        archive = f"/tmp/yiyunying-backend-{slug}.tar.gz"
+        stage = f"/tmp/yiyunying-stage-{slug}"
+        digest = "a" * 64
+
+        archive_create = DEPLOY.deployment_archive_create_command(archive)
+        archive_cleanup = DEPLOY.deployment_archive_cleanup_command(
+            archive, digest, ownership_confirmed=False
+        )
+        stage_create = DEPLOY.deployment_stage_create_command(stage)
+        stage_cleanup = DEPLOY.deployment_stage_cleanup_command(stage)
+
+        self.assertIn("set -euC", archive_create)
+        self.assertIn("root|root|600|1", archive_create)
+        self.assertIn("YY_DEPLOY_ARCHIVE_V1", archive_create)
+        self.assertIn("root|root|600|1", archive_cleanup)
+        self.assertIn("unowned-or-partial-deployment-archive", archive_cleanup)
+        self.assertIn("rm -f --", archive_cleanup)
+        self.assertNotIn("*", archive_cleanup)
+
+        self.assertIn("set -euC", stage_create)
+        self.assertIn("directory|root|root|700", stage_create)
+        self.assertIn("YY_DEPLOY_STAGE_V1", stage_create)
+        self.assertNotIn("mkdir -p", stage_create)
+        self.assertIn("directory|root|root|700", stage_cleanup)
+        self.assertIn("-type l", stage_cleanup)
+        self.assertIn("-links +1", stage_cleanup)
+        self.assertIn("findmnt -rn -o TARGET", stage_cleanup)
+        self.assertIn("rm -rf --", stage_cleanup)
+        self.assertNotIn("*", stage_cleanup)
+
+        for unsafe in (
+            "/tmp/yiyunying-backend-current.tar.gz",
+            "/tmp/yiyunying-backend-20260815-120102-0123456789abcdef.tar.gz/extra",
+            "/tmp/yiyunying-stage-current",
+            "/tmp/yiyunying-stage-20260815-120102-0123456789abcdef/extra",
+        ):
+            with self.subTest(unsafe=unsafe):
+                if "backend" in unsafe:
+                    with self.assertRaisesRegex(ValueError, "reviewed deployment namespace"):
+                        DEPLOY.deployment_archive_create_command(unsafe)
+                else:
+                    with self.assertRaisesRegex(ValueError, "reviewed deployment namespace"):
+                        DEPLOY.deployment_stage_create_command(unsafe)
+
+        # Execute the generated guard in a real POSIX shell.  Each producer
+        # below is a real executable that returns non-zero on demand; a failed
+        # inspection must leave the exact owned stage untouched.
+        shell = shutil.which("sh")
+        if shell is None:
+            git = shutil.which("git")
+            if git is not None:
+                bundled_shell = Path(git).resolve().parent.parent / "usr" / "bin" / "sh.exe"
+                if bundled_shell.is_file():
+                    shell = str(bundled_shell)
+        self.assertIsNotNone(shell, "A POSIX shell is required for cleanup fault injection")
+        assert shell is not None
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fake_bin = Path(temporary_directory) / "bin"
+            fake_bin.mkdir()
+            wrappers = {
+                "stat": """#!/bin/sh
+case "$2" in
+  '%F|%U|%G|%a') printf '%s\\n' 'directory|root|root|700' ;;
+  '%F|%U|%G|%a|%h') printf '%s\\n' 'regular file|root|root|600|1' ;;
+  *) exit 31 ;;
+esac
+""",
+                "find": """#!/bin/sh
+count=0
+if [ -f "$FIND_COUNTER" ]; then count=$(cat "$FIND_COUNTER") || exit 30; fi
+count=$((count + 1))
+printf '%s\\n' "$count" > "$FIND_COUNTER" || exit 30
+if [ "$count" -eq "$FAIL_FIND_CALL" ]; then exit 23; fi
+exit 0
+""",
+                "findmnt": """#!/bin/sh
+if [ "${FAIL_FINDMNT:-0}" -eq 1 ]; then exit 24; fi
+exit 0
+""",
+            }
+            for name, source in wrappers.items():
+                wrapper = fake_bin / name
+                wrapper.write_bytes(source.encode("utf-8"))
+                wrapper.chmod(0o755)
+
+            shell_tools = str(Path(shell).resolve().parent)
+            environment = os.environ.copy()
+            environment["PATH"] = str(fake_bin) + os.pathsep + shell_tools
+            dynamic_slug = (
+                "20260815-120103-"
+                + hashlib.sha256(temporary_directory.encode("utf-8")).hexdigest()[:16]
+            )
+            dynamic_stage = f"/tmp/yiyunying-stage-{dynamic_slug}"
+            dynamic_marker = DEPLOY.deployment_stage_marker_path(dynamic_stage)
+            marker_value = DEPLOY.deployment_stage_marker(dynamic_stage).rstrip("\n")
+            counter = f"/tmp/yiyunying-find-counter-{dynamic_slug}"
+            setup = (
+                f"rm -rf -- {shlex.quote(dynamic_stage)}; "
+                f"rm -f -- {shlex.quote(counter)}; "
+                f"mkdir -- {shlex.quote(dynamic_stage)}; "
+                f"printf '%s\\n' {shlex.quote(marker_value)} > {shlex.quote(dynamic_marker)}"
+            )
+            teardown = (
+                f"rm -rf -- {shlex.quote(dynamic_stage)}; "
+                f"rm -f -- {shlex.quote(counter)}"
+            )
+            cleanup_command = DEPLOY.deployment_stage_cleanup_command(dynamic_stage)
+
+            try:
+                for failed_find in (1, 2, 3):
+                    with self.subTest(failed_producer=f"find-{failed_find}"):
+                        subprocess.run(
+                            [shell, "-c", setup],
+                            env=environment,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                        fault_environment = environment | {
+                            "FIND_COUNTER": counter,
+                            "FAIL_FIND_CALL": str(failed_find),
+                            "FAIL_FINDMNT": "0",
+                        }
+                        result = subprocess.run(
+                            [shell, "-c", cleanup_command],
+                            env=fault_environment,
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(result.returncode, DEPLOY.DEPLOYMENT_CLEANUP_FAILURE_STATUS)
+                        self.assertEqual(
+                            result.stderr,
+                            "RECOVERY_REQUIRED=deployment-stage-cleanup-boundary\n",
+                        )
+                        stage_readback = subprocess.run(
+                            [shell, "-c", f"test -d {shlex.quote(dynamic_stage)}"],
+                            env=environment,
+                            check=False,
+                        )
+                        self.assertEqual(stage_readback.returncode, 0)
+
+                with self.subTest(failed_producer="findmnt"):
+                    subprocess.run(
+                        [shell, "-c", setup],
+                        env=environment,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    fault_environment = environment | {
+                        "FIND_COUNTER": counter,
+                        "FAIL_FIND_CALL": "0",
+                        "FAIL_FINDMNT": "1",
+                    }
+                    result = subprocess.run(
+                        [shell, "-c", cleanup_command],
+                        env=fault_environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, DEPLOY.DEPLOYMENT_CLEANUP_FAILURE_STATUS)
+                    self.assertEqual(
+                        result.stderr,
+                        "RECOVERY_REQUIRED=deployment-stage-cleanup-boundary\n",
+                    )
+                    stage_readback = subprocess.run(
+                        [shell, "-c", f"test -d {shlex.quote(dynamic_stage)}"],
+                        env=environment,
+                        check=False,
+                    )
+                    self.assertEqual(stage_readback.returncode, 0)
+            finally:
+                subprocess.run(
+                    [shell, "-c", teardown],
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                )
+
     def test_default_credential_audit_precedes_all_backup_and_maintenance_work(self) -> None:
         stage_guard = SOURCE.index("stage_backend + '/tools/audit-default-credentials.php'")
         runtime = SOURCE.index('"runtime-dependency-preflight"')
@@ -202,7 +386,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertNotIn("fileinfo", command)
         for tool in (
             "tar", "sha256sum", "gzip", "rsync", "curl", "stat", "readlink",
-            "mktemp", "grep", "find", "timeout",
+            "mktemp", "grep", "find", "findmnt", "awk", "timeout",
         ):
             self.assertIn(tool, command)
         self.assertIn(DEPLOY.MEDIA_FFMPEG_BIN, command)
@@ -416,6 +600,7 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         class FakeSftp:
             def __init__(self) -> None:
                 self.closed = False
+                self.modes: list[int] = []
 
             def get_channel(self) -> FakeSftpChannel:
                 return FakeSftpChannel()
@@ -423,6 +608,9 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             def put(self, *_args: object, **kwargs: object) -> None:
                 archive_confirms.append(bool(kwargs["confirm"]))
                 return None
+
+            def chmod(self, _path: str, mode: int) -> None:
+                self.modes.append(mode)
 
             def close(self) -> None:
                 self.closed = True
@@ -528,8 +716,10 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "preflight", "archive-sha256-check", "archive-check", "stage-files",
-                "runtime-dependency-preflight",
+                "preflight", "deployment-archive-create", "archive-sha256-check",
+                "archive-check", "deployment-stage-create", "stage-files",
+                "runtime-dependency-preflight", "deployment-stage-cleanup",
+                "deployment-archive-cleanup",
             ],
         )
         self.assertEqual(DEPLOY.SSH_KEEPALIVE_SECONDS, 15)
@@ -537,6 +727,11 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertEqual(DEPLOY.SFTP_CHANNEL_TIMEOUT_SECONDS, 300)
         self.assertEqual(sftp_timeouts, [300])
         self.assertEqual(archive_confirms, [False])
+        self.assertEqual(fake_sftp.modes, [0o600])
+        self.assertIn("root|root|600", commands["deployment-archive-create"])
+        self.assertIn("directory|root|root|700", commands["deployment-stage-create"])
+        self.assertIn("rm -rf --", commands["deployment-stage-cleanup"])
+        self.assertIn("rm -f --", commands["deployment-archive-cleanup"])
         for capability in ("gd", "imagecreatefrompng", "imagesx", "imagesy"):
             self.assertIn(capability, commands["runtime-dependency-preflight"])
         self.assertNotIn("backup-directory", labels)
@@ -563,6 +758,9 @@ class DeploySshSafetyContractTest(unittest.TestCase):
 
             def put(self, *_args: object, **kwargs: object) -> None:
                 confirms.append(bool(kwargs["confirm"]))
+
+            def chmod(self, _path: str, _mode: int) -> None:
+                return None
 
             def close(self) -> None:
                 self.closed = True
@@ -639,7 +837,13 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "archive-sha256-check failed"):
                 DEPLOY.main()
 
-        self.assertEqual(labels, ["preflight", "archive-sha256-check"])
+        self.assertEqual(
+            labels,
+            [
+                "preflight", "deployment-archive-create", "archive-sha256-check",
+                "deployment-archive-cleanup",
+            ],
+        )
         self.assertEqual(confirms, [False])
         self.assertEqual(channel.timeout, 300)
         self.assertTrue(sftp.closed)
@@ -649,6 +853,101 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             "backup-directory", "catalog-maintenance",
         ):
             self.assertNotIn(forbidden, labels)
+
+    def test_dynamic_cleanup_fault_preserves_primary_and_attempts_both_targets(self) -> None:
+        class FakeTransport:
+            def is_active(self) -> bool:
+                return True
+
+            def set_keepalive(self, _interval: int) -> None:
+                return None
+
+            def get_remote_server_key(self) -> object:
+                return SimpleNamespace(get_fingerprint=lambda: b"\x01\x02")
+
+        for injected_cleanup_label in (
+            "deployment-stage-cleanup",
+            "deployment-archive-cleanup",
+        ):
+            with self.subTest(injected_cleanup_label=injected_cleanup_label):
+                labels: list[str] = []
+                client_closed: list[bool] = []
+
+                class FakeClient:
+                    def load_host_keys(self, _path: str) -> None:
+                        return None
+
+                    def set_missing_host_key_policy(self, _policy: object) -> None:
+                        return None
+
+                    def connect(self, *_args: object, **_kwargs: object) -> None:
+                        return None
+
+                    def get_transport(self) -> FakeTransport:
+                        return FakeTransport()
+
+                    def close(self) -> None:
+                        client_closed.append(True)
+
+                def fake_run(_client: object, _command: str, label: str) -> str:
+                    labels.append(label)
+                    if label == "runtime-dependency-preflight":
+                        raise RuntimeError("primary-runtime-fault")
+                    if label == injected_cleanup_label:
+                        raise RuntimeError("injected-cleanup-fault")
+                    return ""
+
+                fake_paramiko = SimpleNamespace(
+                    SSHClient=FakeClient,
+                    RejectPolicy=lambda: object(),
+                )
+                arguments = [
+                    "deploy-ssh.py", "--host", "example.invalid", "--user", "deploy",
+                    "--known-hosts", "known-hosts", "--archive", "release.tar.gz",
+                    "--remote-root", "/srv/yiyunying/backend",
+                    "--release-version", "1.0.0", "--release-identity", "identity.json",
+                    "--build-source-commit", "a" * 40,
+                    "--maintenance-command", "maintenance-enter",
+                    "--maintenance-release-command", "maintenance-exit",
+                    "--health-url", "https://example.invalid/api/health",
+                    "--db-name", "app", "--db-user", "app",
+                ]
+                for migration in DEPLOY.REQUIRED_RELEASE_MIGRATIONS:
+                    arguments.extend(("--migration", migration))
+
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {"YY_SSH_PASSWORD": "secret-ssh", "YY_DB_PASSWORD": "secret-db"},
+                    ),
+                    mock.patch.dict("sys.modules", {"paramiko": fake_paramiko}),
+                    mock.patch("sys.argv", arguments),
+                    mock.patch.object(os.path, "isfile", return_value=True),
+                    mock.patch.object(DEPLOY, "sha256_file", return_value="c" * 64),
+                    mock.patch.object(
+                        DEPLOY,
+                        "validate_release_archive",
+                        return_value=("b" * 64, "a" * 40),
+                    ),
+                    mock.patch.object(DEPLOY, "run_sftp_operation", return_value=None),
+                    mock.patch.object(DEPLOY, "run", side_effect=fake_run),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        r"primary-runtime-fault; RECOVERY_REQUIRED: .*failed=",
+                    ) as raised:
+                        DEPLOY.main()
+
+                self.assertIsInstance(raised.exception.__cause__, RuntimeError)
+                self.assertIn("primary-runtime-fault", str(raised.exception.__cause__))
+                self.assertIn("deployment-stage-cleanup", labels)
+                self.assertIn("deployment-archive-cleanup", labels)
+                self.assertLess(
+                    labels.index("deployment-stage-cleanup"),
+                    labels.index("deployment-archive-cleanup"),
+                )
+                self.assertEqual(client_closed, [True])
+                self.assertNotIn("catalog-maintenance", labels)
 
     def test_sftp_failure_is_labeled_and_does_not_expose_exception_message(self) -> None:
         class FakeChannel:
