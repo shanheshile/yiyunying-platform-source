@@ -3,6 +3,12 @@ declare(strict_types=1);
 
 use Yiyunying\Core\Database;
 
+const QUARANTINE_REFERENCE_PATH_BATCH_SIZE = 512;
+const QUARANTINE_REFERENCE_PROGRESS_INTERVAL = 25;
+const QUARANTINE_REFERENCE_COMMON_PREFIX = 'uploads/';
+
+if (defined('YIYUNYING_QUARANTINE_LIBRARY_ONLY')) return;
+
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This tool is CLI-only.\n");
     exit(1);
@@ -214,7 +220,7 @@ function quarantineBuildPlan(string $root, bool $lockRows): array
         );
         foreach ($rows as $row) $items[(string) $row['file_path']]['uploads'][] = $row;
     }
-    quarantineDiscoverBusinessReferences($items);
+    quarantineDiscoverBusinessReferences($items, $lockRows);
 
     $candidates = [];
     $conflicts = [];
@@ -250,7 +256,7 @@ function quarantineBuildPlan(string $root, bool $lockRows): array
 }
 
 /** @param array<string,array> $items */
-function quarantineDiscoverBusinessReferences(array &$items): void
+function quarantineDiscoverBusinessReferences(array &$items, bool $lockRows): void
 {
     $excluded = ['uploads', 'catalog_file_migrations', 'upload_file_deletions', 'catalog_legacy_url_quarantines'];
     $columns = Database::all(
@@ -260,26 +266,31 @@ function quarantineDiscoverBusinessReferences(array &$items): void
          ORDER BY TABLE_NAME, ORDINAL_POSITION"
     );
     $paths = array_keys($items);
+    $pathChunks = array_chunk($paths, QUARANTINE_REFERENCE_PATH_BATCH_SIZE);
+    $columns = array_values(array_filter(
+        $columns,
+        static fn(array $column): bool => !in_array((string) $column['TABLE_NAME'], $excluded, true)
+    ));
+    $referenceQueries = 0;
+    $totalReferenceQueries = count($columns) * count($pathChunks);
+    quarantinePrintReferenceProgress($lockRows, $referenceQueries, $totalReferenceQueries);
     foreach ($columns as $column) {
         $table = (string) $column['TABLE_NAME'];
         $name = (string) $column['COLUMN_NAME'];
-        if (in_array($table, $excluded, true)) continue;
-        $tableQ = quarantineIdentifier($table);
-        $columnQ = quarantineIdentifier($name);
-        foreach (array_chunk($paths, 20) as $chunk) {
-            $expressions = [];
-            $params = [];
-            foreach ($chunk as $index => $path) {
-                $expressions[] = "SUM(CASE WHEN {$columnQ} LIKE ? ESCAPE '!' THEN 1 ELSE 0 END) AS c{$index}";
-                $params[] = '%' . quarantineEscapeLike($path) . '%';
-            }
-            $row = Database::one('SELECT ' . implode(', ', $expressions) . " FROM {$tableQ}", $params) ?? [];
+        foreach ($pathChunks as $chunk) {
+            $query = quarantinePathReferenceAggregateQuery($table, $name, $chunk);
+            $row = Database::one($query['sql'], $query['params']) ?? [];
             foreach ($chunk as $index => $path) {
                 $count = (int) ($row['c' . $index] ?? 0);
                 if ($count <= 0) continue;
                 $items[$path]['business_references'] += $count;
                 $items[$path]['path_references'] += $count;
                 $items[$path]['reference_types'][$table . '.' . $name] = $count;
+            }
+            $referenceQueries++;
+            if ($referenceQueries === $totalReferenceQueries
+                || $referenceQueries % QUARANTINE_REFERENCE_PROGRESS_INTERVAL === 0) {
+                quarantinePrintReferenceProgress($lockRows, $referenceQueries, $totalReferenceQueries);
             }
         }
     }
@@ -316,6 +327,55 @@ function quarantineDiscoverBusinessReferences(array &$items): void
                     ($items[$path]['reference_types'][$table . '.' . $name] ?? 0) + $count;
             }
         }
+    }
+}
+
+/**
+ * Build one aggregate query for a bounded path batch. The common-prefix WHERE
+ * is logically implied by every canonical candidate path, so it only skips
+ * rows that cannot satisfy any exact per-path predicate.
+ *
+ * @param array<int,string> $paths
+ * @return array{sql:string,params:array<int,string>}
+ */
+function quarantinePathReferenceAggregateQuery(string $table, string $column, array $paths): array
+{
+    if ($paths === [] || count($paths) > QUARANTINE_REFERENCE_PATH_BATCH_SIZE) {
+        throw new InvalidArgumentException('Reference path batch is empty or exceeds the safe query boundary');
+    }
+    $tableQ = quarantineIdentifier($table);
+    $columnQ = quarantineIdentifier($column);
+    $expressions = [];
+    $params = [];
+    foreach (array_values($paths) as $index => $path) {
+        if (!str_starts_with($path, QUARANTINE_REFERENCE_COMMON_PREFIX)) {
+            throw new InvalidArgumentException('Reference path does not imply the public upload prefix');
+        }
+        $expressions[] = "SUM(CASE WHEN {$columnQ} LIKE ? ESCAPE '!' THEN 1 ELSE 0 END) AS c{$index}";
+        $params[] = '%' . quarantineEscapeLike($path) . '%';
+    }
+    $params[] = '%' . quarantineEscapeLike(QUARANTINE_REFERENCE_COMMON_PREFIX) . '%';
+    return [
+        'sql' => 'SELECT ' . implode(', ', $expressions) . " FROM {$tableQ}"
+            . " WHERE {$columnQ} LIKE ? ESCAPE '!'",
+        'params' => $params,
+    ];
+}
+
+function quarantinePrintReferenceProgress(bool $lockRows, int $completed, int $total): void
+{
+    try {
+        $json = json_encode([
+            'stage' => 'business_reference_scan',
+            'plan' => $lockRows ? 'locked' : 'preflight',
+            'completed_queries' => $completed,
+            'total_queries' => $total,
+            'heartbeat_at_utc' => gmdate(DATE_ATOM),
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        @fwrite(STDERR, 'quarantine_progress=' . $json . PHP_EOL);
+        @fflush(STDERR);
+    } catch (Throwable) {
+        // Progress is diagnostic only and must never weaken the quarantine gate.
     }
 }
 
