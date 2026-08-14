@@ -41,6 +41,11 @@ STABLE_PACKAGE_NAMES = {
 }
 ALLOWED_HOSTS = {"127.0.0.1", "::1"}
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+CONNECTION_HASH_FIELDS = {
+    "appKeySha256",
+    "platformKeySha256",
+    "authorizedPlatformKeySha256",
+}
 SAFE_APK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}\.apk$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 SECURITY_HEADERS = {
@@ -86,6 +91,8 @@ def file_sha256(path: Path) -> str:
 
 
 def publication_label(channel: str, finalization_status: str) -> str:
+    if channel == "DebugCompatibility":
+        return "旧 Debug 安全覆盖版（仅内部）"
     if channel == "Debug":
         return "Debug 非生产测试版"
     if finalization_status == "finalized":
@@ -117,15 +124,59 @@ def load_catalog(manifest_path: Path) -> DownloadCatalog:
             for entry in entries
         )
     )
+    compatibility_debug = manifest.get("channel") == "DebugCompatibility"
     channel = "Debug" if legacy_debug else manifest.get("channel")
-    if channel not in {"Debug", "Stable"}:
-        raise RuntimeError("Release manifest channel must be Debug or Stable")
+    if channel not in {"Debug", "DebugCompatibility", "Stable"}:
+        raise RuntimeError(
+            "Release manifest channel must be Debug, DebugCompatibility or Stable"
+        )
     finalization_status = (
         "finalized" if legacy_debug and manifest.get("finalizationStatus") in (None, "")
         else manifest.get("finalizationStatus")
     )
-    if finalization_status not in {"pending", "finalized"}:
-        raise RuntimeError("Release manifest finalizationStatus must be pending or finalized")
+    compatibility_signer: str | None = None
+    if compatibility_debug:
+        compatibility_contract = {
+            "schemaVersion": 2,
+            "finalizationStatus": "internal",
+            "distribution": "internal-only",
+            "buildType": "legacyCompat",
+            "debuggable": False,
+            "testOnly": False,
+            "apiBaseUrl": "https://appht.jjmxg.xyz/",
+            "cleartextTrafficPermitted": False,
+            "trustAnchors": ["system"],
+            "followRedirects": False,
+            "apkSignatureSchemeV2": True,
+            "signerCount": 1,
+            "dexTransportVerified": True,
+            "legacyUpgradeMaximumVersionCode": 60,
+        }
+        if any(manifest.get(name) != value for name, value in compatibility_contract.items()):
+            raise RuntimeError("Debug compatibility manifest violates the private HTTPS contract")
+        connection_identity = manifest.get("connectionIdentity")
+        if (
+            not isinstance(connection_identity, dict)
+            or set(connection_identity) != CONNECTION_HASH_FIELDS
+            or any(
+                not isinstance(value, str)
+                or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in connection_identity.values()
+            )
+        ):
+            raise RuntimeError(
+                "Debug compatibility manifest must contain exactly three connection identity hashes"
+            )
+        compatibility_signer = manifest.get("legacyPackageSignerSha256")
+        if (
+            not isinstance(compatibility_signer, str)
+            or SHA256_RE.fullmatch(compatibility_signer) is None
+        ):
+            raise RuntimeError("Debug compatibility signer anchor is invalid")
+    elif finalization_status not in {"pending", "finalized"}:
+        raise RuntimeError(
+            "Release manifest finalizationStatus must be pending or finalized"
+        )
     try:
         version_code = int(manifest.get("versionCode"))
     except (TypeError, ValueError) as exc:
@@ -137,6 +188,7 @@ def load_catalog(manifest_path: Path) -> DownloadCatalog:
         or version_name != version_name.strip()
         or re.fullmatch(r"\d+\.\d+\.\d+", version_name) is None
         or version_code < 1
+        or (compatibility_debug and version_code <= 60)
     ):
         raise RuntimeError("Release manifest version identity is invalid")
 
@@ -186,7 +238,7 @@ def load_catalog(manifest_path: Path) -> DownloadCatalog:
         embedded_version = entry.get("versionName", version_name)
         if not isinstance(embedded_version, str) or not embedded_version:
             raise RuntimeError(f"{role} versionName is invalid")
-        debug_suffix = "-debug" if channel == "Debug" else ""
+        debug_suffix = "-debug" if channel in {"Debug", "DebugCompatibility"} else ""
         expected_file = (
             f"yiyunying-{ROLE_FILE_STEMS[role]}-v{version_name}{debug_suffix}.apk"
         )
@@ -198,6 +250,20 @@ def load_catalog(manifest_path: Path) -> DownloadCatalog:
             raise RuntimeError(f"{role} APK role/version identity is inconsistent")
         if entry.get("packageName") != expected_package:
             raise RuntimeError(f"{role} APK packageName is inconsistent")
+        if (
+            compatibility_debug
+            and entry.get("signerSha256", "").upper() != compatibility_signer.upper()
+        ):
+            raise RuntimeError(f"{role} APK signer is inconsistent")
+        if compatibility_debug:
+            network_resource = entry.get("networkSecurityResource")
+            if (
+                not isinstance(network_resource, str)
+                or re.fullmatch(r"res/[A-Za-z0-9._/-]+\.xml", network_resource) is None
+                or ".." in network_resource
+                or "//" in network_resource
+            ):
+                raise RuntimeError(f"{role} compiled network security resource is invalid")
         artifacts.append(
             ApkArtifact(
                 role=role,

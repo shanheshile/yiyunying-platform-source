@@ -114,17 +114,18 @@ $inspection = $compact($source['inspection']);
 $adminCatalog = $compact($source['admin_catalog']);
 $userCatalog = $compact($source['user_catalog']);
 $uploadLibrary = $compact($source['upload_library']);
+$media = $compact($source['media']);
 
 $checks = [
     'media save and replace make lock plus reference writes one transaction' =>
         str_contains($mediaSave, 'Database::transaction(')
-        && str_contains($mediaSave, 'self::lockAttachmentReferences($payload); self::insertAttachments(')
+        && str_contains($mediaSave, 'self::lockAttachmentReferences($payload, $targetType); self::insertAttachments(')
         && str_contains($mediaReplace, 'Database::transaction(')
-        && str_contains($mediaReplace, 'self::lockAttachmentReferences($payload);')
+        && str_contains($mediaReplace, 'self::lockAttachmentReferences($payload, $targetType);')
         && str_contains($mediaReplace, 'DELETE FROM media_attachments')
         && str_contains($mediaReplace, 'self::insertAttachments('),
     'media replace follows upload before reference mutation lock order' =>
-        strpos($mediaReplace, 'self::lockAttachmentReferences($payload);')
+        strpos($mediaReplace, 'self::lockAttachmentReferences($payload, $targetType);')
             < strpos($mediaReplace, 'DELETE FROM media_attachments')
         && strpos($mediaReplace, 'DELETE FROM media_attachments')
             < strpos($mediaReplace, 'self::insertAttachments('),
@@ -133,43 +134,49 @@ $checks = [
         && str_contains($mediaLock, 'admin_id = ? AND app_id = ? AND status = 1')
         && str_contains($mediaLock, "where .= ' AND user_id = ?'")
         && str_contains($mediaLock, "where .= ' AND user_id IS NULL'")
+        && str_contains($mediaLock, "file_path LIKE 'uploads/%'")
+        && str_contains($mediaLock, "file_path LIKE 'private/uploads/%'")
         && str_contains($mediaLock, 'ORDER BY id FOR UPDATE')
         && str_contains($mediaLock, 'count($lockedUploads) !== count($uploadIds)')
         && str_contains($mediaLock, ', 0, 409)'),
     'media sticker references are locked after upload rows and scoped to active owner and pack' =>
-        strpos($mediaLock, 'SELECT id FROM uploads') < strpos($mediaLock, 'SELECT s.id FROM stickers')
+        strpos($mediaLock, 'SELECT id FROM uploads') < strpos($mediaLock, 'SELECT s.id AS sticker_reference_id, su.* FROM stickers')
         && str_contains($mediaLock, 's.admin_id = ? AND s.app_id = ? AND s.user_id = ?')
+        && str_contains($mediaLock, 'INNER JOIN uploads su')
+        && str_contains($mediaLock, "su.status = 1 AND su.file_path LIKE 'uploads/%'")
         && str_contains($mediaLock, 's.status = 1 AND p.status = 1 ORDER BY s.id FOR UPDATE')
-        && str_contains($mediaLock, 'count($lockedStickers) !== count($stickerIds)'),
+        && str_contains($mediaLock, 'count($lockedStickers) !== count($stickerIds)')
+        && str_contains($mediaLock, 'UploadStorageService::assertLockedPublicImageUpload('),
     'single sticker insert locks the upload inside its write transaction' =>
         str_contains($stickerAdd, 'Database::transaction(')
         && strpos($stickerAdd, 'self::lockStickerUploads(') < strpos($stickerAdd, 'self::insertSticker('),
     'batch sticker insert locks every upload once before any insert' =>
         str_contains($stickerBatch, 'Database::transaction(')
-        && str_contains($stickerBatch, 'self::lockStickerUploads($user, array_keys($uploadIds))')
+        && str_contains($stickerBatch, 'self::prevalidateStickerUploads($user, array_keys($uploadIds))')
+        && str_contains($stickerBatch, 'self::lockStickerUploads($user, array_keys($uploadIds), $prevalidated)')
         && strpos($stickerBatch, 'self::lockStickerUploads(') < strpos($stickerBatch, 'self::insertSticker('),
-    'sticker upload lock revalidates tenant owner status mime and locked URL' =>
+    'sticker upload lock revalidates tenant owner status row and physical fingerprint' =>
         str_contains($stickerLock, 'sort($uploadIds, SORT_NUMERIC);')
         && str_contains($stickerLock, 'admin_id = ? AND app_id = ? AND user_id = ? AND status = 1')
         && str_contains($stickerLock, 'ORDER BY id FOR UPDATE')
-        && str_contains($stickerLock, "'image/'")
-        && str_contains($stickerLock, "\$upload['file_url']")
+        && str_contains($stickerLock, 'UploadStorageService::assertLockedPublicImageUpload($upload, $validated)')
         && str_contains($stickerPayload, "\$upload['file_url']")
+        && str_contains($stickerPayload, 'if ($uploadId <= 0 || $upload === null)')
+        && !str_contains($stickerPayload, "\$item['image_url']")
         && !str_contains($stickerPayload, 'SELECT * FROM uploads'),
     'catalog inspection records cover scene and fingerprint from the verified upload' =>
         str_contains($inspection, "'store_app_icon'")
         && str_contains($inspection, "'resource_cover'")
-        && str_contains($inspection, "\$cover['mime_type']")
-        && str_contains($inspection, "\$cover['sha256']")
+        && str_contains($inspection, 'UploadStorageService::validatedPublicImageUpload($cover)')
+        && str_contains($inspection, "\$coverValidation['sha256']")
         && str_contains($inspection, "'cover_sha256' => \$coverHash"),
     'catalog cover final gate uses the common tenant scene status owner row lock' =>
         str_contains($coverLock, 'self::lockUploadReferenceRow(')
-        && str_contains($coverLock, "\$upload['mime_type']")
-        && str_contains($coverLock, "\$upload['file_path']")
-        && str_contains($coverLock, "\$upload['file_url']")
-        && str_contains($coverLock, 'self::assertLockedUploadHash($upload, $expectedSha256)')
+        && str_contains($coverLock, 'UploadStorageService::validatedPublicImageUpload($upload)')
+        && str_contains($coverLock, "\$upload['_public_image_validation'] = \$validation")
         && str_contains($referenceRowLock, 'id = ? AND admin_id = ? AND app_id = ? AND scene = ? AND status = 1')
         && str_contains($referenceRowLock, "\$where .= ' AND user_id = ?'")
+        && str_contains($referenceRowLock, "\$where .= ' AND user_id IS NULL'")
         && str_contains($referenceRowLock, 'SELECT * FROM uploads WHERE {$where} FOR UPDATE'),
     'every resource and store catalog create or update locks cover before catalog mutation' =>
         $catalogWritesSafe
@@ -183,6 +190,13 @@ $checks = [
         && strpos($uploadLibrary, 'SELECT * FROM uploads WHERE') < strpos($uploadLibrary, 'SELECT id FROM store_apps')
         && strpos($uploadLibrary, 'SELECT * FROM uploads WHERE') < strpos($uploadLibrary, 'SELECT id FROM stickers')
         && substr_count($uploadLibrary, 'FOR UPDATE') >= 5,
+    'catalog approval prevalidates and locked-rechecks every direct upload physical fingerprint' =>
+        str_contains($media, 'public static function prevalidateStoredPublicAttachmentTrust(')
+        && str_contains($media, "'direct_validations' => \$directValidations")
+        && str_contains($media, 'AND ma.upload_id IS NOT NULL AND ma.sticker_id IS NULL ORDER BY ma.id')
+        && str_contains($media, 'AND ma.upload_id IS NOT NULL AND ma.sticker_id IS NULL ORDER BY ma.id FOR UPDATE')
+        && str_contains($media, 'UploadStorageService::validatedPublicUpload($row)')
+        && str_contains($media, 'UploadStorageService::assertLockedPublicUpload($lockedDirect, $token)'),
 ];
 
 foreach ($checks as $name => $passed) {

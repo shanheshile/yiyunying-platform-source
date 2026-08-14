@@ -102,8 +102,8 @@ final class ResourceController
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM resources r WHERE {$whereSql}", $query)['total'] ?? 0);
         $items = Database::all(
-            "SELECT r.id, r.resource_type, r.category_id, r.user_id, r.title, r.description,
-                    r.cover_url, r.size_bytes, r.file_sha256, r.risk_level,
+            "SELECT r.id, r.admin_id, r.app_id, r.resource_type, r.category_id, r.user_id, r.title, r.description,
+                    r.cover_url, r.cover_upload_id, r.size_bytes, r.file_sha256, r.risk_level,
                     r.risk_reason, r.metadata_json, r.audit_status, r.audit_reason, r.audited_at,
                     r.status, r.deleted_at, r.price_integral,
                     r.is_top, r.is_recommended, r.view_count, r.download_count, r.created_at,
@@ -115,6 +115,7 @@ final class ResourceController
              LIMIT {$limit} OFFSET {$offset}",
             $query
         );
+        $items = MessageMediaService::hydrate($items, 'resource', (int) $user['app_id']);
         foreach ($items as &$item) {
             $item['price_balance'] = (int) $item['price_integral'];
             unset($item['price_integral']);
@@ -126,7 +127,6 @@ final class ResourceController
             $item = SubmissionInspectionService::present($item);
         }
         unset($item);
-        $items = MessageMediaService::hydrate($items, 'resource', (int) $user['app_id']);
         return Response::success(Pagination::data($items, $total, $page, $limit));
     }
 
@@ -648,8 +648,8 @@ final class ResourceController
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM store_apps s WHERE {$whereSql}", $query)['total'] ?? 0);
         $items = Database::all(
-            "SELECT s.id, s.category_id, s.name, s.package_name, s.version_name, s.version_code,
-                    s.icon_url, s.size_bytes, s.description, s.metadata_json, s.file_sha256,
+            "SELECT s.id, s.admin_id, s.app_id, s.category_id, s.name, s.package_name, s.version_name, s.version_code,
+                    s.icon_url, s.icon_upload_id, s.size_bytes, s.description, s.metadata_json, s.file_sha256,
                     s.user_id, s.risk_level, s.risk_reason, s.audit_status, s.audit_reason,
                     s.audited_at, s.status, s.deleted_at, s.price_integral, s.download_count,
                     c.name AS category_name
@@ -708,8 +708,8 @@ final class ResourceController
         $app['is_owner'] = (int) ($app['user_id'] ?? 0) === (int) $user['id'];
         $app['price_balance'] = (int) ($app['price_integral'] ?? 0);
         unset($app['price_integral']);
-        $app['images'] = Database::all('SELECT image_url, sort_order FROM store_app_images WHERE store_app_id = ? ORDER BY sort_order', [(int) $app['id']]);
         $app = MessageMediaService::hydrate([$app], 'store_app', (int) $user['app_id'])[0];
+        $app['images'] = MessageMediaService::publicImageList((array) ($app['attachments'] ?? []));
         $app['liked'] = $interactive && Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'like']) !== null;
         $app['favorited'] = $interactive && Database::one('SELECT id FROM store_app_reactions WHERE store_app_id = ? AND user_id = ? AND reaction_type = ?', [(int) $app['id'], (int) $user['id'], 'favorite']) !== null;
         $app = SubmissionInspectionService::present($app);

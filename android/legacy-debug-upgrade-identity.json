@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "legacyUpgradeMaximumVersionCode": 60,
+  "legacyPackageSignerSha256": "10162EBB7147EA0823C281D9F86FEFF2A353984A41497F17E196E50614E9B76E",
+  "connectionIdentity": {
+    "appKeySha256": "05872e1f0465c7ab48df13e37dfefa3a95c882c268f3836264ed83f6c0b9f264",
+    "platformKeySha256": "e8260e22cd152015735ab5a05e392fed162b3e71d639f4392fb8550ae886ef54",
+    "authorizedPlatformKeySha256": "9d300ae4617dc8f0ebc22444733ab3b8681636ac74ce2676059c7754eab7ff82"
+  },
+  "packages": {
+    "user": "xyz.jjmxg.yiyunying.user.debug",
+    "admin": "xyz.jjmxg.yiyunying.admin.debug",
+    "authorized": "xyz.jjmxg.yiyunying.authorized.debug",
+    "owner": "xyz.jjmxg.yiyunying.platformowner.debug"
+  }
+}

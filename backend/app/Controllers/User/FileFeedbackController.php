@@ -22,10 +22,10 @@ use Yiyunying\Services\WeatherService;
 final class FileFeedbackController
 {
     private const ALLOWED_EXTENSIONS = [
-        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
         'pdf', 'txt', 'md', 'json', 'csv', 'rtf', 'odt', 'ods', 'odp',
-        'zip', '7z', 'rar', 'tar', 'gz', 'bz2', 'xz',
-        'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'zip', 'tar', 'gz',
+        'docx', 'xlsx', 'pptx',
         'mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'flac',
         'mp4', 'webm', 'mov', 'mkv', 'avi', '3gp', 'm4v', 'apk',
     ];

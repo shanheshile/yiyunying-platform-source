@@ -220,7 +220,7 @@ document_shares(share_code) UNIQUE
 | `resource_ratings` | 资源评分 | `id, admin_id, app_id, resource_id, user_id, score, created_at` |
 | `resource_purchases` | 资源购买 | `id, admin_id, app_id, resource_id, buyer_user_id, seller_user_id, price_integral, created_at` |
 | `store_apps` | 应用商店应用 | `id, admin_id, app_id, category_id, user_id, name, package_name, version_name, version_code, icon_url, apk_url, size_bytes, description, status, created_at` |
-| `store_app_images` | 应用截图 | `id, admin_id, app_id, store_app_id, image_url, sort_order, created_at` |
+| `store_app_images` | 旧版应用截图影子表（只维护清理，不再作为读写来源） | `id, admin_id, app_id, store_app_id, image_url, sort_order, created_at`；正式截图仅来自 `media_attachments` 的已验证 `upload_id` |
 
 ### 3.7 论坛社区
 
@@ -520,11 +520,11 @@ public 接口：app_key 必填
 | GET/POST | `/api/admin/apps/{app_id}/store-categories` | 应用商店分类列表/新增分类 | `name,icon,sort_order` |
 | PUT/DELETE | `/api/admin/apps/{app_id}/store-categories/{category_id}` | 修改/删除应用分类 | 分类字段；有应用时禁止删除 |
 | GET | `/api/admin/apps/{app_id}/store-apps` | 应用审核列表与四态汇总 | `keyword,audit_status,risk_level,status,page,limit` |
-| POST | `/api/admin/apps/{app_id}/store-apps` | 新增应用 | `name,package_name,version_name,version_code,icon_url,apk_url,images` |
+| POST | `/api/admin/apps/{app_id}/store-apps` | 新增应用；安装包、图标和截图均须先上传，不接受外链 URL | `name,package_name,version_name,version_code,source_upload_id,icon_upload_id,attachments` |
 | GET | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | 应用审核详情 | 无 |
 | PUT | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit` | 应用审核：通过/不通过/暂定 | `audit_status=approved/rejected/on_hold,reason,expected_audit_status,expected_review_revision,override_risk` |
 | GET | `/api/admin/apps/{app_id}/store-apps/{store_app_id}/download` | 管理员鉴权下载安装包 | 无 |
-| PUT/DELETE | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | 修改/删除应用 | 应用字段；安装包变更后自动回到待审核 |
+| PUT/DELETE | `/api/admin/apps/{app_id}/store-apps/{store_app_id}` | 修改/删除应用 | `source_upload_id,icon_upload_id,attachments` 等应用字段；不接受 `apk_url/icon_url/images/image_urls`，安装包变更后自动回到待审核 |
 | GET | `/api/admin/apps/{app_id}/forum-plates` | 板块列表 | 无 |
 | POST | `/api/admin/apps/{app_id}/forum-plates` | 新增板块 | `name,icon,description,sort_order` |
 | POST | `/api/admin/apps/{app_id}/forum-plates/{plate_id}/avatar` | 上传并替换板块头像（受 `forum_plate_avatar_upload` 控制） | `multipart file` |
@@ -630,7 +630,7 @@ public 接口：app_key 必填
 | GET | `/api/user/resource-submission-policy` | 资源投稿开关与审核策略 | 无 |
 | GET | `/api/user/resources` | 资源列表；公开、我的投稿或历史已购三种范围 | `category_id,resource_type,keyword,mine,purchased,audit_status,page,limit` |
 | GET | `/api/user/resources/{resource_id}` | 资源详情 | 无 |
-| POST | `/api/user/resources` | 投稿源码资源 | `resource_type=source_market,category_id,title,description,cover_url,source_upload_id,price_balance` |
+| POST | `/api/user/resources` | 投稿源码资源；文件和封面须先上传，不接受外链 URL | `resource_type=source_market,category_id,title,description,source_upload_id,cover_upload_id,attachments,price_balance` |
 | POST | `/api/user/resources/{resource_id}/buy` | 按确认快照购买资源 | `expected_price_balance,expected_source_upload_id` |
 | GET | `/api/user/resources/{resource_id}/download` | 作者或已购用户鉴权下载；支持 ETag/If-Range 续传 | 无 |
 | POST | `/api/user/resources/{resource_id}/comments` | 评论资源 | `content` |
@@ -638,7 +638,7 @@ public 接口：app_key 必填
 | GET | `/api/user/store-categories` | 应用商店分类 | 无 |
 | GET | `/api/user/store-submission-policy` | 应用投稿开关与审核策略 | 无 |
 | GET | `/api/user/store-apps` | 应用商店列表；公开、我的投稿或历史已购三种范围 | `category_id,keyword,mine,purchased,audit_status,page,limit` |
-| POST | `/api/user/store-apps` | 投稿应用安装包 | `category_id,name,package_name,version_name,version_code,source_upload_id,icon_url,price_balance` |
+| POST | `/api/user/store-apps` | 投稿应用安装包；安装包、图标和截图须先上传，不接受外链 URL | `category_id,name,package_name,version_name,version_code,source_upload_id,icon_upload_id,attachments,price_balance` |
 | GET | `/api/user/store-apps/{store_app_id}` | 应用详情 | 无 |
 | POST | `/api/user/store-apps/{store_app_id}/buy` | 按确认快照购买应用 | `expected_price_balance,expected_source_upload_id,expected_version_code` |
 | GET | `/api/user/store-apps/{store_app_id}/download` | 作者或已购用户鉴权下载；支持 ETag/If-Range 续传 | 无 |
@@ -812,9 +812,15 @@ public 接口：app_key 必填
 
 ### 4.6 统一多媒体、撤回、隐私主页与监管资料
 
-私聊、群聊、客服、论坛帖子/评论、资源/评论和商店应用统一使用 `attachments` 数组，支持 `image`、`sticker`、`audio`、`video`、`file`，正文与附件可混合发送，单条聊天消息最多 200 个媒体文件，更多内容应分批发送。用户先调用 `POST /api/user/uploads` 上传本地相册或文件；admin 使用 `POST /api/admin/apps/{app_id}/uploads`。
+私聊、群聊、客服、论坛帖子/评论、资源/评论和商店应用统一使用 `attachments` 数组，支持 `image`、`sticker`、`audio`、`video`、`file`，正文与附件可混合发送，单条聊天消息最多 200 个媒体文件，更多内容应分批发送。用户先调用 `POST /api/user/uploads` 上传本地相册或文件；admin 使用 `POST /api/admin/apps/{app_id}/uploads`。论坛、动态、资源和商店应用等公开内容的每个附件必须且只能提交 `upload_id` 或 `sticker_id`；服务端会按当前租户、所有者、状态和真实存储记录重新取 URL、MIME、尺寸与时长，外链 URL 仅可作为非可信聊天展示数据，不能作为公开附件、语音、视频或尺寸门禁依据。
+
+公开表情的 `sticker_id` 还必须绑定同一租户、应用和用户的 live public image `upload_id`。服务端在写入前校验实体大小、SHA-256、MIME、解码结果和文件指纹，展示 URL 只从实时 `uploads.file_path` 派生；历史 URL-only 表情保留数据但不展示、不审核通过。管理员商店截图不接受 `sticker_id`，每张图片只能提交 `upload_id`。
+
+资源封面与商店图标同样只接受 `cover_upload_id` / `icon_upload_id`。创建、编辑、读取和审核均重新验证 live 上传行及实体文件，并用当前站点地址与受控相对路径生成 URL；数据库中的旧域名或外链快照不会被信任，也不会由后端抓取。
 
 私聊和群聊按 L1/L2/L3 继承与强制规则限时撤回，客服消息不可撤回。普通 user 不会收到撤回原附件；合法管理范围内的 L1/L2/L3 可通过用户 `communications` 审计接口查看原文和原附件。
+
+当前安全版本仅接受静态 PNG/GIF/WebP。包含 `acTL` 的 APNG、检测到多个图像帧的 GIF、以及动画 WebP 在服务端具备完整逐帧解码与资源预算验证前均直接拒绝，不会降级成静态首帧公开。
 
 `GET /api/user/profiles/{user_id}` 对隐藏资料返回基础主页而非 403，使用 `profile_visibility` 和 `details_hidden` 标识可见范围。平台和 admin 的用户监管接口按“资料与资产、消息类、社交类、内容类、其他”返回结构化数据。完整请求示例、字段和 Android 可视化流程见 [MULTIMEDIA_VISUAL.md](MULTIMEDIA_VISUAL.md)。
 
@@ -850,11 +856,14 @@ public 接口：app_key 必填
 | --- | --- | --- |
 | GET | `/api/user/favorites` | 统一收藏中心；`category,keyword,page,limit` |
 | GET | `/api/user/sticker-packs` | 表情包分组、表情列表和缓存元数据 |
+| POST | `/api/user/sticker-packs/{pack_id}/stickers` | 添加表情；必须提交当前账号已验证公开图片的 `upload_id`，`image_url/thumbnail_url/width/height` 不作为可信输入，分组封面自动生成 |
 | POST | `/api/user/sticker-packs/{pack_id}/stickers/batch` | 批量添加表情包 |
 | DELETE | `/api/user/sticker-packs/{pack_id}/stickers/batch` | 批量删除表情包；`sticker_ids` |
 | GET | `/api/user/cloud-sync/policy` | 返回聊天、表情、收藏云同步的会员和余额条件 |
 | GET | `/api/user/cloud-sync/snapshots` | 按类型查看云端快照 |
 | POST | `/api/user/cloud-sync/snapshots` | 创建选定范围的聊天/表情/收藏快照 |
+
+表情云快照使用 `schema_version=2`，每项保存 `upload_id + sha256` 并在恢复前做实体校验、事务内指纹复核。旧版 URL-only 表情快照仍可查看，但恢复返回 `409` 和 `upgrade_required=true`；服务端不会下载旧 URL，避免把外部地址重新引入公开媒体链。
 | POST | `/api/user/cloud-sync/snapshots/{snapshot_id}/restore` | 在另一设备拉取只读快照数据 |
 | DELETE | `/api/user/cloud-sync/snapshots/{snapshot_id}` | 删除自己的云端快照 |
 | POST | `/api/user/chat-records/cleanup` | 按会话、发言人、时间段或消息编号清理本地显示状态 |

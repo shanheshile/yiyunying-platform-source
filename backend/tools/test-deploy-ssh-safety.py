@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -185,17 +188,57 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertIn('test ! -L "$PHP_BIN"', command)
         self.assertNotIn("command -v php", command)
         self.assertIn("PHP_VERSION_ID < 80200", command)
-        for extension in ("PDO", "pdo_mysql", "mbstring", "json", "hash"):
+        for extension in ("PDO", "pdo_mysql", "mbstring", "json", "hash", "gd", "zlib"):
             self.assertIn(extension, command)
-        for function in ("getimagesize", "disk_free_space", "hash_file", "json_encode"):
+        for function in (
+            "getimagesize", "imagecreatefromstring", "imagejpeg", "imagepng", "imagewebp",
+            "imagetypes", "proc_open", "proc_get_status", "proc_terminate", "proc_close",
+            "inflate_init", "inflate_add", "inflate_get_status", "inflate_get_read_len", "tempnam", "sys_get_temp_dir",
+            "disk_free_space", "hash_file", "json_encode",
+        ):
             self.assertIn(function, command)
+        for codec in ("IMG_JPG", "IMG_PNG", "IMG_WEBP"):
+            self.assertIn(codec, command)
         self.assertNotIn("fileinfo", command)
-        for tool in ("tar", "sha256sum", "gzip", "rsync", "curl"):
+        for tool in (
+            "tar", "sha256sum", "gzip", "rsync", "curl", "stat", "readlink",
+            "mktemp", "grep", "find", "timeout",
+        ):
             self.assertIn(tool, command)
+        self.assertIn(DEPLOY.MEDIA_FFMPEG_BIN, command)
+        self.assertIn(DEPLOY.MEDIA_FFPROBE_BIN, command)
+        self.assertNotIn('command -v "ffmpeg"', command)
+        self.assertNotIn('command -v "ffprobe"', command)
+        for media_gate in (
+            '"$FFMPEG_BIN" -version', '"$FFPROBE_BIN" -version', "libx264", "aac", "VIDEO_PACKETS",
+            "AUDIO_PACKETS", "MEDIA_DURATION", "input.mp4", "output.mp4", "codec_type",
+        ):
+            self.assertIn(media_gate, command)
+        for integrity_gate in (
+            DEPLOY.MEDIA_RUNTIME_ROOT,
+            DEPLOY.MEDIA_RUNTIME_VERSION,
+            DEPLOY.MEDIA_FFMPEG_SHA256,
+            DEPLOY.MEDIA_FFPROBE_SHA256,
+            str(DEPLOY.MEDIA_FFMPEG_SIZE),
+            str(DEPLOY.MEDIA_FFPROBE_SIZE),
+            'stat -c %U:%G',
+            'stat -c %h',
+            'stat -c %a',
+            'readlink -f',
+        ):
+            self.assertIn(integrity_gate, command)
+        self.assertLess(command.index(DEPLOY.MEDIA_FFMPEG_SHA256), command.index('"$FFMPEG_BIN" -version'))
+        self.assertLess(command.index(DEPLOY.MEDIA_FFPROBE_SHA256), command.index('"$FFPROBE_BIN" -version'))
         self.assertIn(DEPLOY.MYSQL_BIN_FALLBACK, command)
         self.assertIn(DEPLOY.MYSQLDUMP_BIN_FALLBACK, command)
         self.assertIn(DEPLOY.PHP_FPM82_INIT_SCRIPT, command)
         self.assertIn(DEPLOY.PHP_FPM82_SYSTEMD_SERVICE, command)
+
+        repair_command = DEPLOY.runtime_dependency_preflight_command(
+            require_catalog_conflict_repair=True
+        )
+        for extension_or_function in ("gd", "imagecreatefrompng", "imagesx", "imagesy"):
+            self.assertIn(extension_or_function, repair_command)
 
         runtime = SOURCE.index('"runtime-dependency-preflight"')
         for later_label in (
@@ -209,14 +252,157 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         ):
             self.assertLess(runtime, SOURCE.index(later_label))
 
+    def test_catalog_conflict_local_source_plan_and_prepared_pngs_are_hash_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            jpeg = root / "jpeg.png"
+            heic = root / "heic.png"
+            jpeg_bytes = b"\x89PNG\r\n\x1a\njpeg-fixture"
+            heic_bytes = b"\x89PNG\r\n\x1a\nheic-fixture"
+            jpeg.write_bytes(jpeg_bytes)
+            heic.write_bytes(heic_bytes)
+
+            def item(action: str, path_hash: str, payload: bytes) -> dict[str, object]:
+                return {
+                    "path_sha256": path_hash,
+                    "preimage": {"sha256": "c" * 64, "size_bytes": 42},
+                    "replacement": {
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size_bytes": len(payload),
+                        "width": 1,
+                        "height": 1,
+                        "metadata_policy": "no_ancillary_chunks_v1",
+                    },
+                    "expected": {
+                        "admin_id": 2,
+                        "app_id": 3,
+                        "path_references": 8 if action == DEPLOY.CATALOG_CONFLICT_ACTION_JPEG else 3,
+                        "upload_id_references": 0 if action == DEPLOY.CATALOG_CONFLICT_ACTION_JPEG else 1,
+                        "upload_rows": 0 if action == DEPLOY.CATALOG_CONFLICT_ACTION_JPEG else 1,
+                        "media_attachment_rows": 0 if action == DEPLOY.CATALOG_CONFLICT_ACTION_JPEG else 1,
+                    },
+                    "action": action,
+                    "registration": (
+                        {"user_id": None, "scene": "chat_image", "original_name": "legacy.png"}
+                        if action == DEPLOY.CATALOG_CONFLICT_ACTION_JPEG
+                        else None
+                    ),
+                }
+
+            plan_data = {
+                "schema": 2,
+                "plan_kind": "source",
+                "batch": "fixture-batch-20260814",
+                "items": [
+                    item(DEPLOY.CATALOG_CONFLICT_ACTION_JPEG, "a" * 64, jpeg_bytes),
+                    item(DEPLOY.CATALOG_CONFLICT_ACTION_HEIC, "b" * 64, heic_bytes),
+                ],
+            }
+            plan = root / "plan.json"
+            plan.write_text(json.dumps(plan_data, separators=(",", ":")), encoding="utf-8")
+            for path in (plan, jpeg, heic):
+                path.chmod(0o600)
+
+            loaded = DEPLOY.load_catalog_conflict_inputs(str(plan), str(jpeg), str(heic))
+            self.assertEqual(loaded["plan_sha256"], hashlib.sha256(plan.read_bytes()).hexdigest())
+            self.assertEqual(
+                loaded["prepared"][DEPLOY.CATALOG_CONFLICT_ACTION_HEIC]["sha256"],
+                hashlib.sha256(heic_bytes).hexdigest(),
+            )
+            command = DEPLOY.catalog_conflict_stage_readback_command(
+                [
+                    ("/tmp/private/source-plan.json", loaded["plan_size_bytes"], loaded["plan_sha256"]),
+                    (
+                        "/tmp/private/heic.png",
+                        loaded["prepared"][DEPLOY.CATALOG_CONFLICT_ACTION_HEIC]["size_bytes"],
+                        loaded["prepared"][DEPLOY.CATALOG_CONFLICT_ACTION_HEIC]["sha256"],
+                    ),
+                ]
+            )
+            self.assertIn("stat -c %a", command)
+            self.assertIn("sha256sum", command)
+            self.assertIn("test ! -L", command)
+
+            plan_data["items"][1]["expected"]["path_references"] = 999
+            plan.write_text(json.dumps(plan_data), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "reference counts"):
+                DEPLOY.load_catalog_conflict_inputs(str(plan), str(jpeg), str(heic))
+
+    def test_runtime_plan_is_server_generated_from_this_backup_and_reports_are_proved(self) -> None:
+        command = DEPLOY.catalog_conflict_runtime_plan_command(
+            "/srv/app/backend",
+            "/tmp/private/source.json",
+            "/tmp/private/runtime.json",
+            "/tmp/private/jpeg.png",
+            "/tmp/private/heic.png",
+            "/www/backup/yiyunying/random/database.sql.gz",
+            "/www/backup/yiyunying/random/public-uploads.tar.gz",
+        )
+        self.assertIn("catalogConflictRepairValidateSourcePlan", command)
+        self.assertIn("catalogConflictRepairValidateRuntimePlan", command)
+        self.assertIn("database.sql.gz", command)
+        self.assertIn("public-uploads.tar.gz", command)
+        self.assertIn("mtime_epoch", command)
+        self.assertIn("hash_file", command)
+        self.assertIn("chmod", command)
+        self.assertIn("0600", command)
+
+        basename = DEPLOY.parse_catalog_conflict_report_basename(
+            "pending=0\nalready_repaired=2\nconflicts=0\nrepaired=2\nzero_work=0\n"
+            "report=repair-fixture-12345678.json\n"
+        )
+        self.assertEqual(basename, "repair-fixture-12345678.json")
+        with self.assertRaisesRegex(RuntimeError, "safe report basename"):
+            DEPLOY.parse_catalog_conflict_report_basename("report=/private/report.json\n")
+        apply_assertion = DEPLOY.catalog_conflict_report_assertion_command(
+            "/srv/app/storage/private/catalog-conflict-repair-reports/" + basename,
+            "apply",
+        )
+        dry_assertion = DEPLOY.catalog_conflict_report_assertion_command(
+            "/srv/app/storage/private/catalog-conflict-repair-reports/readback.json",
+            "dry-run",
+        )
+        for evidence in ("passed", "repaired", "zero_work", "conflicts", "already_repaired"):
+            self.assertIn(evidence, apply_assertion)
+            self.assertIn(evidence, dry_assertion)
+
+    def test_release_archive_missing_conflict_repair_tool_fails_before_connection(self) -> None:
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            identity = root / "identity.json"
+            identity_bytes = b'{"version_name":"1.0.0"}'
+            identity.write_bytes(identity_bytes)
+            archive_path = root / "release.tar.gz"
+            members = set(DEPLOY.REQUIRED_RELEASE_FILES)
+            members.update(f"backend/{path}" for path in DEPLOY.REQUIRED_RELEASE_MIGRATIONS)
+            members.remove("backend/tools/repair-catalog-public-conflicts.php")
+            with tarfile.open(
+                archive_path,
+                "w:gz",
+                format=tarfile.PAX_FORMAT,
+                pax_headers={"comment": commit},
+            ) as archive:
+                for name in sorted(members):
+                    payload = identity_bytes if name == "backend/config/release-identity.json" else b"fixture"
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(RuntimeError, "repair-catalog-public-conflicts.php"):
+                DEPLOY.validate_release_archive(
+                    str(archive_path), str(identity), "1.0.0", commit
+                )
+
     def test_failed_runtime_preflight_never_enters_backup_or_maintenance(self) -> None:
         labels: list[str] = []
+        commands: dict[str, str] = {}
         keepalive_intervals: list[int] = []
         sftp_timeouts: list[int] = []
         archive_confirms: list[bool] = []
 
-        def fake_run(_client: object, _command: str, label: str) -> str:
+        def fake_run(_client: object, command: str, label: str) -> str:
             labels.append(label)
+            commands[label] = command
             if label == "archive-sha256-check":
                 self.assertTrue(fake_sftp.closed)
             if label == "runtime-dependency-preflight":
@@ -291,6 +477,10 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             "--build-source-commit", "a" * 40,
             "--maintenance-command", "maintenance-enter",
             "--maintenance-release-command", "maintenance-exit",
+            "--catalog-conflict-repair-mode", "local",
+            "--catalog-conflict-repair-plan", "private-plan.json",
+            "--catalog-conflict-repair-jpeg-png", "jpeg.png",
+            "--catalog-conflict-repair-heic-png", "heic.png",
             "--health-url", "https://example.invalid/api/health",
             "--db-name", "app",
             "--db-user", "app",
@@ -312,6 +502,24 @@ class DeploySshSafetyContractTest(unittest.TestCase):
                 return_value=("b" * 64, "a" * 40),
             ),
             mock.patch.object(DEPLOY, "sha256_file", return_value="c" * 64),
+            mock.patch.object(
+                DEPLOY,
+                "load_catalog_conflict_inputs",
+                return_value={
+                    "plan_path": "private-plan.json",
+                    "plan_sha256": "d" * 64,
+                    "plan_size_bytes": 100,
+                    "batch": "fixture-batch",
+                    "prepared": {
+                        DEPLOY.CATALOG_CONFLICT_ACTION_JPEG: {
+                            "path": "jpeg.png", "sha256": "e" * 64, "size_bytes": 10,
+                        },
+                        DEPLOY.CATALOG_CONFLICT_ACTION_HEIC: {
+                            "path": "heic.png", "sha256": "f" * 64, "size_bytes": 10,
+                        },
+                    },
+                },
+            ),
             mock.patch.object(DEPLOY, "run", side_effect=fake_run),
         ):
             with self.assertRaisesRegex(RuntimeError, "runtime dependency missing"):
@@ -329,6 +537,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertEqual(DEPLOY.SFTP_CHANNEL_TIMEOUT_SECONDS, 300)
         self.assertEqual(sftp_timeouts, [300])
         self.assertEqual(archive_confirms, [False])
+        for capability in ("gd", "imagecreatefrompng", "imagesx", "imagesy"):
+            self.assertIn(capability, commands["runtime-dependency-preflight"])
         self.assertNotIn("backup-directory", labels)
         self.assertNotIn("catalog-maintenance", labels)
 
@@ -629,12 +839,15 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             php_file = Path(temporary_directory) / "catalog-gate-readback.php"
             php_file.write_text("<?php\n" + php_source + "\n", encoding="utf-8")
-            result = subprocess.run(
-                [php_executable, "-l", str(php_file)],
-                capture_output=True,
-                check=False,
-                text=True,
-            )
+            try:
+                result = subprocess.run(
+                    [php_executable, "-l", str(php_file)],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+            except OSError:
+                self.skipTest("The discovered PHP launcher is not executable")
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_maintenance_can_stop_php_fpm_before_a_real_restart(self) -> None:

@@ -9,6 +9,7 @@ use Yiyunying\Core\Pagination;
 use Yiyunying\Core\Request;
 use Yiyunying\Core\Response;
 use Yiyunying\Services\AppService;
+use Yiyunying\Services\MessageMediaService;
 use Yiyunying\Services\SubmissionInspectionService;
 
 final class ResourceController
@@ -59,7 +60,8 @@ final class ResourceController
         $whereSql = implode(' AND ', $where);
         $total = (int) (Database::one("SELECT COUNT(*) AS total FROM resources r WHERE {$whereSql}", $query)['total'] ?? 0);
         $items = Database::all(
-            "SELECT r.id, r.resource_type, r.category_id, r.title, r.description, r.cover_url,
+            "SELECT r.id, r.admin_id, r.app_id, r.user_id, r.resource_type, r.category_id,
+                    r.title, r.description, r.cover_url, r.cover_upload_id,
                     r.size_bytes, r.file_sha256, r.risk_level, r.risk_reason, r.metadata_json,
                     r.audit_status, r.price_integral, r.view_count, r.download_count,
                     r.created_at, c.name AS category_name,
@@ -69,6 +71,7 @@ final class ResourceController
              LIMIT {$limit} OFFSET {$offset}",
             $query
         );
+        $items = MessageMediaService::hydrate($items, 'resource', (int) $app['id']);
         foreach ($items as &$item) {
             $item['price_balance'] = (int) ($item['price_integral'] ?? 0);
             unset($item['price_integral']);
@@ -82,7 +85,8 @@ final class ResourceController
     {
         $app = self::app($request);
         $resource = Database::one(
-            'SELECT r.id, r.resource_type, r.category_id, r.title, r.description, r.cover_url,
+            'SELECT r.id, r.admin_id, r.app_id, r.user_id, r.resource_type, r.category_id,
+                    r.title, r.description, r.cover_url, r.cover_upload_id,
                     r.size_bytes, r.file_sha256, r.risk_level, r.risk_reason, r.metadata_json,
                     r.audit_status, r.price_integral, r.view_count, r.download_count,
                     r.created_at, c.name AS category_name
@@ -99,6 +103,12 @@ final class ResourceController
              FROM resource_comments c LEFT JOIN user_profiles p ON p.user_id = c.user_id
              WHERE c.resource_id = ? AND c.status = 1 ORDER BY c.id ASC LIMIT 100',
             [(int) $resource['id']]
+        );
+        $resource = MessageMediaService::hydrate([$resource], 'resource', (int) $app['id'])[0];
+        $resource['comments'] = MessageMediaService::hydrate(
+            $resource['comments'],
+            'resource_comment',
+            (int) $app['id']
         );
         $resource['price_balance'] = (int) ($resource['price_integral'] ?? 0);
         unset($resource['price_integral']);

@@ -33,7 +33,14 @@ if ($question === false || strpos($requestUri, '?', $question + 1) !== false) {
 $path = substr($requestUri, 0, $question);
 $query = substr($requestUri, $question + 1);
 
-$pathPattern = '~^/__internal-apks/(?:debug/2\.7\.15/yiyunying-(?:user|admin|authorized-platform|platform-owner)-v2\.7\.15-debug\.apk|candidate/1\.0\.0/yiyunying-(?:user|admin|authorized-platform|platform-owner)-v1\.0\.0\.apk)$~D';
+$debugVersion = $_SERVER['YY_INTERNAL_DEBUG_VERSION'] ?? '';
+if (preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D', $debugVersion) !== 1) {
+    finish_verification(401);
+}
+$debugVersionPattern = preg_quote($debugVersion, '~');
+$pathPattern = '~^/__internal-apks/(?:debug/' . $debugVersionPattern
+    . '/yiyunying-(?:user|admin|authorized-platform|platform-owner)-v' . $debugVersionPattern
+    . '-debug\.apk|candidate/1\.0\.0/yiyunying-(?:user|admin|authorized-platform|platform-owner)-v1\.0\.0\.apk)$~D';
 if (preg_match($pathPattern, $path) !== 1) {
     finish_verification(401);
 }

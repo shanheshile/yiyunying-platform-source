@@ -1,0 +1,25 @@
+# Replace the host's existing `location /uploads/` block with this block.
+# It must appear before the generic PHP include. Do not install it alongside a
+# second /uploads/ location: duplicate locations make `nginx -t` fail closed.
+
+location ^~ /uploads/ {
+    # The ^~ prefix prevents the host's generic PHP regex from taking over.
+    # A ^~ prefix suppresses server-level regex locations, so use the safe
+    # return-only form of `if` here instead of relying on a nested regex
+    # location that some Nginx configurations will never evaluate.
+    if ($uri ~* "\.(?:php(?:[0-9]+)?|phtml|phar|cgi|pl|py|sh|svg|svgz)(?:/|$)") {
+        return 404;
+    }
+
+    limit_except GET HEAD {
+        deny all;
+    }
+
+    disable_symlinks on;
+    autoindex off;
+    default_type application/octet-stream;
+    try_files $uri =404;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Cross-Origin-Resource-Policy "same-site" always;
+}

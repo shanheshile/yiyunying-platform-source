@@ -25,6 +25,7 @@ import stat
 import subprocess
 import sys
 import time
+import zipfile
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -41,9 +42,17 @@ SECRET_ENV = "YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET"
 EXPECTED_PRIVATE_ROOT = "/srv/yiyunying-internal-apks"
 EXPECTED_SECRET_INCLUDE = "/etc/nginx/private/yiyunying-internal-apks-secret.conf"
 RELEASE_IDENTITY_PATH = "backend/config/release-identity.json"
+ANDROID_VERSION_PROPERTIES_PATH = "android/version.properties"
+FROZEN_DEBUG_MANIFEST_PATH = "releases/2.7.15/release-manifest.json"
+LEGACY_UPGRADE_IDENTITY_PATH = "android/legacy-debug-upgrade-identity.json"
+COMPATIBILITY_MANIFEST_ROOT = "releases/internal/legacy-debug-compat"
+COMPATIBILITY_CHANNEL = "DebugCompatibility"
+COMPATIBILITY_STATUS = "internal"
+COMPATIBILITY_BUILD_TYPE = "legacyCompat"
+PRODUCTION_API_BASE_URL = "https://appht.jjmxg.xyz/"
 TRACKS = {
     "debug": {
-        "manifest": "releases/2.7.15/release-manifest.json",
+        "manifest": FROZEN_DEBUG_MANIFEST_PATH,
         "version": "2.7.15",
         "code": 60,
         "channel": "Debug",
@@ -82,6 +91,9 @@ SIGNER_LINE = re.compile(
     re.MULTILINE,
 )
 SHA256 = re.compile(r"^[0-9A-Fa-f]{64}$")
+SAFE_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+SAFE_COMPILED_XML = re.compile(r"^res/[A-Za-z0-9._/-]+\.xml$")
+SAFE_PACKAGE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
 SAFE_REMOTE_FILE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 SAFE_FPM = re.compile(
     r"^(?:unix:/[A-Za-z0-9._/-]+\.sock|[A-Za-z_][A-Za-z0-9_]*|(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4})$"
@@ -123,6 +135,14 @@ class ReleaseIdentity:
     version_name: str
     version_code: int
     stable_signer_sha256: str
+
+
+@dataclass(frozen=True)
+class LegacyUpgradeIdentity:
+    maximum_version_code: int
+    signer_sha256: str
+    packages: dict[str, str]
+    connection_identity: dict[str, str]
 
 
 def quote(value: str) -> str:
@@ -230,6 +250,233 @@ def exact_positive_int(value: object, label: str) -> int:
     return value
 
 
+def load_android_version(
+    repository_root: Path, legacy_maximum_version_code: int = 60
+) -> tuple[str, int]:
+    path = repository_root / ANDROID_VERSION_PROPERTIES_PATH
+    item = local_file(path, "Android version properties")
+    values: dict[str, str] = {}
+    for line in item.path.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"\s*([A-Z_]+)\s*=\s*(.*?)\s*", line)
+        if match:
+            values[match.group(1)] = match.group(2)
+    version = values.get("VERSION_NAME", "")
+    raw_code = values.get("VERSION_CODE", "")
+    if not SAFE_VERSION.fullmatch(version) or not raw_code.isdigit():
+        raise RuntimeError("Invalid Android global version properties")
+    code = int(raw_code)
+    if code <= legacy_maximum_version_code:
+        raise RuntimeError(
+            "Debug compatibility versionCode must be greater than the tracked legacy maximum"
+        )
+    return version, code
+
+
+def load_legacy_upgrade_identity(repository_root: Path) -> LegacyUpgradeIdentity:
+    anchor = read_json(
+        repository_root / LEGACY_UPGRADE_IDENTITY_PATH,
+        "tracked legacy upgrade identity anchor",
+    )
+    if anchor.get("schemaVersion") != 1:
+        raise RuntimeError("Tracked legacy upgrade identity schema is invalid")
+    maximum = anchor.get("legacyUpgradeMaximumVersionCode")
+    signer = anchor.get("legacyPackageSignerSha256")
+    packages = anchor.get("packages")
+    if maximum != 60 or not isinstance(signer, str) or not re.fullmatch(r"[0-9A-F]{64}", signer):
+        raise RuntimeError("Tracked legacy upgrade identity anchor is malformed")
+    if not isinstance(packages, dict) or set(packages) != set(ROLES):
+        raise RuntimeError("Tracked legacy package identities are incomplete")
+    normalized: dict[str, str] = {}
+    for role in ROLES:
+        package = exact_text(packages.get(role), f"legacyAnchor.packages.{role}")
+        if not SAFE_PACKAGE_NAME.fullmatch(package) or not package.endswith(".debug"):
+            raise RuntimeError(f"Tracked legacy package identity is invalid: {role}")
+        normalized[role] = package
+    connection_identity = validate_connection_hashes(
+        anchor.get("connectionIdentity"), "tracked legacy connectionIdentity"
+    )
+    return LegacyUpgradeIdentity(maximum, signer, normalized, connection_identity)
+
+
+def frozen_debug_signer(
+    repository_root: Path, anchor: LegacyUpgradeIdentity
+) -> str:
+    manifest = read_json(
+        repository_root / FROZEN_DEBUG_MANIFEST_PATH, "frozen Debug manifest"
+    )
+    if manifest.get("versionCode") != anchor.maximum_version_code:
+        raise RuntimeError("Frozen Debug signer anchor has an unexpected versionCode")
+    releases = manifest.get("releases")
+    if not isinstance(releases, list) or len(releases) != len(ROLES):
+        raise RuntimeError("Frozen Debug signer anchor must contain four APKs")
+    roles: set[str] = set()
+    signers: set[str] = set()
+    for raw in releases:
+        if not isinstance(raw, dict):
+            raise RuntimeError("Frozen Debug signer anchor is malformed")
+        role = exact_text(raw.get("id"), "frozenDebug.id")
+        roles.add(role)
+        signer = exact_text(raw.get("signerSha256"), "frozenDebug.signer").upper()
+        if not SHA256.fullmatch(signer):
+            raise RuntimeError("Frozen Debug signer anchor is malformed")
+        signers.add(signer)
+        if role not in anchor.packages or raw.get("packageName") != anchor.packages[role]:
+            raise RuntimeError("Frozen Debug package identity differs from tracked anchor")
+    if (
+        roles != set(ROLES)
+        or signers != {anchor.signer_sha256}
+    ):
+        raise RuntimeError("Frozen Debug signer anchor is inconsistent")
+    frozen_connection_identity = manifest.get("connectionIdentity")
+    if frozen_connection_identity is not None:
+        if not isinstance(frozen_connection_identity, dict):
+            raise RuntimeError("Frozen Debug connection identity is malformed")
+        frozen_hashes = validate_connection_hashes(
+            {
+                field: frozen_connection_identity.get(field)
+                for field in CONNECTION_HASH_FIELDS
+            },
+            "frozen Debug connectionIdentity",
+        )
+        if frozen_hashes != anchor.connection_identity:
+            raise RuntimeError(
+                "Frozen Debug connection identity differs from tracked legacy anchor"
+            )
+    return anchor.signer_sha256
+
+
+CONNECTION_HASH_FIELDS = (
+    "appKeySha256",
+    "platformKeySha256",
+    "authorizedPlatformKeySha256",
+)
+
+
+def validate_connection_hashes(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != set(CONNECTION_HASH_FIELDS):
+        raise RuntimeError(f"{label} must contain exactly three connection identity hashes")
+    result: dict[str, str] = {}
+    for field in CONNECTION_HASH_FIELDS:
+        digest = value.get(field)
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise RuntimeError(f"{label}.{field} must be a lowercase SHA-256 digest")
+        result[field] = digest
+    return result
+
+
+def stable_pending_connection_hashes(
+    repository_root: Path,
+    version: str,
+    version_code: int,
+    anchor: LegacyUpgradeIdentity,
+) -> dict[str, str]:
+    stable = read_json(
+        repository_root / str(TRACKS["candidate"]["manifest"]),
+        "tracked Stable pending manifest",
+    )
+    if (
+        stable.get("schemaVersion") != 4
+        or stable.get("channel") != "Stable"
+        or stable.get("finalizationStatus") != "pending"
+        or stable.get("versionName") != version
+        or stable.get("versionCode") != version_code
+    ):
+        raise RuntimeError("Tracked Stable pending manifest does not match compatibility version")
+    identity = stable.get("connectionIdentity")
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != {"apiBaseUrl", *CONNECTION_HASH_FIELDS}
+        or identity.get("apiBaseUrl") != PRODUCTION_API_BASE_URL
+    ):
+        raise RuntimeError("Tracked Stable pending connection identity is invalid")
+    stable_hashes = validate_connection_hashes(
+        {field: identity.get(field) for field in CONNECTION_HASH_FIELDS},
+        "Stable connectionIdentity",
+    )
+    if stable_hashes != anchor.connection_identity:
+        raise RuntimeError(
+            "Stable pending connection identity differs from tracked historical anchor"
+        )
+    return stable_hashes
+
+
+def effective_tracks(
+    repository_root: Path,
+    debug_compatibility_manifest: Path | None,
+    anchor: LegacyUpgradeIdentity,
+) -> dict[str, dict]:
+    policies = {track: dict(policy) for track, policy in TRACKS.items()}
+    if debug_compatibility_manifest is None:
+        return policies
+    version, code = load_android_version(repository_root, anchor.maximum_version_code)
+    manifest_path = debug_compatibility_manifest
+    if not manifest_path.is_absolute():
+        manifest_path = repository_root / manifest_path
+    manifest_path = manifest_path.resolve()
+    expected = (
+        repository_root
+        / COMPATIBILITY_MANIFEST_ROOT
+        / version
+        / "release-manifest.json"
+    ).resolve()
+    if manifest_path != expected:
+        raise RuntimeError(
+            "Debug compatibility manifest must use the reviewed internal release path"
+        )
+    local_file(manifest_path, "Debug compatibility manifest")
+    policies["debug"] = {
+        "manifest": manifest_path,
+        "version": version,
+        "code": code,
+        "channel": COMPATIBILITY_CHANNEL,
+        "status": COMPATIBILITY_STATUS,
+        "debug": True,
+        "compatibility": True,
+    }
+    return policies
+
+
+def validate_compatibility_contract(
+    manifest: dict,
+    anchor: LegacyUpgradeIdentity,
+    stable_connection_hashes: dict[str, str],
+) -> None:
+    expected = {
+        "schemaVersion": 2,
+        "channel": COMPATIBILITY_CHANNEL,
+        "finalizationStatus": COMPATIBILITY_STATUS,
+        "distribution": "internal-only",
+        "buildType": COMPATIBILITY_BUILD_TYPE,
+        "debuggable": False,
+        "testOnly": False,
+        "apiBaseUrl": PRODUCTION_API_BASE_URL,
+        "cleartextTrafficPermitted": False,
+        "trustAnchors": ["system"],
+        "followRedirects": False,
+        "apkSignatureSchemeV2": True,
+        "signerCount": 1,
+        "dexTransportVerified": True,
+        "legacyUpgradeMaximumVersionCode": anchor.maximum_version_code,
+    }
+    if any(manifest.get(name) != value for name, value in expected.items()):
+        raise RuntimeError(
+            "Debug compatibility manifest violates the HTTPS/non-debuggable contract"
+        )
+    if manifest.get("legacyPackageSignerSha256") != anchor.signer_sha256:
+        raise RuntimeError("Debug compatibility signer anchor mismatch")
+    compatibility_hashes = validate_connection_hashes(
+        manifest.get("connectionIdentity"), "Debug compatibility connectionIdentity"
+    )
+    if compatibility_hashes != stable_connection_hashes:
+        raise RuntimeError(
+            "Debug compatibility connection identity does not match Stable pending metadata"
+        )
+    if compatibility_hashes != anchor.connection_identity:
+        raise RuntimeError(
+            "Debug compatibility connection identity differs from tracked historical anchor"
+        )
+
+
 def track_version_code(manifest: dict, policy: dict, track: str) -> int:
     version_code = exact_positive_int(
         manifest.get("versionCode"), f"{track}.versionCode"
@@ -261,8 +508,121 @@ def load_release_identity(repository_root: Path) -> ReleaseIdentity:
     return ReleaseIdentity(version_name, version_code, signer)
 
 
+def resolve_compiled_network_security_resource(
+    manifest_text: str, resources_text: str
+) -> str:
+    references = re.findall(
+        r"android:networkSecurityConfig[^=]*=@0x(?P<id>[0-9A-Fa-f]{8})",
+        manifest_text,
+    )
+    if len(references) != 1:
+        raise RuntimeError(
+            "Compiled manifest must contain one networkSecurityConfig resource reference"
+        )
+    resource_id = "0x" + references[0].lower()
+    lines = resources_text.splitlines()
+    indices = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(
+            rf"\s*resource\s+{re.escape(resource_id)}\s+xml/\S+\s*",
+            line,
+            flags=re.IGNORECASE,
+        )
+    ]
+    if len(indices) != 1:
+        raise RuntimeError("Compiled network security resource id is absent or duplicated")
+    for line in lines[indices[0] + 1 :]:
+        if re.match(r"\s*resource\s+0x[0-9A-Fa-f]+\s+", line):
+            break
+        match = re.fullmatch(
+            r"\s*\(\)\s+\(file\)\s+(?P<path>res/[A-Za-z0-9._/-]+\.xml)\s+type=XML\s*",
+            line,
+        )
+        if match:
+            path = match.group("path")
+            if not SAFE_COMPILED_XML.fullmatch(path) or ".." in path or "//" in path:
+                raise RuntimeError("Compiled network security resource path is unsafe")
+            return path
+    raise RuntimeError("Compiled network security resource has no default XML file")
+
+
+def validate_compiled_network_security_output(network_text: str) -> None:
+    if (
+        re.search(r"(?m)A:\s+cleartextTrafficPermitted=false(?:\s|$)", network_text)
+        is None
+        or re.search(r"(?m)A:\s+cleartextTrafficPermitted=true(?:\s|$)", network_text)
+        is not None
+    ):
+        raise RuntimeError("Compiled compatibility network config must set cleartext=false")
+    source_lines = [
+        line
+        for line in network_text.splitlines()
+        if re.search(r"^\s*A:\s+src(?:=|\()", line)
+    ]
+    if not source_lines or any(
+        re.search(r'^\s*A:\s+src="system"(?:\s|$)', line) is None
+        for line in source_lines
+    ):
+        raise RuntimeError(
+            "Compiled compatibility certificate sources must all be system"
+        )
+
+
+def validate_compatibility_dex_transport(apk_path: Path) -> None:
+    required = b"https://appht.jjmxg.xyz/\x00"
+    forbidden = tuple(
+        endpoint + b"\x00"
+        for endpoint in (
+            b"http://appht.jjmxg.xyz/",
+            b"http://appht.jjmxg.xyz",
+            b"http://127.0.0.1:8788/",
+            b"http://127.0.0.1:8788",
+            b"http://10.0.2.2:8788/",
+            b"http://10.0.2.2:8788",
+        )
+    )
+    patterns = (required, *forbidden)
+    overlap = max(len(pattern) for pattern in patterns) - 1
+    required_found = False
+    try:
+        with zipfile.ZipFile(apk_path) as archive:
+            dex_names = [
+                info.filename
+                for info in archive.infolist()
+                if re.fullmatch(r"classes(?:\d+)?\.dex", info.filename)
+            ]
+            if not dex_names:
+                raise RuntimeError("Compatibility APK contains no DEX")
+            for name in dex_names:
+                tail = b""
+                with archive.open(name) as stream:
+                    while True:
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        data = tail + chunk
+                        required_found = required_found or required in data
+                        for endpoint in forbidden:
+                            if endpoint in data:
+                                raise RuntimeError(
+                                    "Compatibility DEX contains a forbidden exact endpoint"
+                                )
+                        tail = data[-overlap:]
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise RuntimeError("Cannot inspect compatibility APK DEX") from exc
+    if not required_found:
+        raise RuntimeError(
+            "Compatibility DEX is missing the exact production HTTPS endpoint"
+        )
+
+
 def validate_apk_with_tools(
-    artifact: ApkArtifact, aapt2: Path, apksigner: Path
+    artifact: ApkArtifact,
+    aapt2: Path,
+    apksigner: Path,
+    *,
+    compatibility_network_resource: str | None = None,
 ) -> None:
     # Work from the APK directory so older Android tools do not receive a
     # Unicode-heavy absolute APK path on Windows.
@@ -279,34 +639,122 @@ def validate_apk_with_tools(
         or match.group("name") != artifact.version_name
     ):
         raise RuntimeError(f"APK identity mismatch: {artifact.track}/{artifact.role}")
+    if compatibility_network_resource is not None and (
+        re.search(r"(?m)^application-debuggable\s*$", badging)
+        or re.search(r"(?im)^application-test-only\s*$", badging)
+        or re.search(r"(?i)testOnly\s*=\s*'?true'?", badging)
+    ):
+        raise RuntimeError(
+            f"Compatibility APK is debuggable or testOnly: {artifact.role}"
+        )
     signer_output = run_local(
-        [str(apksigner), "verify", "--print-certs", artifact.path.name],
+        [
+            str(apksigner),
+            "verify",
+            "--verbose",
+            "--print-certs",
+            artifact.path.name,
+        ],
         f"APK signature for {artifact.track}/{artifact.role}",
         artifact.path.parent,
     )
     signers = SIGNER_LINE.findall(signer_output)
     if len(signers) != 1 or signers[0].upper() != artifact.signer_sha256:
         raise RuntimeError(f"APK signer mismatch: {artifact.track}/{artifact.role}")
+    if compatibility_network_resource is None:
+        return
+    if (
+        re.search(
+            r"(?m)^Verified using v2 scheme \(APK Signature Scheme v2\): true\s*$",
+            signer_output,
+        )
+        is None
+        or re.search(r"(?m)^Number of signers: 1\s*$", signer_output) is None
+    ):
+        raise RuntimeError(
+            f"Compatibility APK must use v2 with one signer: {artifact.role}"
+        )
+    manifest_output = run_local(
+        [
+            str(aapt2),
+            "dump",
+            "xmltree",
+            artifact.path.name,
+            "--file",
+            "AndroidManifest.xml",
+        ],
+        f"compiled manifest for compatibility/{artifact.role}",
+        artifact.path.parent,
+    )
+    resources_output = run_local(
+        [str(aapt2), "dump", "resources", artifact.path.name],
+        f"compiled resources for compatibility/{artifact.role}",
+        artifact.path.parent,
+    )
+    actual_network_resource = resolve_compiled_network_security_resource(
+        manifest_output, resources_output
+    )
+    if actual_network_resource != compatibility_network_resource:
+        raise RuntimeError(
+            f"Compatibility compiled network resource differs from manifest: {artifact.role}"
+        )
+    network_output = run_local(
+        [
+            str(aapt2),
+            "dump",
+            "xmltree",
+            artifact.path.name,
+            "--file",
+            actual_network_resource,
+        ],
+        f"compiled network config for compatibility/{artifact.role}",
+        artifact.path.parent,
+    )
+    validate_compiled_network_security_output(network_output)
+    validate_compatibility_dex_transport(artifact.path)
 
 
 def validate_artifacts(
-    repository_root: Path, aapt2: Path, apksigner: Path
+    repository_root: Path,
+    aapt2: Path,
+    apksigner: Path,
+    debug_compatibility_manifest: Path | None = None,
 ) -> list[ApkArtifact]:
     artifacts: list[ApkArtifact] = []
     release_identity = load_release_identity(repository_root)
+    legacy_anchor = load_legacy_upgrade_identity(repository_root)
+    policies = effective_tracks(
+        repository_root, debug_compatibility_manifest, legacy_anchor
+    )
+    expected_debug_signer = frozen_debug_signer(repository_root, legacy_anchor)
+    stable_connection_identity: dict[str, str] | None = None
+    if policies["debug"].get("compatibility"):
+        stable_connection_identity = stable_pending_connection_hashes(
+            repository_root,
+            str(policies["debug"]["version"]),
+            int(policies["debug"]["code"]),
+            legacy_anchor,
+        )
     if release_identity.version_name != TRACKS["candidate"]["version"]:
         raise RuntimeError(
             "Release identity version is incompatible with the reviewed candidate route"
         )
-    for track, policy in TRACKS.items():
-        manifest_path = repository_root / str(policy["manifest"])
+    for track, policy in policies.items():
+        manifest_path = Path(policy["manifest"])
+        if not manifest_path.is_absolute():
+            manifest_path = repository_root / manifest_path
         manifest = read_json(manifest_path, f"{track} release manifest")
         version_code = track_version_code(manifest, policy, track)
         expected_version = str(policy["version"])
         channel = manifest.get("channel")
         # The frozen 2.7.15 Debug schema predates the explicit channel field;
         # no other missing channel is accepted.
-        if track == "debug":
+        if track == "debug" and policy.get("compatibility"):
+            assert stable_connection_identity is not None
+            validate_compatibility_contract(
+                manifest, legacy_anchor, stable_connection_identity
+            )
+        elif track == "debug":
             if channel not in (None, "Debug"):
                 raise RuntimeError("2.7.15 must remain the frozen Debug track")
         elif channel != policy["channel"]:
@@ -337,15 +785,34 @@ def validate_artifacts(
         for role, (file_stem, version_suffix, base_package) in ROLES.items():
             raw = by_role[role]
             debug_suffix = "-debug" if policy["debug"] else ""
-            package_suffix = ".debug" if policy["debug"] else ""
             file_name = f"yiyunying-{file_stem}-v{expected_version}{debug_suffix}.apk"
-            package_name = base_package + package_suffix
+            package_name = (
+                legacy_anchor.packages[role]
+                if policy["debug"]
+                else base_package
+            )
             version_name = f"{expected_version}-{version_suffix}{debug_suffix}"
             signer = exact_text(raw.get("signerSha256"), f"{track}.{role}.signer").upper()
             declared_sha = exact_text(raw.get("sha256"), f"{track}.{role}.sha256").upper()
             declared_size = exact_positive_int(raw.get("sizeBytes"), f"{track}.{role}.size")
+            if track == "debug" and policy.get("compatibility"):
+                network_resource = exact_text(
+                    raw.get("networkSecurityResource"), f"{track}.{role}.networkSecurityResource"
+                )
+                if (
+                    not SAFE_COMPILED_XML.fullmatch(network_resource)
+                    or ".." in network_resource
+                    or "//" in network_resource
+                ):
+                    raise RuntimeError(f"Unsafe compiled network security resource: {role}")
             if not SHA256.fullmatch(signer) or not SHA256.fullmatch(declared_sha):
                 raise RuntimeError(f"Invalid digest in {track}/{role}")
+            if (
+                track == "debug"
+                and expected_debug_signer is not None
+                and signer != expected_debug_signer
+            ):
+                raise RuntimeError(f"Debug compatibility signer mismatch: {role}")
             if (
                 track == "candidate"
                 and signer != release_identity.stable_signer_sha256
@@ -379,7 +846,16 @@ def validate_artifacts(
                 size,
                 digest,
             )
-            validate_apk_with_tools(artifact, aapt2, apksigner)
+            validate_apk_with_tools(
+                artifact,
+                aapt2,
+                apksigner,
+                compatibility_network_resource=(
+                    network_resource
+                    if track == "debug" and policy.get("compatibility")
+                    else None
+                ),
+            )
             artifacts.append(artifact)
     return artifacts
 
@@ -452,7 +928,9 @@ def validate_deployment_sources(repository_root: Path) -> tuple[LocalFile, Local
         "error_page 403 =410",
         "fastcgi_pass __YY_FPM_UPSTREAM__;",
         "include __YY_SECRET_INCLUDE__;",
-        "alias __YY_PRIVATE_ROOT__/current/debug/2.7.15/$apk;",
+        "alias __YY_PRIVATE_ROOT__/current/debug/__YY_DEBUG_VERSION__/$apk;",
+        "fastcgi_param YY_INTERNAL_DEBUG_VERSION __YY_DEBUG_VERSION__;",
+        "__YY_DEBUG_VERSION_REGEX__",
         "alias __YY_PRIVATE_ROOT__/current/candidate/1.0.0/$apk;",
         "access_log off;",
         "max_ranges 1;",
@@ -471,6 +949,8 @@ def validate_deployment_sources(repository_root: Path) -> tuple[LocalFile, Local
         "hash_equals($expected, $parameters['sig'])",
         "finish_verification(403)",
         "finish_verification(204)",
+        "YY_INTERNAL_DEBUG_VERSION",
+        "preg_quote($debugVersion, '~')",
     )
     if any(marker not in php for marker in required_php):
         raise RuntimeError("Private PHP verifier is incomplete")
@@ -479,14 +959,27 @@ def validate_deployment_sources(repository_root: Path) -> tuple[LocalFile, Local
     return template, verifier
 
 
+def validate_version_segment(value: str) -> str:
+    if not SAFE_VERSION.fullmatch(value):
+        raise RuntimeError("Private Debug version must use major.minor.patch format")
+    return value
+
+
 def render_nginx(
-    template: LocalFile, private_root: str, secret_include: str, fpm_upstream: str
+    template: LocalFile,
+    private_root: str,
+    secret_include: str,
+    fpm_upstream: str,
+    debug_version: str,
 ) -> bytes:
     text = template.path.read_text(encoding="utf-8")
+    debug_version = validate_version_segment(debug_version)
     replacements = {
         "__YY_PRIVATE_ROOT__": private_root,
         "__YY_SECRET_INCLUDE__": secret_include,
         "__YY_FPM_UPSTREAM__": fpm_upstream,
+        "__YY_DEBUG_VERSION__": debug_version,
+        "__YY_DEBUG_VERSION_REGEX__": re.escape(debug_version),
     }
     for marker, value in replacements.items():
         if text.count(marker) == 0:
@@ -715,7 +1208,14 @@ def deploy(
     )
     if nginx_include == secret_include or host_config in {nginx_include, secret_include}:
         raise RuntimeError("Remote Nginx paths must be distinct")
-    rendered_nginx = render_nginx(template, private_root, secret_include, fpm)
+    debug_versions = {
+        artifact.version for artifact in artifacts if artifact.track == "debug"
+    }
+    if len(debug_versions) != 1:
+        raise RuntimeError("Private deployment must contain one exact Debug version")
+    rendered_nginx = render_nginx(
+        template, private_root, secret_include, fpm, next(iter(debug_versions))
+    )
     secret_payload = f"set $yy_internal_download_secret '{secret_hex}';\n".encode("ascii")
 
     token = secrets.token_hex(16)
@@ -778,14 +1278,19 @@ def deploy(
             "secret": parsed["2"] == "1",
         }
 
-        directories = (
-            stage,
-            posixpath.join(stage, "debug"),
-            posixpath.join(stage, "debug/2.7.15"),
-            posixpath.join(stage, "candidate"),
-            posixpath.join(stage, "candidate/1.0.0"),
-            posixpath.join(stage, "_auth"),
+        track_versions = sorted(
+            {(artifact.track, artifact.version) for artifact in artifacts}
         )
+        if {track for track, _ in track_versions} != {"debug", "candidate"}:
+            raise RuntimeError("Private deployment must contain Debug and candidate tracks")
+        directories = [stage]
+        seen_tracks: set[str] = set()
+        for track, version in track_versions:
+            if track not in seen_tracks:
+                directories.append(posixpath.join(stage, track))
+                seen_tracks.add(track)
+            directories.append(posixpath.join(stage, f"{track}/{version}"))
+        directories.append(posixpath.join(stage, "_auth"))
         run(
             ssh,
             " ; ".join(
@@ -946,6 +1451,29 @@ def validate_args(
     private_root = validate_private_root(args.remote_private_root)
     origin = normalize_origin(args.public_origin)
     if args.execute:
+        if args.debug_compatibility_manifest is None:
+            raise RuntimeError(
+                "Execution requires --debug-compatibility-manifest for the current global version"
+            )
+        legacy_anchor = load_legacy_upgrade_identity(repository_root)
+        version, _ = load_android_version(
+            repository_root, legacy_anchor.maximum_version_code
+        )
+        expected_compatibility_manifest = (
+            repository_root
+            / COMPATIBILITY_MANIFEST_ROOT
+            / version
+            / "release-manifest.json"
+        ).resolve()
+        provided_compatibility_manifest = args.debug_compatibility_manifest
+        if not provided_compatibility_manifest.is_absolute():
+            provided_compatibility_manifest = (
+                repository_root / provided_compatibility_manifest
+            )
+        if provided_compatibility_manifest.resolve() != expected_compatibility_manifest:
+            raise RuntimeError(
+                "Execution requires the exact current Debug compatibility manifest path"
+            )
         if args.confirmation != EXECUTE_CONFIRMATION:
             raise RuntimeError(f"Execution requires --confirmation {EXECUTE_CONFIRMATION}")
         if args.nginx_confirmation != NGINX_CONFIRMATION:
@@ -984,6 +1512,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--aapt2", type=Path)
     parser.add_argument("--apksigner", type=Path)
+    parser.add_argument("--debug-compatibility-manifest", type=Path)
     parser.add_argument("--public-origin", default="https://appht.jjmxg.xyz")
     parser.add_argument("--remote-private-root", default=EXPECTED_PRIVATE_ROOT)
     parser.add_argument("--host")
@@ -1008,7 +1537,12 @@ def main() -> int:
     repository_root = Path(__file__).resolve().parents[2]
     aapt2, apksigner, private_root, origin = validate_args(args, repository_root)
     template, verifier = validate_deployment_sources(repository_root)
-    artifacts = validate_artifacts(repository_root, aapt2, apksigner)
+    artifacts = validate_artifacts(
+        repository_root,
+        aapt2,
+        apksigner,
+        args.debug_compatibility_manifest,
+    )
     if not args.execute:
         track_versions = {
             artifact.track: (artifact.version, artifact.version_code)

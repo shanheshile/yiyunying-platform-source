@@ -238,6 +238,7 @@ final class SubmissionInspectionService
 
     public static function present(array $row): array
     {
+        $row = self::canonicalizeCatalogPresentation($row, false);
         $row['review_revision'] = self::reviewRevision($row);
         if (is_array($row['attachments'] ?? null)) {
             foreach ($row['attachments'] as &$attachment) {
@@ -284,6 +285,7 @@ final class SubmissionInspectionService
         if (isset($row['size_bytes'])) {
             $row['file_size_label'] = self::formatBytes((int) $row['size_bytes']);
         }
+        unset($row['_catalog_media_sha256']);
         return $row;
     }
 
@@ -326,6 +328,7 @@ final class SubmissionInspectionService
                 <=> [(int) ($right['sort_order'] ?? 0), (int) ($right['id'] ?? 0)];
         });
         $snapshot['attachments'] = $attachmentSnapshot;
+        $snapshot['catalog_media_sha256'] = strtolower((string) ($row['_catalog_media_sha256'] ?? ''));
         $json = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
         if (!is_string($json)) throw new \RuntimeException('Unable to build review revision');
         return hash('sha256', $json);
@@ -352,6 +355,10 @@ final class SubmissionInspectionService
                 422
             );
         }
+        if ($coverUploadId <= 0
+            && trim((string) ($data['cover_url'] ?? $data['icon_url'] ?? '')) !== '') {
+            throw new HttpException('封面或图标不能直接提交外链，请先上传并提交 cover_upload_id', 0, 422);
+        }
         $source = self::verifiedUpload($sourceUploadId, $adminId, $appId, $userId);
         $expectedScene = self::catalogScene($kind);
         if (strtolower(trim((string) ($source['scene'] ?? ''))) !== $expectedScene) {
@@ -367,6 +374,7 @@ final class SubmissionInspectionService
         $cover = $coverUploadId > 0
             ? self::verifiedUpload($coverUploadId, $adminId, $appId, $userId)
             : null;
+        $coverValidation = null;
         if ($cover !== null) {
             $coverScene = self::catalogCoverScene($kind);
             if (strtolower(trim((string) ($cover['scene'] ?? ''))) !== $coverScene) {
@@ -378,13 +386,7 @@ final class SubmissionInspectionService
             if (strtolower(trim((string) ($cover['mime_type'] ?? ''))) === 'image/svg+xml') {
                 throw new HttpException('封面或图标不支持 SVG，请改用 PNG、JPG、GIF 或 WebP', 0, 422);
             }
-            $coverPath = ltrim(str_replace('\\', '/', (string) ($cover['file_path'] ?? '')), '/');
-            $coverUrl = trim((string) ($cover['file_url'] ?? ''));
-            if (str_starts_with($coverPath, 'private/')
-                || $coverUrl === ''
-                || preg_match('#^(https?://|/)#i', $coverUrl) !== 1) {
-                throw new HttpException('封面或图标必须通过公开图片上传通道重新上传', 0, 422);
-            }
+            $coverValidation = UploadStorageService::validatedPublicImageUpload($cover);
         }
 
         // Private catalog payloads deliberately have no directly reachable URL.
@@ -421,7 +423,7 @@ final class SubmissionInspectionService
         if ($hash !== '' && !preg_match('/^[a-f0-9]{64}$/', $hash)) {
             $hash = '';
         }
-        $coverHash = strtolower((string) ($cover['sha256'] ?? ''));
+        $coverHash = strtolower((string) ($coverValidation['sha256'] ?? ''));
         if ($coverHash !== '' && !preg_match('/^[a-f0-9]{64}$/', $coverHash)) {
             $coverHash = '';
         }
@@ -445,8 +447,8 @@ final class SubmissionInspectionService
         return [
             'source_url' => mb_substr($sourceUrl, 0, 1000),
             'cover_url' => $cover !== null
-                ? mb_substr((string) $cover['file_url'], 0, 500)
-                : mb_substr((string) ($data['cover_url'] ?? $data['icon_url'] ?? ''), 0, 500),
+                ? mb_substr((string) $coverValidation['file_url'], 0, 500)
+                : '',
             'size_bytes' => (int) $metadata['size_bytes'],
             'file_sha256' => $hash,
             'risk_level' => $risk['level'],
@@ -502,15 +504,14 @@ final class SubmissionInspectionService
         $upload = self::lockUploadReferenceRow(
             $uploadId, $adminId, $appId, $userId, $expectedScene
         );
-        if (!str_starts_with(strtolower(trim((string) ($upload['mime_type'] ?? ''))), 'image/')) {
-            throw new HttpException('封面或图标必须使用图片文件', 0, 409);
+        $validation = UploadStorageService::validatedPublicImageUpload($upload);
+        $expectedSha256 = strtolower(trim($expectedSha256));
+        if ($expectedSha256 !== '' && !hash_equals($expectedSha256, (string) $validation['sha256'])) {
+            throw new HttpException('封面或图标内容已变化，请重新检查后提交', 0, 409);
         }
-        $path = ltrim(str_replace('\\', '/', (string) ($upload['file_path'] ?? '')), '/');
-        $url = trim((string) ($upload['file_url'] ?? ''));
-        if (str_starts_with($path, 'private/') || $url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) {
-            throw new HttpException('封面或图标已失效或不在公开图片存储中，请重新上传', 0, 409);
-        }
-        self::assertLockedUploadHash($upload, $expectedSha256);
+        $upload['file_url'] = (string) $validation['file_url'];
+        $upload['thumbnail_url'] = (string) $validation['thumbnail_url'];
+        $upload['_public_image_validation'] = $validation;
         return $upload;
     }
 
@@ -526,11 +527,96 @@ final class SubmissionInspectionService
         if ($userId !== null) {
             $where .= ' AND user_id = ?';
             $params[] = $userId;
+        } else {
+            $where .= ' AND user_id IS NULL';
         }
         $upload = Database::one("SELECT * FROM uploads WHERE {$where} FOR UPDATE", $params);
         if ($upload === null) {
             throw new HttpException('所选文件已失效、被删除或不属于当前账号，请重新上传', 0, 409);
         }
+        return $upload;
+    }
+
+    /**
+     * Canonicalize catalog cover/icon exclusively from a live tenant-bound
+     * public upload. Read paths hide historical mismatches; strict review/write
+     * paths lock and reject them.
+     */
+    public static function canonicalizeCatalogPresentation(array $row, bool $strict = false): array
+    {
+        if (array_key_exists('cover_url', $row) && (int) ($row['cover_upload_id'] ?? 0) <= 0) {
+            $row['cover_url'] = '';
+        }
+        if (array_key_exists('icon_url', $row) && (int) ($row['icon_upload_id'] ?? 0) <= 0) {
+            $row['icon_url'] = '';
+        }
+        $isStore = array_key_exists('icon_url', $row) || isset($row['package_name']);
+        $urlField = $isStore ? 'icon_url' : 'cover_url';
+        $uploadField = $isStore ? 'icon_upload_id' : 'cover_upload_id';
+        if (!array_key_exists($urlField, $row) && !array_key_exists($uploadField, $row)) return $row;
+        $row[$urlField] = '';
+        $row['_catalog_media_sha256'] = '';
+        $uploadId = max(0, (int) ($row[$uploadField] ?? 0));
+        $adminId = max(0, (int) ($row['admin_id'] ?? 0));
+        $appId = max(0, (int) ($row['app_id'] ?? 0));
+        if ($uploadId <= 0 || $adminId <= 0 || $appId <= 0) {
+            if ($strict && $uploadId > 0) {
+                throw new HttpException('封面或图标缺少租户绑定信息，不能审核', 0, 409);
+            }
+            return $row;
+        }
+        $ownerId = array_key_exists('user_id', $row) && $row['user_id'] !== null
+            ? (int) $row['user_id']
+            : null;
+        $kind = $isStore
+            ? 'app_store'
+            : self::normalizeResourceType((string) ($row['resource_type'] ?? 'source_market'));
+        $scene = self::catalogCoverScene($kind);
+        try {
+            if ($strict) {
+                $upload = self::lockCatalogCoverReference(
+                    $uploadId,
+                    $adminId,
+                    $appId,
+                    $ownerId,
+                    $scene
+                );
+                $validation = $upload['_public_image_validation'];
+            } else {
+                $upload = self::verifiedUploadForOwnerAndScene(
+                    $uploadId,
+                    $adminId,
+                    $appId,
+                    $ownerId,
+                    $scene
+                );
+                $validation = UploadStorageService::validatedPublicImageUpload($upload);
+            }
+            $row[$urlField] = (string) $validation['file_url'];
+            $row['_catalog_media_sha256'] = (string) $validation['sha256'];
+        } catch (HttpException $failure) {
+            if ($strict) throw $failure;
+        }
+        return $row;
+    }
+
+    private static function verifiedUploadForOwnerAndScene(
+        int $uploadId,
+        int $adminId,
+        int $appId,
+        ?int $userId,
+        string $scene
+    ): array {
+        $where = 'id = ? AND admin_id = ? AND app_id = ? AND scene = ? AND status = 1';
+        $params = [$uploadId, $adminId, $appId, strtolower(trim($scene))];
+        if ($userId === null) {
+            $where .= ' AND user_id IS NULL';
+        } else {
+            $where .= ' AND user_id = ?';
+            $params[] = $userId;
+        }
+        $upload = Database::one("SELECT * FROM uploads WHERE {$where}", $params);
+        if ($upload === null) throw new HttpException('封面或图标上传已失效或不属于当前条目', 0, 409);
         return $upload;
     }
 
@@ -656,12 +742,16 @@ final class SubmissionInspectionService
 
     private static function firstInt(array $data, array $keys): int
     {
+        $values = [];
         foreach ($keys as $key) {
-            if (!empty($data[$key])) {
-                return max(0, (int) $data[$key]);
-            }
+            if (!array_key_exists($key, $data) || $data[$key] === '' || $data[$key] === null) continue;
+            $value = max(0, (int) $data[$key]);
+            if ($value > 0) $values[$value] = true;
         }
-        return 0;
+        if (count($values) > 1) {
+            throw new HttpException('同一上传引用的多个 ID 字段互相冲突，请只提交一个一致的 upload_id', 0, 422);
+        }
+        return $values === [] ? 0 : (int) array_key_first($values);
     }
 
     private static function canonicalCategory(

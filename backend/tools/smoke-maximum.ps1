@@ -88,18 +88,26 @@ function Get-Signature {
 }
 
 function Invoke-Upload {
-    param([string]$Path, [hashtable]$Headers, [string]$FilePath)
+    param(
+        [string]$Path,
+        [hashtable]$Headers,
+        [string]$FilePath,
+        [string]$Scene = 'smoke',
+        [string]$ContentType = 'application/octet-stream'
+    )
     Add-Type -AssemblyName System.Net.Http
     $client = New-Object System.Net.Http.HttpClient
     $multipart = New-Object System.Net.Http.MultipartFormDataContent
     try {
         $client.DefaultRequestHeaders.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', ($Headers.Authorization -replace '^Bearer\s+', ''))
-        $client.DefaultRequestHeaders.Add('X-App-Key', $Headers['X-App-Key'])
+        if ($Headers.ContainsKey('X-App-Key') -and -not [string]::IsNullOrWhiteSpace([string]$Headers['X-App-Key'])) {
+            $client.DefaultRequestHeaders.Add('X-App-Key', $Headers['X-App-Key'])
+        }
         $bytes = [System.IO.File]::ReadAllBytes($FilePath)
         $fileContent = New-Object System.Net.Http.ByteArrayContent -ArgumentList @(,$bytes)
-        $fileContent.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue('text/plain')
+        $fileContent.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue($ContentType)
         $multipart.Add($fileContent, 'file', [System.IO.Path]::GetFileName($FilePath))
-        $multipart.Add((New-Object System.Net.Http.StringContent('smoke')), 'scene')
+        $multipart.Add((New-Object System.Net.Http.StringContent($Scene)), 'scene')
         $httpResponse = $client.PostAsync("$BaseUrl$Path", $multipart).Result
         $json = $httpResponse.Content.ReadAsStringAsync().Result | ConvertFrom-Json
         if (-not $httpResponse.IsSuccessStatusCode -or $json.code -ne 1) {
@@ -111,6 +119,29 @@ function Invoke-Upload {
         $multipart.Dispose()
         $client.Dispose()
     }
+}
+
+function New-ZipFixture {
+    param([string]$Path, [hashtable]$Entries)
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new(
+            $stream,
+            [System.IO.Compression.ZipArchiveMode]::Create,
+            $true
+        )
+        try {
+            foreach ($name in $Entries.Keys) {
+                $entry = $archive.CreateEntry([string]$name)
+                $writer = [System.IO.StreamWriter]::new(
+                    $entry.Open(),
+                    [System.Text.UTF8Encoding]::new($false)
+                )
+                try { $writer.Write([string]$Entries[$name]) } finally { $writer.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
 }
 
 $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -231,22 +262,40 @@ Assert-True ($resourcePolicyDisabled.enabled -eq $false) 'resource submission po
 Invoke-Api PUT "/api/admin/apps/$appId/settings" $adminHeaders @{
     settings = @{ resource_user_submit_enabled = $true }
 } | Out-Null
-$resource = Invoke-Api POST '/api/user/resources' $headersA @{
-    category_id = [int]$resourceCategory.category_id; title = 'Paid Resource'; description = 'resource body'; download_url = 'https://example.com/resource.zip'; price_balance = 100
+$resourceFixturePath = Join-Path $env:TEMP "yiyunying-resource-$suffix.zip"
+New-ZipFixture $resourceFixturePath @{ 'README.txt' = 'verified resource fixture' }
+try {
+    $resourceUpload = Invoke-Upload '/api/user/uploads' $headersA $resourceFixturePath 'resource_source' 'application/zip'
+    $resource = Invoke-Api POST '/api/user/resources' $headersA @{
+        category_id = [int]$resourceCategory.category_id; title = 'Paid Resource'; description = 'resource body'
+        source_upload_id = [int]$resourceUpload.upload_id; price_balance = 100
+    }
+    $resourceId = [int]$resource.resource_id
+    Invoke-Api PUT "/api/admin/apps/$appId/resources/$resourceId/audit" $adminHeaders @{ audit_status = 'approved' } | Out-Null
+    $resourceBuy = Invoke-Api POST "/api/user/resources/$resourceId/buy" $headersB @{}
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$resourceBuy.download_url)) 'paid resource delivery'
+    Invoke-Api POST "/api/user/resources/$resourceId/comments" $headersB @{ content = 'resource comment' } | Out-Null
+    Invoke-Api POST "/api/user/resources/$resourceId/rating" $headersB @{ score = 5 } | Out-Null
+} finally {
+    Remove-Item -LiteralPath $resourceFixturePath -Force -ErrorAction SilentlyContinue
 }
-$resourceId = [int]$resource.resource_id
-Invoke-Api PUT "/api/admin/apps/$appId/resources/$resourceId/audit" $adminHeaders @{ audit_status = 'approved' } | Out-Null
-$resourceBuy = Invoke-Api POST "/api/user/resources/$resourceId/buy" $headersB @{}
-Assert-True ($resourceBuy.download_url -eq 'https://example.com/resource.zip') 'paid resource delivery'
-Invoke-Api POST "/api/user/resources/$resourceId/comments" $headersB @{ content = 'resource comment' } | Out-Null
-Invoke-Api POST "/api/user/resources/$resourceId/rating" $headersB @{ score = 5 } | Out-Null
 
 $storeCategory = Invoke-Api POST "/api/admin/apps/$appId/store-categories" $adminHeaders @{ name = "Apps-$suffix" }
-$storeApp = Invoke-Api POST "/api/admin/apps/$appId/store-apps" $adminHeaders @{
-    category_id = [int]$storeCategory.category_id; name = 'Smoke App'; package_name = "com.yiyunying.smoke$suffix";
-    version_name = '1.0.0'; version_code = 1; apk_url = 'https://example.com/smoke.apk'; images = @('https://example.com/1.png')
+$apkFixturePath = Join-Path $env:TEMP "yiyunying-store-$suffix.apk"
+New-ZipFixture $apkFixturePath @{ 'AndroidManifest.xml' = 'verified manifest'; 'classes.dex' = "dex`n035`0" }
+try {
+    $packageUpload = Invoke-Upload "/api/admin/apps/$appId/uploads" $adminHeaders $apkFixturePath 'store_app_package' 'application/vnd.android.package-archive'
+    $storeApp = Invoke-Api POST "/api/admin/apps/$appId/store-apps" $adminHeaders @{
+        category_id = [int]$storeCategory.category_id; name = 'Smoke App'; package_name = "com.yiyunying.smoke$suffix";
+        version_name = '1.0.0'; version_code = 1; source_upload_id = [int]$packageUpload.upload_id; attachments = @()
+    }
+    Invoke-Api PUT "/api/admin/apps/$appId/store-apps/$($storeApp.store_app_id)/audit" $adminHeaders @{
+        audit_status = 'approved'; override_risk = $true
+    } | Out-Null
+    Invoke-Api GET "/api/user/store-apps/$($storeApp.store_app_id)" $headersA | Out-Null
+} finally {
+    Remove-Item -LiteralPath $apkFixturePath -Force -ErrorAction SilentlyContinue
 }
-Invoke-Api GET "/api/user/store-apps/$($storeApp.store_app_id)" $headersA | Out-Null
 
 $plate = Invoke-Api POST "/api/admin/apps/$appId/forum-plates" $adminHeaders @{ name = "Forum-$suffix"; description = 'forum plate' }
 $post = Invoke-Api POST '/api/user/forum-posts' $headersA @{ plate_id = [int]$plate.plate_id; title = 'Maximum Post'; content = 'forum body'; images = @() }

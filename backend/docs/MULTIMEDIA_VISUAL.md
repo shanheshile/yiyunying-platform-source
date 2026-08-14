@@ -67,6 +67,8 @@
 | POST | `/api/user/sticker-packs/{pack_id}/stickers` | 用本人图片上传记录创建表情 |
 | DELETE | `/api/user/sticker-packs/{pack_id}/stickers/{sticker_id}` | 删除表情 |
 
+创建或批量创建表情时必须提交 live public image `upload_id`；服务端从上传实体校验 SHA-256、MIME、解码结果和尺寸，并从受控 `file_path` 派生 URL。客户端 `image_url`、缩略图和尺寸不会覆盖服务器结果。历史 URL-only 表情会隐藏但不删除；分组封面由首个可信表情自动生成。表情云备份 v2 保存 `upload_id + sha256`，旧 URL-only 快照只读且不能自动恢复。
+
 发送时使用：
 
 ```json

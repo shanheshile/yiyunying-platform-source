@@ -28,6 +28,56 @@ function Assert-True([bool]$Condition, [string]$Message) {
     $script:Checks++
 }
 
+function Invoke-Upload {
+    param(
+        [hashtable]$Headers,
+        [string]$FilePath,
+        [string]$Scene,
+        [string]$ContentType = 'application/zip'
+    )
+    Add-Type -AssemblyName System.Net.Http
+    $client = [System.Net.Http.HttpClient]::new()
+    $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+    try {
+        $token = [string]$Headers.Authorization -replace '^Bearer\s+', ''
+        $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $token)
+        if ($Headers.ContainsKey('X-App-Key')) {
+            $client.DefaultRequestHeaders.Add('X-App-Key', [string]$Headers['X-App-Key'])
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $fileContent = New-Object System.Net.Http.ByteArrayContent -ArgumentList @(,$bytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new($ContentType)
+        $multipart.Add($fileContent, 'file', [System.IO.Path]::GetFileName($FilePath))
+        $multipart.Add([System.Net.Http.StringContent]::new($Scene), 'scene')
+        $httpResponse = $client.PostAsync("$BaseUrl/api/user/uploads", $multipart).Result
+        $json = $httpResponse.Content.ReadAsStringAsync().Result | ConvertFrom-Json
+        if (-not $httpResponse.IsSuccessStatusCode -or $json.code -ne 1) {
+            throw "POST /api/user/uploads failed: $($json.msg)"
+        }
+        $script:Checks++
+        return $json.data
+    } finally {
+        $multipart.Dispose()
+        $client.Dispose()
+    }
+}
+
+function New-ZipFixture {
+    param([string]$Path, [hashtable]$Entries)
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($name in $Entries.Keys) {
+                $entry = $archive.CreateEntry([string]$name)
+                $writer = [System.IO.StreamWriter]::new($entry.Open(), [System.Text.UTF8Encoding]::new($false))
+                try { $writer.Write([string]$Entries[$name]) } finally { $writer.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 function Media-Fixture([int]$StickerId) {
     return @(
         @{ media_type = 'image'; url = 'https://example.com/media/image-1.png'; mime_type = 'image/png'; width = 800; height = 600 },
@@ -41,6 +91,7 @@ function Media-Fixture([int]$StickerId) {
 
 $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $appId = 0
+$fixturePath = Join-Path $env:TEMP "yiyunying-multimedia-$suffix.zip"
 
 $root = Invoke-Api POST '/api/platform/login' @{} @{ account = 'root'; password = '123456'; device = 'multimedia-visual-smoke' }
 $rootHeaders = @{ Authorization = "Bearer $($root.access_token)" }
@@ -68,6 +119,10 @@ try {
     $userB = [int]$b.user.id
     $headersA = @{ Authorization = "Bearer $($a.access_token)"; 'X-App-Key' = $appKey }
     $headersB = @{ Authorization = "Bearer $($b.access_token)"; 'X-App-Key' = $appKey }
+
+    New-ZipFixture $fixturePath @{ 'README.txt' = 'verified multimedia smoke fixture' }
+    $forumUploadA = Invoke-Upload $headersA $fixturePath 'forum_post'
+    $forumUploadB = Invoke-Upload $headersB $fixturePath 'forum_comment'
 
     Invoke-Api PUT '/api/user/profile' $headersA @{
         nickname = '媒体甲'; qq = '10086'; signature = '隐藏详情测试'; public_profile = $false
@@ -123,19 +178,19 @@ try {
     }
     $post = Invoke-Api POST '/api/user/forum-posts' $headersA @{
         plate_id = [int]$plate.plate_id; title = '可点击进入的多媒体帖子'; content = '帖子正文 😀'
-        attachments = @($media[0], $media[2], $media[3])
+        attachments = @(@{ upload_id = [int]$forumUploadA.upload_id }, $media[2])
     }
     $comment = Invoke-Api POST "/api/user/forum-posts/$($post.post_id)/comments" $headersB @{
-        content = '带视频的评论'; attachments = @($media[4])
+        content = '带已验证附件的评论'; attachments = @(@{ upload_id = [int]$forumUploadB.upload_id })
     }
     Invoke-Api POST "/api/user/forum-posts/$($post.post_id)/favorite" $headersB @{} | Out-Null
     $forumByPlate = Invoke-Api GET "/api/user/forum-posts?plate_id=$($plate.plate_id)&limit=100" $headersB
     Assert-True (@($forumByPlate.items | Where-Object { [int]$_.id -eq [int]$post.post_id }).Count -eq 1) 'plate filter returns its post'
     $postDetail = Invoke-Api GET "/api/user/forum-posts/$($post.post_id)" $headersB
     Assert-True ([int]$postDetail.post.user_id -eq $userA) 'post detail links author user id'
-    Assert-True ([int]$postDetail.post.attachment_count -eq 3) 'post detail exposes visual media'
+    Assert-True ([int]$postDetail.post.attachment_count -eq 2) 'post detail exposes only ID-bound public media'
     $commentItem = @($postDetail.post.comments | Where-Object { [int]$_.id -eq [int]$comment.comment_id })[0]
-    Assert-True ([int]$commentItem.attachment_count -eq 1) 'forum comment exposes video media'
+    Assert-True ([int]$commentItem.attachment_count -eq 1) 'forum comment exposes verified upload media'
 
     $category = Invoke-Api POST '/api/user/poll-categories' $headersA @{ name = '产品偏好'; color = '#1677ff' }
     $poll = Invoke-Api POST '/api/user/polls' $headersA @{
@@ -155,12 +210,17 @@ try {
     } | Out-Null
 
     $resourceCategory = Invoke-Api POST "/api/admin/apps/$appId/resource-categories" $adminHeaders @{ name = '媒体资源' }
+    $resourceUpload = Invoke-Upload $headersA $fixturePath 'resource_source'
     $resource = Invoke-Api POST '/api/user/resources' $headersA @{
         category_id = [int]$resourceCategory.category_id; title = '图文资源'; description = '资源详情'
-        download_url = 'https://example.com/media/resource.zip'; attachments = @($media[0], $media[5])
+        resource_type = 'source_market'; source_upload_id = [int]$resourceUpload.upload_id
+        attachments = @(@{ upload_id = [int]$forumUploadA.upload_id }, $media[2])
     }
+    Invoke-Api PUT "/api/admin/apps/$appId/resources/$($resource.resource_id)/audit" $adminHeaders @{
+        audit_status = 'approved'; override_risk = $true
+    } | Out-Null
     $resourceDetail = Invoke-Api GET "/api/user/resources/$($resource.resource_id)" $headersB
-    Assert-True ([int]$resourceDetail.resource.attachment_count -eq 2) 'resource detail exposes media'
+    Assert-True ([int]$resourceDetail.resource.attachment_count -eq 2) 'resource detail exposes only ID-bound media'
 
     Invoke-Api POST "/api/user/messages/$($private.message_id)/recall" $headersA @{} | Out-Null
     $afterRecall = Invoke-Api GET "/api/user/conversations/$($private.conversation_id)/messages?limit=100" $headersB
@@ -188,6 +248,7 @@ try {
     Write-Host "Multimedia/visual smoke passed: $script:Checks checks" -ForegroundColor Green
 }
 finally {
+    Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
     if ($appId -gt 0) {
         try { Invoke-Api DELETE "/api/admin/apps/$appId" $adminHeaders @{ confirm = 'DELETE' } | Out-Null }
         catch { Write-Warning "Cleanup failed for app $appId`: $($_.Exception.Message)" }

@@ -331,6 +331,7 @@ final class ResourceController
             ? false
             : Validator::boolean($request->input('override_risk'), 'override_risk');
         $readyUploadId = null;
+        $attachmentTrust = null;
         if ($status === 'approved') {
             $ready = Database::one(
                 'SELECT * FROM resources WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL',
@@ -339,9 +340,12 @@ final class ResourceController
             if ($ready === null) throw new HttpException('资源不存在', 404, 404);
             CatalogDownloadService::assertReady('resource', $ready);
             $readyUploadId = (int) ($ready['source_upload_id'] ?? 0);
+            $attachmentTrust = MessageMediaService::prevalidateStoredPublicAttachmentTrust(
+                'resource', $id, (int) $admin['id'], $appId
+            );
         }
         $result = SubmissionInspectionService::catalogWriteTransaction($appId, static function () use (
-            $request, $admin, $appId, $id, $status, $reason, $overrideRisk, $readyUploadId
+            $request, $admin, $appId, $id, $status, $reason, $overrideRisk, $readyUploadId, $attachmentTrust
         ): array {
             $row = Database::one(
                 'SELECT * FROM resources
@@ -349,6 +353,22 @@ final class ResourceController
                 [$id, (int) $admin['id'], $appId]
             );
             if ($row === null) throw new HttpException('资源不存在', 404, 404);
+            $storedCoverUrl = (string) ($row['cover_url'] ?? '');
+            $canonicalCoverChanged = false;
+            if ($status === 'approved') {
+                if (trim((string) ($row['cover_url'] ?? '')) !== '' && (int) ($row['cover_upload_id'] ?? 0) <= 0) {
+                    throw new HttpException('资源封面仍是未验证外链，请重新上传封面后再审核', 0, 422);
+                }
+                MessageMediaService::assertStoredPublicAttachmentTrust(
+                    'resource', $id, (int) $admin['id'], $appId, $attachmentTrust
+                );
+            }
+            $row = SubmissionInspectionService::canonicalizeCatalogPresentation($row, $status === 'approved');
+            $canonicalCoverChanged = $status === 'approved'
+                && !hash_equals($storedCoverUrl, (string) ($row['cover_url'] ?? ''));
+            $coverUrlToPersist = $status === 'approved'
+                ? (string) ($row['cover_url'] ?? '')
+                : $storedCoverUrl;
             $reviewable = MessageMediaService::hydrate([$row], 'resource', $appId)[0];
             self::assertExpectedSnapshot($request, $reviewable);
             if ($status === 'approved' && (int) ($row['source_upload_id'] ?? 0) !== $readyUploadId) {
@@ -358,16 +378,18 @@ final class ResourceController
                 throw new HttpException('该文件被标记为高风险，需确认“覆盖风险”后才能通过审核', 0, 422);
             }
             $sameDecision = (string) $row['audit_status'] === $status
-                && (string) ($row['audit_reason'] ?? '') === $reason;
+                && (string) ($row['audit_reason'] ?? '') === $reason
+                && !$canonicalCoverChanged;
             if ($sameDecision) return ['before' => $row, 'after' => $row, 'changed' => false];
 
             $publicStatus = $status === 'approved' ? 1 : 0;
             Database::execute(
                 'UPDATE resources
-                 SET audit_status = ?, audit_reason = ?, audited_by = ?, audited_at = NOW(),
+                 SET cover_url = ?, audit_status = ?, audit_reason = ?, audited_by = ?, audited_at = NOW(),
                      status = ?, updated_at = NOW()
                  WHERE id = ? AND admin_id = ? AND app_id = ?',
-                [$status, $reason, (int) $admin['id'], $publicStatus, $id, (int) $admin['id'], $appId]
+                [$coverUrlToPersist, $status, $reason, (int) $admin['id'], $publicStatus,
+                 $id, (int) $admin['id'], $appId]
             );
             $updated = Database::one(
                 'SELECT * FROM resources WHERE id = ? AND admin_id = ? AND app_id = ?',
@@ -470,15 +492,17 @@ final class ResourceController
                 $resourceType
             );
         } else {
+            $canonicalPresentation = SubmissionInspectionService::canonicalizeCatalogPresentation($row, false);
             $inspection = [
                 'source_url' => (string) ($row['download_url'] ?? ''),
-                'cover_url' => (string) ($row['cover_url'] ?? ''),
+                'cover_url' => (string) ($canonicalPresentation['cover_url'] ?? ''),
                 'size_bytes' => (int) ($row['size_bytes'] ?? 0),
                 'file_sha256' => (string) ($row['file_sha256'] ?? ''),
                 'risk_level' => (string) ($row['risk_level'] ?? 'review'),
                 'risk_reason' => (string) ($row['risk_reason'] ?? ''),
                 'source_upload_id' => empty($row['source_upload_id']) ? null : (int) $row['source_upload_id'],
                 'cover_upload_id' => empty($row['cover_upload_id']) ? null : (int) $row['cover_upload_id'],
+                'cover_sha256' => (string) ($canonicalPresentation['_catalog_media_sha256'] ?? ''),
                 'metadata_json' => (string) ($row['metadata_json'] ?? '{}'),
                 'force_audit' => (string) ($row['risk_level'] ?? 'review') !== 'low',
             ];
@@ -803,11 +827,8 @@ final class ResourceController
             [$id, (int) $admin['id'], $appId]
         );
         if ($item === null) throw new HttpException('商店应用不存在', 404, 404);
-        $item['images'] = Database::all(
-            'SELECT image_url, sort_order FROM store_app_images WHERE store_app_id = ? ORDER BY sort_order, id',
-            [$id]
-        );
         $item = MessageMediaService::hydrate([$item], 'store_app', $appId)[0];
+        $item['images'] = MessageMediaService::publicImageList((array) ($item['attachments'] ?? []));
         $downloadUrl = CatalogDownloadService::adminUrl('store_app', $item);
         $presented = self::presentStoreApp($item, $appId);
         if ($downloadUrl !== '') $presented['apk_url'] = $downloadUrl;
@@ -851,22 +872,40 @@ final class ResourceController
         ) !== null) {
             throw new HttpException('该包名和版本号已经投稿，请勿重复上传', 0, 409);
         }
+        if (array_key_exists('image_urls', $data)) {
+            throw new HttpException('商店应用图片不能直接提交外链，请先上传并提交 upload_id', 0, 422);
+        }
         $images = $data['images'] ?? [];
-        if (is_string($images)) $images = json_decode($images, true) ?: [];
-        $imageUrls = [];
-        foreach ((array) $images as $image) {
-            $url = is_array($image)
-                ? (string) ($image['url'] ?? $image['image_url'] ?? '')
-                : (string) $image;
-            if (trim($url) !== '') {
-                $imageUrls[] = mb_substr(trim($url), 0, 1000);
+        if (is_string($images)) {
+            try {
+                $images = json_decode($images, true, 32, JSON_THROW_ON_ERROR);
+            } catch (\Throwable) {
+                throw new HttpException('images 必须是已验证上传 ID 数组', 0, 422);
             }
         }
-        if (!isset($data['attachments']) && $imageUrls !== []) {
-            $data['attachments'] = array_map(
-                static fn(string $url): array => ['media_type' => 'image', 'url' => $url],
-                $imageUrls
-            );
+        if (!is_array($images) || count($images) > 20) {
+            throw new HttpException('images 必须是最多 20 项的已验证上传 ID 数组', 0, 422);
+        }
+        if ($images !== [] && isset($data['attachments']) && (array) $data['attachments'] !== []) {
+            throw new HttpException('images 与 attachments 不能同时提交', 0, 422);
+        }
+        $imageAttachments = [];
+        foreach ($images as $image) {
+            if (!is_array($image)) {
+                throw new HttpException('商店应用图片不能直接提交外链，请先上传并提交 upload_id', 0, 422);
+            }
+            $uploadId = max(0, (int) ($image['upload_id'] ?? 0));
+            if ($uploadId <= 0 || max(0, (int) ($image['sticker_id'] ?? 0)) > 0) {
+                throw new HttpException('每张商店应用图片必须引用一个 upload_id，管理员不能使用用户私有表情', 0, 422);
+            }
+            $imageAttachments[] = [
+                'media_type' => 'image',
+                'upload_id' => $uploadId,
+                'sticker_id' => null,
+            ];
+        }
+        if ($imageAttachments !== []) {
+            $data['attachments'] = $imageAttachments;
         }
         $payload = null;
         if (self::hasMeaningfulInput($data, ['attachments', 'description'])) {
@@ -889,7 +928,6 @@ final class ResourceController
             $inspection,
             $packageName,
             $versionCode,
-            $imageUrls,
             $payload,
             $auditStatus,
             $auditReason,
@@ -945,13 +983,10 @@ final class ResourceController
                     $publicStatus,
                 ]
             );
-            foreach ($imageUrls as $index => $url) {
-                Database::execute(
-                    'INSERT INTO store_app_images (admin_id, app_id, store_app_id, image_url, sort_order, created_at)
-                     VALUES (?, ?, ?, ?, ?, NOW())',
-                    [(int) $admin['id'], $appId, $id, $url, $index]
-                );
-            }
+            Database::execute(
+                'DELETE FROM store_app_images WHERE admin_id = ? AND app_id = ? AND store_app_id = ?',
+                [(int) $admin['id'], $appId, $id]
+            );
             if ($payload !== null) MessageMediaService::save('store_app', $id, $payload);
             return $id;
         });
@@ -997,6 +1032,15 @@ final class ResourceController
         $data = $request->all();
         if (!array_key_exists('category_id', $data)) $data['category_id'] = (int) ($row['category_id'] ?? 0);
         $category = SubmissionInspectionService::resolveStoreCategory((int) $admin['id'], $appId, $data);
+        if (array_key_exists('images', $data) || array_key_exists('image_urls', $data)) {
+            throw new HttpException('更新商店应用截图请使用 attachments 并提交 upload_id', 0, 422);
+        }
+        $payload = null;
+        if ($request->input('attachments') !== null) {
+            $media = $data;
+            $media['content'] = (string) $request->input('description', $row['description']);
+            $payload = MessageMediaService::adminPayload($admin, $appId, $media);
+        }
 
         $packageName = trim((string) $request->input('package_name', $row['package_name']));
         if (!preg_match('/^[A-Za-z0-9_][A-Za-z0-9_.-]{1,188}$/', $packageName)) {
@@ -1055,15 +1099,17 @@ final class ResourceController
             }
             $inspection = SubmissionInspectionService::inspectAdminUpload($admin, $appId, $inspectionData, 'app_store');
         } else {
+            $canonicalPresentation = SubmissionInspectionService::canonicalizeCatalogPresentation($row, false);
             $inspection = [
                 'source_url' => (string) $row['apk_url'],
-                'cover_url' => (string) $row['icon_url'],
+                'cover_url' => (string) ($canonicalPresentation['icon_url'] ?? ''),
                 'size_bytes' => (int) $row['size_bytes'],
                 'file_sha256' => (string) $row['file_sha256'],
                 'risk_level' => (string) $row['risk_level'],
                 'risk_reason' => (string) $row['risk_reason'],
                 'source_upload_id' => $row['source_upload_id'],
                 'cover_upload_id' => $row['icon_upload_id'],
+                'cover_sha256' => (string) ($canonicalPresentation['_catalog_media_sha256'] ?? ''),
                 'metadata_json' => (string) ($row['metadata_json'] ?? '{}'),
             ];
         }
@@ -1086,6 +1132,7 @@ final class ResourceController
             $versionCode,
             $versionName,
             $inspection,
+            $payload,
             $auditStatus,
             $auditReason,
             $sourceChanged,
@@ -1139,7 +1186,10 @@ final class ResourceController
                     $versionName,
                     $versionCode,
                     $inspection['cover_url'], $inspection['source_url'], (int) $inspection['size_bytes'],
-                    (string) $request->input('description', $row['description']), $inspection['metadata_json'],
+                    $payload === null
+                        ? (string) $request->input('description', $row['description'])
+                        : (string) $payload['content'],
+                    $inspection['metadata_json'],
                     $inspection['file_sha256'], $inspection['risk_level'], $inspection['risk_reason'],
                     $inspection['source_upload_id'], $inspection['cover_upload_id'],
                     $auditStatus, $auditReason,
@@ -1147,6 +1197,11 @@ final class ResourceController
                     $priceBalance, $publicStatus, $id, (int) $admin['id'], $appId,
                 ]
             );
+            Database::execute(
+                'DELETE FROM store_app_images WHERE admin_id = ? AND app_id = ? AND store_app_id = ?',
+                [(int) $admin['id'], $appId, $id]
+            );
+            if ($payload !== null) MessageMediaService::replace('store_app', $id, $payload);
             return Database::one(
                 'SELECT * FROM store_apps WHERE id = ? AND admin_id = ? AND app_id = ?',
                 [$id, (int) $admin['id'], $appId]
@@ -1200,6 +1255,7 @@ final class ResourceController
             ? false
             : Validator::boolean($request->input('override_risk'), 'override_risk');
         $readyUploadId = null;
+        $attachmentTrust = null;
         if ($status === 'approved') {
             $ready = Database::one(
                 'SELECT * FROM store_apps WHERE id = ? AND admin_id = ? AND app_id = ? AND deleted_at IS NULL',
@@ -1208,9 +1264,12 @@ final class ResourceController
             if ($ready === null) throw new HttpException('商店应用不存在', 404, 404);
             CatalogDownloadService::assertReady('store_app', $ready);
             $readyUploadId = (int) ($ready['source_upload_id'] ?? 0);
+            $attachmentTrust = MessageMediaService::prevalidateStoredPublicAttachmentTrust(
+                'store_app', $id, (int) $admin['id'], $appId
+            );
         }
         $result = SubmissionInspectionService::catalogWriteTransaction($appId, static function () use (
-            $request, $admin, $appId, $id, $status, $reason, $overrideRisk, $readyUploadId
+            $request, $admin, $appId, $id, $status, $reason, $overrideRisk, $readyUploadId, $attachmentTrust
         ): array {
             $row = Database::one(
                 'SELECT * FROM store_apps
@@ -1218,6 +1277,22 @@ final class ResourceController
                 [$id, (int) $admin['id'], $appId]
             );
             if ($row === null) throw new HttpException('商店应用不存在', 404, 404);
+            $storedIconUrl = (string) ($row['icon_url'] ?? '');
+            $canonicalIconChanged = false;
+            if ($status === 'approved') {
+                if (trim((string) ($row['icon_url'] ?? '')) !== '' && (int) ($row['icon_upload_id'] ?? 0) <= 0) {
+                    throw new HttpException('应用图标仍是未验证外链，请重新上传图标后再审核', 0, 422);
+                }
+                MessageMediaService::assertStoredPublicAttachmentTrust(
+                    'store_app', $id, (int) $admin['id'], $appId, $attachmentTrust
+                );
+            }
+            $row = SubmissionInspectionService::canonicalizeCatalogPresentation($row, $status === 'approved');
+            $canonicalIconChanged = $status === 'approved'
+                && !hash_equals($storedIconUrl, (string) ($row['icon_url'] ?? ''));
+            $iconUrlToPersist = $status === 'approved'
+                ? (string) ($row['icon_url'] ?? '')
+                : $storedIconUrl;
             $reviewable = MessageMediaService::hydrate([$row], 'store_app', $appId)[0];
             self::assertExpectedSnapshot($request, $reviewable);
             if ($status === 'approved' && (int) ($row['source_upload_id'] ?? 0) !== $readyUploadId) {
@@ -1227,16 +1302,18 @@ final class ResourceController
                 throw new HttpException('安装包被标记为高风险，需确认“覆盖风险”后才能通过审核', 0, 422);
             }
             $sameDecision = (string) $row['audit_status'] === $status
-                && (string) ($row['audit_reason'] ?? '') === $reason;
+                && (string) ($row['audit_reason'] ?? '') === $reason
+                && !$canonicalIconChanged;
             if ($sameDecision) return ['before' => $row, 'after' => $row, 'changed' => false];
 
             $publicStatus = $status === 'approved' ? 1 : 0;
             Database::execute(
                 'UPDATE store_apps
-                 SET audit_status = ?, audit_reason = ?, audited_by = ?, audited_at = NOW(),
+                 SET icon_url = ?, audit_status = ?, audit_reason = ?, audited_by = ?, audited_at = NOW(),
                      status = ?, updated_at = NOW()
                  WHERE id = ? AND admin_id = ? AND app_id = ?',
-                [$status, $reason, (int) $admin['id'], $publicStatus, $id, (int) $admin['id'], $appId]
+                [$iconUrlToPersist, $status, $reason, (int) $admin['id'], $publicStatus,
+                 $id, (int) $admin['id'], $appId]
             );
             $updated = Database::one(
                 'SELECT * FROM store_apps WHERE id = ? AND admin_id = ? AND app_id = ?',

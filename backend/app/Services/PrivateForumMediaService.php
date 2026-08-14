@@ -78,7 +78,7 @@ final class PrivateForumMediaService
 
         $safeImages = [
             'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-            'image/bmp', 'image/avif', 'image/heic', 'image/heif',
+            'image/bmp', 'image/avif',
         ];
         $sameVerifiedMime = $declaredMime !== '' && $declaredMime === $actualMime;
         $safeInline = $sameVerifiedMime && (

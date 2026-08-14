@@ -263,6 +263,10 @@ class InternalDownloadServerTest(unittest.TestCase):
             MODULE.publication_label("Debug", "pending"), "Debug 非生产测试版"
         )
         self.assertEqual(
+            MODULE.publication_label("DebugCompatibility", "internal"),
+            "旧 Debug 安全覆盖版（仅内部）",
+        )
+        self.assertEqual(
             MODULE.publication_label("Stable", "pending"),
             "Release candidate（待完成发布）",
         )
@@ -290,6 +294,73 @@ class InternalDownloadServerTest(unittest.TestCase):
         catalog = MODULE.load_catalog(self.fixture.manifest_path)
         self.assertEqual((catalog.channel, catalog.finalization_status), ("Debug", "finalized"))
         self.assertEqual(catalog.status_label, "Debug 非生产测试版")
+
+    def test_debug_compatibility_manifest_is_private_https_and_above_old_code(self) -> None:
+        debug = copy.deepcopy(self.fixture.manifest)
+        debug.update(
+            {
+                "schemaVersion": 2,
+                "channel": "DebugCompatibility",
+                "finalizationStatus": "internal",
+                "distribution": "internal-only",
+                "buildType": "legacyCompat",
+                "debuggable": False,
+                "testOnly": False,
+                "apiBaseUrl": "https://appht.jjmxg.xyz/",
+                "cleartextTrafficPermitted": False,
+                "trustAnchors": ["system"],
+                "followRedirects": False,
+                "apkSignatureSchemeV2": True,
+                "signerCount": 1,
+                "dexTransportVerified": True,
+                "legacyUpgradeMaximumVersionCode": 60,
+                "legacyPackageSignerSha256": "AB" * 32,
+                "connectionIdentity": {
+                    "appKeySha256": "1" * 64,
+                    "platformKeySha256": "2" * 64,
+                    "authorizedPlatformKeySha256": "3" * 64,
+                },
+            }
+        )
+        for entry in debug["releases"]:
+            role = entry["id"]
+            old_path = self.root / entry["fileName"]
+            entry["fileName"] = (
+                f"yiyunying-{MODULE.ROLE_FILE_STEMS[role]}-v1.0.0-debug.apk"
+            )
+            entry["versionName"] = (
+                f"1.0.0-{MODULE.ROLE_VERSION_SUFFIXES[role]}-debug"
+            )
+            entry["packageName"] = MODULE.STABLE_PACKAGE_NAMES[role] + ".debug"
+            entry["signerSha256"] = "AB" * 32
+            entry["networkSecurityResource"] = "res/8G.xml"
+            (self.root / entry["fileName"]).write_bytes(old_path.read_bytes())
+        self.fixture.write_manifest(debug)
+        catalog = MODULE.load_catalog(self.fixture.manifest_path)
+        self.assertEqual(
+            (catalog.channel, catalog.finalization_status),
+            ("DebugCompatibility", "internal"),
+        )
+        self.assertEqual(catalog.status_label, "旧 Debug 安全覆盖版（仅内部）")
+
+        debug["apiBaseUrl"] = "http://appht.jjmxg.xyz/"
+        self.fixture.write_manifest(debug)
+        with self.assertRaisesRegex(RuntimeError, "private HTTPS contract"):
+            MODULE.load_catalog(self.fixture.manifest_path)
+
+        debug["apiBaseUrl"] = "https://appht.jjmxg.xyz/"
+        for entry in debug["releases"]:
+            entry["networkSecurityResource"] = "res/../unsafe.xml"
+        self.fixture.write_manifest(debug)
+        with self.assertRaisesRegex(RuntimeError, "network security resource"):
+            MODULE.load_catalog(self.fixture.manifest_path)
+
+        for entry in debug["releases"]:
+            entry["networkSecurityResource"] = "res/8G.xml"
+        debug["connectionIdentity"]["appKey"] = "must-never-be-written"
+        self.fixture.write_manifest(debug)
+        with self.assertRaisesRegex(RuntimeError, "exactly three"):
+            MODULE.load_catalog(self.fixture.manifest_path)
 
 
 if __name__ == "__main__":

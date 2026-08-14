@@ -40,6 +40,7 @@ type RawRelease = {
 };
 
 type RawManifest = {
+  schemaVersion?: unknown;
   channel?: unknown;
   finalizationStatus?: unknown;
   versionName?: unknown;
@@ -80,25 +81,14 @@ type ExpectedArtifact = Readonly<{
   sha256: string;
 }>;
 
-const expectedArtifacts: Readonly<Record<"debug" | "stable", Readonly<Record<InternalRole, ExpectedArtifact>>>> = Object.freeze({
-  debug: Object.freeze({
-    user: Object.freeze({ sizeBytes: 96707619, sha256: "4A16C9801726B68DA97F78AB1A740F58CFE8890018756D6DBB775D40B89A2BC7" }),
-    admin: Object.freeze({ sizeBytes: 32306003, sha256: "474DAAE37974895988D3AED6D70C127D0438B6676C6D71C78A7799A1626CEA2A" }),
-    authorized: Object.freeze({ sizeBytes: 32306007, sha256: "805FE14B89B808FD95EF834C0546337430147FBC6A6FFBF7B2BD47B8D77587F4" }),
-    owner: Object.freeze({ sizeBytes: 32306003, sha256: "73489C179E9176E31105ED5003A8915011822E8482966B73EE374D59A1DB7776" }),
-  }),
-  stable: Object.freeze({
-    user: Object.freeze({ sizeBytes: 85927093, sha256: "482A296DDF668C87A2CD64E331A79C22C1E5D173BD4DA7E39FE4E0A78E603E54" }),
-    admin: Object.freeze({ sizeBytes: 22632645, sha256: "1848E5F0EAFF980030509838D1B72463CE3D64E22FB502219087C2D4CA7B8857" }),
-    authorized: Object.freeze({ sizeBytes: 22632657, sha256: "A5C575B57D71E3EEDC006CCCADC9941979399CBD8EE41FBE445EABE24CC7F673" }),
-    owner: Object.freeze({ sizeBytes: 22632645, sha256: "A4EC2CE9A9FDC8A1B4C21117D51B8EE895E071BB7F1FEC5EA596395DE9B82512" }),
-  }),
+const expectedDebugArtifacts: Readonly<Record<InternalRole, ExpectedArtifact>> = Object.freeze({
+  user: Object.freeze({ sizeBytes: 96707619, sha256: "4A16C9801726B68DA97F78AB1A740F58CFE8890018756D6DBB775D40B89A2BC7" }),
+  admin: Object.freeze({ sizeBytes: 32306003, sha256: "474DAAE37974895988D3AED6D70C127D0438B6676C6D71C78A7799A1626CEA2A" }),
+  authorized: Object.freeze({ sizeBytes: 32306007, sha256: "805FE14B89B808FD95EF834C0546337430147FBC6A6FFBF7B2BD47B8D77587F4" }),
+  owner: Object.freeze({ sizeBytes: 32306003, sha256: "73489C179E9176E31105ED5003A8915011822E8482966B73EE374D59A1DB7776" }),
 });
 
-const expectedReleaseIdentity = Object.freeze({
-  debug: Object.freeze({ versionName: "2.7.15", versionCode: 60 }),
-  stable: Object.freeze({ versionName: "1.0.0", versionCode: 63 }),
-});
+const expectedDebugReleaseIdentity = Object.freeze({ versionName: "2.7.15", versionCode: 60 });
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() !== value || value.length === 0) {
@@ -144,13 +134,12 @@ function sanitizeRelease(
   const versionCode = requirePositiveInteger(raw.versionCode, `${role}.versionCode`);
   const sizeBytes = requirePositiveInteger(raw.sizeBytes, `${role}.sizeBytes`);
   const size = requireString(raw.size, `${role}.size`);
-  const sha256 = requireString(raw.sha256, `${role}.sha256`).toUpperCase();
+  const sha256 = requireString(raw.sha256, `${role}.sha256`);
   const debugSuffix = debug ? "-debug" : "";
   const expectedName = `${releaseVersion}-${expectedVersionSuffix[role]}${debugSuffix}`;
   const expectedFile = `yiyunying-${expectedFileStem[role]}-v${releaseVersion}${debugSuffix}.apk`;
   const expectedPackage = expectedStablePackageName[role] + (debug ? ".debug" : "");
-  const artifactChannel = debug ? "debug" : "stable";
-  const expectedArtifact = expectedArtifacts[artifactChannel][role];
+  const expectedArtifact = debug ? expectedDebugArtifacts[role] : undefined;
   const expectedSize = `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
 
   if (
@@ -158,8 +147,10 @@ function sanitizeRelease(
     versionCode !== releaseCode ||
     fileName !== expectedFile ||
     packageName !== expectedPackage ||
-    sizeBytes !== expectedArtifact.sizeBytes ||
-    sha256 !== expectedArtifact.sha256
+    (expectedArtifact !== undefined && (
+      sizeBytes !== expectedArtifact.sizeBytes ||
+      sha256 !== expectedArtifact.sha256
+    ))
   ) {
     throw new Error(`内部下载白名单身份不一致：${role}`);
   }
@@ -191,15 +182,17 @@ function sanitizeManifest(
   status: InternalPackage["status"],
 ): readonly InternalPackage[] {
   if (manifest.channel !== expectedChannel || manifest.finalizationStatus !== expectedFinalization) {
-    return Object.freeze([]);
+    throw new Error("内部下载白名单发布状态不一致");
   }
   const version = requireString(manifest.versionName, "versionName");
   const code = requirePositiveInteger(manifest.versionCode, "versionCode");
-  const releaseIdentity = expectedReleaseIdentity[expectedChannel === "Debug" ? "debug" : "stable"];
   if (!/^\d+\.\d+\.\d+$/.test(version) || !Array.isArray(manifest.releases)) {
     throw new Error("内部下载白名单发布清单无效");
   }
-  if (version !== releaseIdentity.versionName || code !== releaseIdentity.versionCode) {
+  if (
+    expectedChannel === "Debug" &&
+    (version !== expectedDebugReleaseIdentity.versionName || code !== expectedDebugReleaseIdentity.versionCode)
+  ) {
     throw new Error("内部下载白名单发布身份不一致");
   }
   if (manifest.releases.length !== roleOrder.length) {
@@ -218,6 +211,31 @@ function sanitizeManifest(
     if (!item) throw new Error(`内部下载白名单缺少角色：${role}`);
     return item;
   }));
+}
+
+type StableProjection = Readonly<{
+  finalizationStatus: "pending" | "finalized";
+  packages: readonly InternalPackage[];
+}>;
+
+// The tracked metadata is server-only input. This function reads only the APK
+// delivery allowlist, validates it, and creates a new safe browser model. It
+// deliberately never spreads or returns the raw manifest or raw release rows.
+function projectCurrentStableManifest(manifest: RawManifest): StableProjection {
+  if (manifest.schemaVersion !== 4 || manifest.channel !== "Stable") {
+    throw new Error("内部下载白名单 Stable 清单无效");
+  }
+  if (manifest.finalizationStatus !== "pending" && manifest.finalizationStatus !== "finalized") {
+    throw new Error("内部下载白名单 Stable 状态无效");
+  }
+  const finalizationStatus = manifest.finalizationStatus;
+  const packages = sanitizeManifest(
+    manifest,
+    "Stable",
+    finalizationStatus,
+    finalizationStatus === "pending" ? "Release 候选" : "正式发布",
+  );
+  return Object.freeze({ finalizationStatus, packages });
 }
 
 // Frozen build-time allowlist projected from releases/2.7.15/release-manifest.json.
@@ -239,8 +257,9 @@ const debugManifest: RawManifest = Object.freeze({
 export function buildInternalDownloadCatalog(): readonly InternalReleaseGroup[] {
   const current = currentReleaseManifest as RawManifest;
   const debugPackages = sanitizeManifest(debugManifest, "Debug", "finalized", "Debug 测试");
-  const candidatePackages = sanitizeManifest(current, "Stable", "pending", "Release 候选");
-  const finalPackages = sanitizeManifest(current, "Stable", "finalized", "正式发布");
+  const stable = projectCurrentStableManifest(current);
+  const candidatePackages = stable.finalizationStatus === "pending" ? stable.packages : Object.freeze([]);
+  const finalPackages = stable.finalizationStatus === "finalized" ? stable.packages : Object.freeze([]);
 
   return Object.freeze([
     Object.freeze({

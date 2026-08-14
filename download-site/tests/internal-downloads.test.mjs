@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const routeRoot = new URL("../app/internal-downloads/", import.meta.url);
@@ -11,6 +11,27 @@ const signedLinks = await readFile(new URL("signed-links.server.ts", routeRoot),
 const downloadRoute = await readFile(new URL("download/route.ts", routeRoot), "utf8");
 const chatGPTAuth = await readFile(new URL("../chatgpt-auth.ts", routeRoot), "utf8");
 const styles = await readFile(new URL("styles.module.css", routeRoot), "utf8");
+const currentReleaseMetadata = JSON.parse(
+  await readFile(new URL("../../release-metadata.json", routeRoot), "utf8"),
+);
+const currentStableReleases = currentReleaseMetadata.releases;
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readBrowserBuildText(directory) {
+  const contents = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
+    if (entry.isDirectory()) {
+      contents.push(await readBrowserBuildText(child));
+    } else if (/\.(?:css|html|js|json|map|txt|webmanifest)$/i.test(entry.name)) {
+      contents.push(await readFile(child, "utf8"));
+    }
+  }
+  return contents.flat().join("\n");
+}
 
 test("internal route enforces authenticated maintainer allowlist and excludes indexing", () => {
   assert.match(page, /INTERNAL_DOWNLOAD_NOTICE/);
@@ -33,8 +54,9 @@ test("catalog separates Debug, pending Stable candidate and finalized Stable", (
     'title: "Debug 测试包"',
     'title: "Stable Release 候选"',
     'title: "最终正式版"',
-    'sanitizeManifest(current, "Stable", "pending", "Release 候选")',
-    'sanitizeManifest(current, "Stable", "finalized", "正式发布")',
+    "projectCurrentStableManifest(current)",
+    'stable.finalizationStatus === "pending"',
+    'stable.finalizationStatus === "finalized"',
   ]) assert.match(catalog, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(page, /group\.packages\.length > 0/);
   assert.match(page, /group\.emptyMessage/);
@@ -46,8 +68,11 @@ test("only four APK roles and safe delivery fields enter the browser model", () 
   }
   assert.match(catalog, /manifest\.releases\.length !== roleOrder\.length/);
   assert.match(catalog, /expectedStablePackageName/);
-  assert.match(catalog, /expectedReleaseIdentity/);
-  assert.match(catalog, /expectedArtifacts/);
+  assert.match(catalog, /expectedDebugReleaseIdentity/);
+  assert.match(catalog, /expectedDebugArtifacts/);
+  assert.match(catalog, /manifest\.schemaVersion !== 4/);
+  assert.match(catalog, /currentReleaseManifest as RawManifest/);
+  assert.match(catalog, /never spreads or returns the raw manifest or raw release rows/);
   assert.match(catalog, /size !== expectedSize/);
   assert.match(catalog, /\^\[0-9A-F\]\{64\}\$/);
   assert.match(catalog, /assertSafeApkIdentity/);
@@ -55,6 +80,29 @@ test("only four APK roles and safe delivery fields enter the browser model", () 
   assert.doesNotMatch(catalog, /projectAssets|connectionIdentity|appKey|platformKey|authorizedPlatformKey/);
   assert.doesNotMatch(page, /release-metadata|projectAssets|connectionIdentity/);
   assert.doesNotMatch(`${page}\n${catalog}`, /\.zip|\.bundle|source-v|git-history|project-delivery/i);
+
+  for (const release of currentStableReleases) {
+    assert.doesNotMatch(catalog, new RegExp(escapeRegExp(release.sha256), "i"));
+    assert.doesNotMatch(catalog, new RegExp(`\\b${release.sizeBytes}\\b`));
+  }
+});
+
+test("browser build excludes raw Stable metadata and server-only release evidence", async () => {
+  const browserBuild = await readBrowserBuildText(new URL("../dist/client/", import.meta.url));
+  const forbiddenValues = [
+    currentReleaseMetadata.buildSourceCommit,
+    currentReleaseMetadata.releaseEvidenceCommit,
+    currentReleaseMetadata.releaseIdentitySha256,
+    currentReleaseMetadata.pendingManifestSha256,
+    ...Object.values(currentReleaseMetadata.connectionIdentity ?? {}).filter((value) => value !== currentReleaseMetadata.connectionIdentity?.apiBaseUrl),
+    ...(currentReleaseMetadata.projectAssets ?? []).map((asset) => asset.fileName),
+    ...currentStableReleases.flatMap((release) => [release.packageName, release.signerSha256]),
+  ].filter((value) => typeof value === "string" && value.length > 0);
+
+  for (const forbidden of new Set(forbiddenValues)) {
+    assert.doesNotMatch(browserBuild, new RegExp(escapeRegExp(forbidden), "i"));
+  }
+  assert.doesNotMatch(browserBuild, /connectionIdentity|projectAssets|pendingManifestSha256/);
 });
 
 test("all cards expose role, version, status, size, SHA, short download and install instructions", () => {
@@ -165,8 +213,20 @@ test("built route redirects anonymous users, hides denied users and renders only
     assert.doesNotMatch(html, new RegExp(signingSecret, "i"));
     assert.doesNotMatch(html, /source-v|git-history|project-delivery|projectAssets|connectionIdentity/i);
 
+    for (const release of currentStableReleases) {
+      for (const safeValue of [
+        release.fileName,
+        release.versionName,
+        release.size,
+        release.sha256,
+      ]) assert.ok(html.includes(String(safeValue)), `current Stable safe field missing: ${release.id}`);
+      assert.doesNotMatch(html, new RegExp(escapeRegExp(release.packageName), "i"));
+      assert.doesNotMatch(html, new RegExp(escapeRegExp(release.signerSha256), "i"));
+    }
+
     const actionLinks = html.match(/href="\/internal-downloads\/download\?channel=(?:debug|candidate)&amp;role=(?:user|admin|authorized|owner)"/g) ?? [];
-    assert.equal(actionLinks.length, 8, "only Debug and pending Stable four-role actions should render");
+    const expectedActionCount = currentReleaseMetadata.finalizationStatus === "pending" ? 8 : 4;
+    assert.equal(actionLinks.length, expectedActionCount, "only Debug and pending Stable four-role actions should render");
 
     const before = Math.floor(Date.now() / 1000);
     const download = await request(
@@ -187,15 +247,21 @@ test("built route redirects anonymous users, hides denied users and renders only
     assert.equal(location.searchParams.get("sig"), expectedSignature);
     assert.doesNotMatch(location.href, new RegExp(signingSecret, "i"));
 
+    const currentOwner = currentStableReleases.find((release) => release.id === "owner");
+    assert.ok(currentOwner, "current Stable owner release is required");
     const candidate = await request(
       "/internal-downloads/download?channel=candidate&role=owner",
       maintainerHeaders,
     );
-    assert.equal(candidate.status, 302);
-    assert.equal(
-      new URL(candidate.headers.get("location") ?? "").pathname,
-      "/__internal-apks/candidate/1.0.0/yiyunying-platform-owner-v1.0.0.apk",
-    );
+    if (currentReleaseMetadata.finalizationStatus === "pending") {
+      assert.equal(candidate.status, 302);
+      assert.equal(
+        new URL(candidate.headers.get("location") ?? "").pathname,
+        `/__internal-apks/candidate/${currentReleaseMetadata.versionName}/${currentOwner.fileName}`,
+      );
+    } else {
+      assert.equal(candidate.status, 404);
+    }
 
     for (const invalidPath of [
       "/internal-downloads/download?channel=final&role=user",

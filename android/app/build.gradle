@@ -19,7 +19,16 @@ if (!(versionCodeValue ==~ /[1-9]\d*/)) {
 }
 def appVersionCode = versionCodeValue.toInteger()
 
+def strictLegacyCompatIdentity = System.getenv('YIYUNYING_LEGACY_COMPAT_STRICT') == '1'
+def legacyConnectionProperties = ['appKey', 'platformKey', 'authorizedPlatformKey'] as Set
 def configValue = { String propertyName, String environmentName, String fallback ->
+    if (strictLegacyCompatIdentity && legacyConnectionProperties.contains(propertyName)) {
+        def environmentValue = System.getenv(environmentName)
+        if (environmentValue == null) {
+            throw new GradleException("Strict legacy compatibility identity is missing ${environmentName}")
+        }
+        return environmentValue.toString()
+    }
     (project.findProperty(propertyName) ?: System.getenv(environmentName) ?: fallback).toString()
 }
 def asBuildConfigString = { String value ->
@@ -169,6 +178,18 @@ android {
             signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        legacyCompat {
+            // Coverage update for the four historical *.debug package names.
+            // It deliberately inherits Release hardening, never src/debug, while
+            // retaining the legacy Android debug certificate for installability.
+            initWith release
+            debuggable false
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+            buildConfigField 'String', 'DEFAULT_API_BASE_URL', asBuildConfigString('https://appht.jjmxg.xyz/')
+            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'false'
+            signingConfig signingConfigs.debug
+        }
     }
 
     testOptions {
@@ -273,4 +294,3 @@ if (!(rootProject.projectDir.absolutePath ==~ /\p{ASCII}*/)) {
         }
     }
 }
-

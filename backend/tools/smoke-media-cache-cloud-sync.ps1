@@ -35,9 +35,40 @@ function Assert-True([bool]$Condition, [string]$Message) {
     $script:Checks++
 }
 
+function Invoke-Upload {
+    param([hashtable]$Headers, [string]$FilePath, [string]$Scene, [string]$ContentType = 'image/png')
+    Add-Type -AssemblyName System.Net.Http
+    $client = [System.Net.Http.HttpClient]::new()
+    $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+    try {
+        $token = [string]$Headers.Authorization -replace '^Bearer\s+', ''
+        $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $token)
+        if ($Headers.ContainsKey('X-App-Key')) {
+            $client.DefaultRequestHeaders.Add('X-App-Key', [string]$Headers['X-App-Key'])
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $fileContent = New-Object System.Net.Http.ByteArrayContent -ArgumentList @(,$bytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new($ContentType)
+        $multipart.Add($fileContent, 'file', [System.IO.Path]::GetFileName($FilePath))
+        $multipart.Add([System.Net.Http.StringContent]::new($Scene), 'scene')
+        $httpResponse = $client.PostAsync("$BaseUrl/api/user/uploads", $multipart).Result
+        $json = $httpResponse.Content.ReadAsStringAsync().Result | ConvertFrom-Json
+        if (-not $httpResponse.IsSuccessStatusCode -or $json.code -ne 1) {
+            throw "POST /api/user/uploads failed: $($json.msg)"
+        }
+        $script:Checks++
+        return $json.data
+    } finally {
+        $multipart.Dispose()
+        $client.Dispose()
+    }
+}
+
 $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $appId = 0
 $quotaRaised = $false
+$fixtureDir = Join-Path ([System.IO.Path]::GetTempPath()) "yiyunying-cloud-sync-$suffix"
+[System.IO.Directory]::CreateDirectory($fixtureDir) | Out-Null
 $root = Invoke-Api POST '/api/platform/login' @{} @{ account = 'root'; password = '123456'; device = 'cloud-sync-smoke' }
 $rootHeaders = @{ Authorization = "Bearer $($root.access_token)" }
 $admin = Invoke-Api POST '/api/admin/login' @{} @{ account = 'admin'; password = '123456'; device = 'cloud-sync-smoke' }
@@ -115,10 +146,18 @@ try {
     Assert-True (@($history.items | Where-Object { $_.content_filter -eq 'media' }).Count -eq 1) 'category search is stored with readable filter metadata'
 
     $pack = Invoke-Api POST '/api/user/sticker-packs' $headersA @{ name = "Pack $suffix" }
+    $pngBytes = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+    $pngBytesTwo = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAADElEQVQImWNgcPgPAAGDAUC2xoRhAAAAAElFTkSuQmCC')
+    $stickerOnePath = Join-Path $fixtureDir 'sticker-one.png'
+    $stickerTwoPath = Join-Path $fixtureDir 'sticker-two.png'
+    [System.IO.File]::WriteAllBytes($stickerOnePath, $pngBytes)
+    [System.IO.File]::WriteAllBytes($stickerTwoPath, $pngBytesTwo)
+    $stickerUploadOne = Invoke-Upload $headersA $stickerOnePath 'sticker'
+    $stickerUploadTwo = Invoke-Upload $headersA $stickerTwoPath 'sticker'
     $batch = Invoke-Api POST "/api/user/sticker-packs/$($pack.pack_id)/stickers/batch" $headersA @{ items = @(
-        @{ name = 'one'; image_url = 'https://example.com/sticker-one.gif' },
-        @{ name = 'two'; image_url = 'https://example.com/sticker-two.webp' },
-        @{ name = 'duplicate'; image_url = 'https://example.com/sticker-one.gif' }
+        @{ name = 'one'; upload_id = [int]$stickerUploadOne.upload_id },
+        @{ name = 'two'; upload_id = [int]$stickerUploadTwo.upload_id },
+        @{ name = 'duplicate'; upload_id = [int]$stickerUploadOne.upload_id }
     ) }
     Assert-True ([int]$batch.created_count -eq 2 -and [int]$batch.skipped_count -eq 1) 'batch sticker add creates unique items and skips duplicates'
     $packs = Invoke-Api GET '/api/user/sticker-packs' $headersA
@@ -151,6 +190,12 @@ try {
 
     $stickerBackup = Invoke-Api POST '/api/user/cloud-sync/snapshots' $headersA @{ data_type = 'stickers'; title = 'sticker test' }
     Assert-True ([int]$stickerBackup.item_count -eq 1) 'sticker snapshot stores remaining sticker'
+    $packsBeforeRestore = Invoke-Api GET '/api/user/sticker-packs' $headersA
+    $remainingPack = @($packsBeforeRestore.items | Where-Object { [int]$_.id -eq [int]$pack.pack_id })[0]
+    $remainingStickerId = [int]$remainingPack.stickers[0].id
+    Invoke-Api DELETE "/api/user/sticker-packs/$($pack.pack_id)/stickers/batch" $headersA @{ sticker_ids = @($remainingStickerId) } | Out-Null
+    $stickerRestore = Invoke-Api POST "/api/user/cloud-sync/snapshots/$($stickerBackup.snapshot_id)/restore" $headersA @{}
+    Assert-True ([int]$stickerRestore.restored_count -eq 1) 'sticker snapshot restores the live upload binding'
     $favoriteBackup = Invoke-Api POST '/api/user/cloud-sync/snapshots' $headersA @{ data_type = 'favorites'; title = 'favorite test' }
     Assert-True ([int]$favoriteBackup.item_count -ge 1) 'favorite snapshot stores message favorite'
     $snapshots = Invoke-Api GET '/api/user/cloud-sync/snapshots' $headersA
@@ -178,5 +223,8 @@ finally {
     if ($quotaRaised) {
         try { Invoke-Api PUT "/api/platform/admins/$adminId/entitlement" $rootHeaders @{ entitlement_type = 'app_quota'; operation = 'set'; amount = $originalQuota; remark = 'restore quota' } | Out-Null }
         catch { Write-Warning 'Failed to restore quota' }
+    }
+    if ([System.IO.Directory]::Exists($fixtureDir)) {
+        [System.IO.Directory]::Delete($fixtureDir, $true)
     }
 }

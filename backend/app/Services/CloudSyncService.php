@@ -90,7 +90,7 @@ final class CloudSyncService
             $defaultTitle = self::TYPES[$type]['label'] . '备份 ' . date('Y-m-d H:i');
         } elseif ($type === 'stickers') {
             $items = self::stickerItems($user, $maxItems);
-            $payload = ['schema_version' => 1, 'data_type' => 'stickers', 'packs' => $items];
+            $payload = ['schema_version' => 2, 'data_type' => 'stickers', 'packs' => $items];
             $defaultTitle = '表情包备份 ' . date('Y-m-d H:i');
         } else {
             $items = self::favoriteItems($user, $maxItems);
@@ -165,9 +165,17 @@ final class CloudSyncService
         if ($type === 'chat') {
             return $shown + ['restored_count' => 0, 'mode' => '只读拉取'];
         }
-        $restored = Database::transaction(static function () use ($user, $type, $payload): int {
+        if ($type === 'stickers' && (int) ($payload['schema_version'] ?? 0) < 2) {
+            throw new HttpException('旧版 URL 表情备份仅可查看，不能恢复；请从仍有原表情的设备重新备份', 0, 409, [
+                'upgrade_required' => true,
+            ]);
+        }
+        $preparedStickerPacks = $type === 'stickers'
+            ? self::prepareStickerRestore($user, $payload['packs'] ?? [])
+            : [];
+        $restored = Database::transaction(static function () use ($user, $type, $payload, $preparedStickerPacks): int {
             return $type === 'stickers'
-                ? self::restoreStickers($user, $payload['packs'] ?? [])
+                ? self::restoreStickers($user, $preparedStickerPacks)
                 : self::restoreFavorites($user, $payload['items'] ?? []);
         });
         return ['snapshot_id' => $snapshotId, 'data_type' => $type, 'restored_count' => $restored, 'mode' => '合并恢复'];
@@ -188,11 +196,29 @@ final class CloudSyncService
         );
         $remaining = $limit;
         foreach ($packs as &$pack) {
-            $pack['stickers'] = $remaining > 0 ? Database::all(
-                "SELECT name, image_url, thumbnail_url, width, height, sort_order FROM stickers
+            $rows = $remaining > 0 ? Database::all(
+                "SELECT name, upload_id, sort_order FROM stickers
                  WHERE pack_id = ? AND user_id = ? AND status = 1 ORDER BY sort_order DESC, id LIMIT {$remaining}",
                 [(int) $pack['id'], (int) $user['id']]
             ) : [];
+            $uploads = self::prevalidateStickerUploadIds(
+                $user,
+                array_map(static fn(array $row): int => (int) ($row['upload_id'] ?? 0), $rows),
+                false
+            );
+            $pack['cover_url'] = '';
+            $pack['stickers'] = [];
+            foreach ($rows as $row) {
+                $uploadId = max(0, (int) ($row['upload_id'] ?? 0));
+                $validated = $uploads[$uploadId] ?? null;
+                if (!is_array($validated)) continue;
+                $pack['stickers'][] = [
+                    'upload_id' => $uploadId,
+                    'sha256' => (string) $validated['sha256'],
+                    'name' => mb_substr((string) ($row['name'] ?? ''), 0, 100),
+                    'sort_order' => (int) ($row['sort_order'] ?? 0),
+                ];
+            }
             $remaining -= count($pack['stickers']);
         }
         unset($pack);
@@ -222,8 +248,103 @@ final class CloudSyncService
         return $items;
     }
 
+    private static function prepareStickerRestore(array $user, array $packs): array
+    {
+        $uploadIds = [];
+        foreach ($packs as $pack) {
+            if (!is_array($pack)) continue;
+            foreach ((array) ($pack['stickers'] ?? []) as $sticker) {
+                if (!is_array($sticker)) continue;
+                $uploadId = max(0, (int) ($sticker['upload_id'] ?? 0));
+                if ($uploadId <= 0) {
+                    throw new HttpException('表情备份缺少 upload_id，不能安全恢复', 0, 409, ['upgrade_required' => true]);
+                }
+                $uploadIds[$uploadId] = true;
+            }
+        }
+        $validated = self::prevalidateStickerUploadIds($user, array_keys($uploadIds), true);
+        $prepared = [];
+        foreach ($packs as $pack) {
+            if (!is_array($pack)) continue;
+            $copy = [
+                'name' => mb_substr(trim((string) ($pack['name'] ?? '云端表情')), 0, 100),
+                'sort_order' => (int) ($pack['sort_order'] ?? 0),
+                'stickers' => [],
+            ];
+            foreach ((array) ($pack['stickers'] ?? []) as $sticker) {
+                if (!is_array($sticker)) continue;
+                $uploadId = (int) $sticker['upload_id'];
+                $expectedSha = strtolower(trim((string) ($sticker['sha256'] ?? '')));
+                $upload = $validated[$uploadId] ?? null;
+                if (!is_array($upload) || preg_match('/^[a-f0-9]{64}$/D', $expectedSha) !== 1
+                    || !hash_equals((string) $upload['sha256'], $expectedSha)) {
+                    throw new HttpException('表情备份引用的上传内容已变化，不能恢复', 0, 409);
+                }
+                $copy['stickers'][] = [
+                    'upload_id' => $uploadId,
+                    'name' => mb_substr((string) ($sticker['name'] ?? ''), 0, 100),
+                    'sort_order' => (int) ($sticker['sort_order'] ?? 0),
+                    '_upload' => $upload,
+                ];
+            }
+            $prepared[] = $copy;
+        }
+        return $prepared;
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    private static function prevalidateStickerUploadIds(array $user, array $uploadIds, bool $strict): array
+    {
+        $uploadIds = array_values(array_unique(array_filter(array_map('intval', $uploadIds), static fn(int $id): bool => $id > 0)));
+        sort($uploadIds, SORT_NUMERIC);
+        if ($uploadIds === []) return [];
+        $placeholders = implode(',', array_fill(0, count($uploadIds), '?'));
+        $rows = Database::all(
+            "SELECT * FROM uploads WHERE id IN ({$placeholders}) AND admin_id = ? AND app_id = ?
+             AND user_id = ? AND status = 1 ORDER BY id",
+            array_merge($uploadIds, [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']])
+        );
+        $rowsById = [];
+        foreach ($rows as $row) $rowsById[(int) $row['id']] = $row;
+        $validated = [];
+        foreach ($uploadIds as $uploadId) {
+            if (!isset($rowsById[$uploadId])) {
+                if ($strict) throw new HttpException('表情备份引用的上传已失效或不属于当前账号', 0, 409);
+                continue;
+            }
+            try {
+                $validated[$uploadId] = UploadStorageService::validatedPublicImageUpload($rowsById[$uploadId]);
+            } catch (HttpException $failure) {
+                if ($strict) throw $failure;
+            }
+        }
+        return $validated;
+    }
+
     private static function restoreStickers(array $user, array $packs): int
     {
+        $lockedIds = [];
+        $expected = [];
+        foreach ($packs as $pack) foreach ((array) ($pack['stickers'] ?? []) as $sticker) {
+            if (!is_array($sticker) || !is_array($sticker['_upload'] ?? null)) continue;
+            $uploadId = (int) ($sticker['upload_id'] ?? 0);
+            $lockedIds[$uploadId] = true;
+            $expected[$uploadId] = $sticker['_upload'];
+        }
+        $ids = array_keys($lockedIds);
+        sort($ids, SORT_NUMERIC);
+        if ($ids !== []) {
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $locked = Database::all(
+                "SELECT * FROM uploads WHERE id IN ({$placeholders}) AND admin_id = ? AND app_id = ?
+                 AND user_id = ? AND status = 1 ORDER BY id FOR UPDATE",
+                array_merge($ids, [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id']])
+            );
+            if (count($locked) !== count($ids)) throw new HttpException('表情上传在恢复前失效，请重试', 0, 409);
+            foreach ($locked as $row) {
+                UploadStorageService::assertLockedPublicImageUpload($row, $expected[(int) $row['id']]);
+            }
+        }
         $count = 0;
         foreach ($packs as $pack) {
             if (!is_array($pack)) continue;
@@ -233,22 +354,28 @@ final class CloudSyncService
             $packId = $existing === null ? Database::insert(
                 'INSERT INTO sticker_packs (admin_id, app_id, user_id, name, cover_url, sticker_count, sort_order, status, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, 0, ?, 1, NOW(), NOW())',
-                [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], $name, mb_substr((string) ($pack['cover_url'] ?? ''), 0, 1000), (int) ($pack['sort_order'] ?? 0)]
+                [(int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], $name, '', (int) ($pack['sort_order'] ?? 0)]
             ) : (int) $existing['id'];
             foreach (($pack['stickers'] ?? []) as $sticker) {
                 if (!is_array($sticker)) continue;
-                $url = mb_substr(trim((string) ($sticker['image_url'] ?? '')), 0, 1000);
-                if ($url === '') continue;
-                $exists = Database::one('SELECT id FROM stickers WHERE pack_id = ? AND image_url = ?', [$packId, $url]);
+                $uploadId = max(0, (int) ($sticker['upload_id'] ?? 0));
+                $validated = is_array($sticker['_upload'] ?? null) ? $sticker['_upload'] : null;
+                if ($uploadId <= 0 || $validated === null) throw new HttpException('表情恢复缺少已验证上传', 0, 409);
+                $url = (string) $validated['file_url'];
+                $exists = Database::one('SELECT id FROM stickers WHERE pack_id = ? AND upload_id = ?', [$packId, $uploadId]);
                 if ($exists !== null) continue;
                 Database::execute(
                     'INSERT INTO stickers (admin_id, app_id, pack_id, user_id, upload_id, name, image_url, thumbnail_url, width, height, sort_order, status, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
-                    [(int) $user['admin_id'], (int) $user['app_id'], $packId, (int) $user['id'], mb_substr((string) ($sticker['name'] ?? ''), 0, 100), $url, mb_substr((string) ($sticker['thumbnail_url'] ?? ''), 0, 1000), max(0, (int) ($sticker['width'] ?? 0)), max(0, (int) ($sticker['height'] ?? 0)), (int) ($sticker['sort_order'] ?? 0)]
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())',
+                    [(int) $user['admin_id'], (int) $user['app_id'], $packId, (int) $user['id'], $uploadId,
+                     mb_substr((string) ($sticker['name'] ?? ''), 0, 100), $url,
+                     (string) $validated['thumbnail_url'], (int) $validated['width'], (int) $validated['height'],
+                     (int) ($sticker['sort_order'] ?? 0)]
                 );
                 $count++;
             }
-            Database::execute('UPDATE sticker_packs SET sticker_count = (SELECT COUNT(*) FROM stickers WHERE pack_id = ?), updated_at = NOW() WHERE id = ?', [$packId, $packId]);
+            $cover = Database::one('SELECT image_url FROM stickers WHERE pack_id = ? AND status = 1 ORDER BY sort_order DESC, id LIMIT 1', [$packId]);
+            Database::execute('UPDATE sticker_packs SET sticker_count = (SELECT COUNT(*) FROM stickers WHERE pack_id = ?), cover_url = ?, updated_at = NOW() WHERE id = ?', [$packId, (string) ($cover['image_url'] ?? ''), $packId]);
         }
         return $count;
     }

@@ -7,6 +7,7 @@ $paths = [
     'admin' => $root . '/app/Controllers/Admin/FileFeedbackController.php',
     'platform' => $root . '/app/Controllers/Platform/OversightController.php',
     'storage' => $root . '/app/Services/UploadStorageService.php',
+    'media_optimization' => $root . '/app/Services/MediaOptimizationService.php',
     'private_forum' => $root . '/app/Services/PrivateForumMediaService.php',
     'inspection' => $root . '/app/Services/SubmissionInspectionService.php',
     'migrator' => $root . '/tools/migrate-catalog-private-files.php',
@@ -27,15 +28,28 @@ foreach ($paths as $name => $path) {
 
 foreach (['user', 'admin', 'platform'] as $controller) {
     if (preg_match('/ALLOWED(?:_UPLOAD)?_EXTENSIONS\s*=\s*\[(.*?)\];/s', $source[$controller], $match) !== 1
-        || preg_match('/[\'\"]svg[\'\"]/', $match[1]) === 1) {
-        fwrite(STDERR, "Public SVG safety failed: {$controller} upload allowlist still accepts svg\n");
+        || preg_match('/[\'\"](?:svg|heic|heif)[\'\"]/', $match[1]) === 1) {
+        fwrite(STDERR, "Public image safety failed: {$controller} allowlist still accepts SVG/HEIC/HEIF\n");
         exit(1);
     }
 }
 $checks = [
     str_contains($source['storage'], "\$extension === 'svg'")
-        && str_contains($source['storage'], "image/svg+xml")
-        && !str_contains($source['storage'], "!\$privateUpload && (\$extension === 'svg'"),
+        && !str_contains($source['storage'], "!\$privateUpload && (\$extension === 'svg'")
+        && str_contains($source['storage'], 'MediaOptimizationService::inspectClientUpload($tmp, $extension)')
+        && str_contains($source['storage'], 'MediaOptimizationService::optimizationDisposition')
+        && str_contains($source['storage'], 'self::selectReusableUploadCandidates(')
+        && str_contains($source['storage'], 'MediaOptimizationService::isFatalOptimizationStatus($status)')
+        && str_contains($source['storage'], '$fileUrl === $expectedUrl')
+        && str_contains($source['storage'], "\$optimizedUrl = \$isOptimized ? \$url : ''")
+        && str_contains($source['storage'], "'sha256' => \$mainSha256"),
+    str_contains($source['media_optimization'], "'read_failed', 'decode_failed'")
+        && str_contains($source['media_optimization'], 'content_extension_mismatch')
+        && str_contains($source['media_optimization'], 'image_decoder_unavailable')
+        && str_contains($source['media_optimization'], 'imagecopyresampled(')
+        && str_contains($source['media_optimization'], 'TRANSCODE_TIMEOUT_SECONDS')
+        && str_contains($source['media_optimization'], "self::inspectClientUpload(\$output, 'webp')")
+        && str_contains($source['media_optimization'], "self::inspectClientUpload(\$output, 'mp4')"),
     str_contains($source['private_forum'], "\$declaredMime === 'image/svg+xml'")
         && str_contains($source['private_forum'], "\$actualMime === 'image/svg+xml'")
         && str_contains($source['private_forum'], 'PATHINFO_EXTENSION'),
@@ -64,6 +78,7 @@ if (in_array(false, $checks, true)) {
 }
 
 require_once $paths['type_guard'];
+require_once $paths['media_optimization'];
 $temporaryDirectory = sys_get_temp_dir() . '/yiyunying-catalog-type-' . bin2hex(random_bytes(6));
 if (!mkdir($temporaryDirectory, 0700, true) && !is_dir($temporaryDirectory)) {
     fwrite(STDERR, "Unable to create catalog type test directory\n");
@@ -71,16 +86,33 @@ if (!mkdir($temporaryDirectory, 0700, true) && !is_dir($temporaryDirectory)) {
 }
 try {
     $fixtures = [
-        'valid.png' => "\x89PNG\x0D\x0A\x1A\x0A\x00\x00\x00\x0DIHDR" . str_repeat("\x00", 24),
+        'valid.png' => base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            true
+        ),
         'valid.jpg' => "\xFF\xD8\xFF\xE0" . str_repeat("\x00", 24),
         'valid.webp' => "RIFF\x10\x00\x00\x00WEBPVP8X" . str_repeat("\x00", 16),
         'disguised.png' => "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
         'unknown.bin' => "not a supported public upload type",
         'mismatched.png' => "\xFF\xD8\xFF\xE0" . str_repeat("\x00", 24),
         'named.svg' => "\x89PNG\x0D\x0A\x1A\x0A\x00\x00\x00\x0DIHDR" . str_repeat("\x00", 24),
+        'jpeg-as-png.png' => base64_decode(
+            '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////'
+            . '2wBDAf//////////////////////////////////////////////////////////////////////////////////////'
+            . 'wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/'
+            . '9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAA'
+            . 'AAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAA'
+            . 'AAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAU'
+            . 'EQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EH//xAAU'
+            . 'EAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EH//2Q==',
+            true
+        ),
+        'heic-as-png.png' => pack('N', 28) . 'ftypheic' . pack('N', 0) . 'mif1heicmiaf',
+        'unsupported.heic' => pack('N', 28) . 'ftypheic' . pack('N', 0) . 'mif1heicmiaf',
     ];
     foreach ($fixtures as $name => $contents) {
-        if (file_put_contents($temporaryDirectory . '/' . $name, $contents) !== strlen($contents)) {
+        if (!is_string($contents)
+            || file_put_contents($temporaryDirectory . '/' . $name, $contents) !== strlen($contents)) {
             throw new RuntimeException('Unable to create MIME fallback fixture');
         }
     }
@@ -95,6 +127,93 @@ try {
     ];
     if (in_array(false, $dynamicChecks, true)) {
         throw new RuntimeException('Catalog upload bounded fallback rejected a dynamic contract');
+    }
+
+    $trustedPng = \Yiyunying\Services\MediaOptimizationService::inspectClientUpload(
+        $temporaryDirectory . '/valid.png',
+        'png'
+    );
+    $jpegAsPng = \Yiyunying\Services\MediaOptimizationService::inspectClientUpload(
+        $temporaryDirectory . '/jpeg-as-png.png',
+        'png'
+    );
+    $heicAsPng = \Yiyunying\Services\MediaOptimizationService::inspectClientUpload(
+        $temporaryDirectory . '/heic-as-png.png',
+        'png'
+    );
+    $unsupportedHeic = \Yiyunying\Services\MediaOptimizationService::inspectClientUpload(
+        $temporaryDirectory . '/unsupported.heic',
+        'heic'
+    );
+    $originalPath = $temporaryDirectory . '/valid.png';
+    $decodeFailed = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition($originalPath, [
+        'path' => $originalPath, 'status' => 'decode_failed',
+    ]);
+    $readFailed = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition($originalPath, [
+        'path' => $originalPath, 'status' => 'read_failed',
+    ]);
+    $optimizerUnavailable = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition($originalPath, [
+        'path' => $originalPath, 'status' => 'optimizer_unavailable',
+    ]);
+    $optimized = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition($originalPath, [
+        'path' => $temporaryDirectory . '/valid.optimized.webp', 'status' => 'optimized',
+    ]);
+    $invalidOptimized = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition($originalPath, [
+        'path' => $originalPath, 'status' => 'optimized',
+    ]);
+    $runtimeOptimization = null;
+    $runtimeDisposition = null;
+    if (function_exists('imagecreatefromstring') && function_exists('imagewebp')) {
+        $runtimeOptimization = \Yiyunying\Services\MediaOptimizationService::optimize(
+            $originalPath,
+            'image/png',
+            'contract',
+            65536
+        );
+        $runtimeDisposition = \Yiyunying\Services\MediaOptimizationService::optimizationDisposition(
+            $originalPath,
+            $runtimeOptimization
+        );
+    }
+    $mediaChecks = [
+        function_exists('imagecreatefromstring')
+            ? (($trustedPng['accepted'] ?? false) === true
+                && ($trustedPng['mime_type'] ?? '') === 'image/png'
+                && (int) ($trustedPng['width'] ?? 0) === 1
+                && (int) ($trustedPng['height'] ?? 0) === 1)
+            : (($trustedPng['accepted'] ?? true) === false
+                && ($trustedPng['reason'] ?? '') === 'image_decoder_unavailable'),
+        ($jpegAsPng['accepted'] ?? true) === false
+            && ($jpegAsPng['reason'] ?? '') === 'content_extension_mismatch'
+            && ($jpegAsPng['kind'] ?? '') === 'jpeg',
+        ($heicAsPng['accepted'] ?? true) === false
+            && ($heicAsPng['reason'] ?? '') === 'content_extension_mismatch'
+            && ($heicAsPng['kind'] ?? '') === 'heic',
+        ($unsupportedHeic['accepted'] ?? true) === false
+            && ($unsupportedHeic['reason'] ?? '') === 'unsupported_extension',
+        ($decodeFailed['accepted'] ?? true) === false
+            && ($decodeFailed['upload_mode'] ?? 'optimized') === ''
+            && ($decodeFailed['publish_optimized_url'] ?? true) === false,
+        ($readFailed['accepted'] ?? true) === false
+            && ($readFailed['publish_optimized_url'] ?? true) === false,
+        ($optimizerUnavailable['accepted'] ?? false) === true
+            && ($optimizerUnavailable['upload_mode'] ?? '') === 'original'
+            && ($optimizerUnavailable['publish_optimized_url'] ?? true) === false,
+        ($optimized['accepted'] ?? false) === true
+            && ($optimized['upload_mode'] ?? '') === 'optimized'
+            && ($optimized['publish_optimized_url'] ?? false) === true,
+        ($invalidOptimized['accepted'] ?? true) === false,
+        !function_exists('imagecreatefromstring') || !function_exists('imagewebp')
+            || (is_array($runtimeOptimization)
+                && is_array($runtimeDisposition)
+                && ($runtimeDisposition['accepted'] ?? false) === true
+                && !in_array((string) ($runtimeOptimization['status'] ?? ''), ['read_failed', 'decode_failed'], true)
+                && (($runtimeDisposition['upload_mode'] ?? '') !== 'optimized'
+                    || (strtolower(pathinfo((string) ($runtimeOptimization['path'] ?? ''), PATHINFO_EXTENSION)) === 'webp'
+                        && ($runtimeOptimization['mime_type'] ?? '') === 'image/webp'))),
+    ];
+    if (in_array(false, $mediaChecks, true)) {
+        throw new RuntimeException('Trusted media upload dynamic contract failed');
     }
 } catch (Throwable $exception) {
     fwrite(STDERR, 'Public SVG safety dynamic contract failed: ' . $exception->getMessage() . "\n");

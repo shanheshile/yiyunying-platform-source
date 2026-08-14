@@ -142,10 +142,18 @@ $required = @(
     'tools\catalog-public-quarantine-contract.php',
     'tools\quarantine-catalog-public-files.php',
     'tools\test-catalog-public-quarantine-contract.php',
+    'tools\catalog-public-conflict-repair-contract.php',
+    'tools\catalog-conflict-server-local-preparation-contract.php',
+    'tools\prepare-catalog-public-conflicts-server-local.php',
+    'tools\repair-catalog-public-conflicts.php',
+    'tools\test-catalog-public-conflict-repair-contract.php',
+    'tools\test-catalog-conflict-server-local-preparation.php',
     'tools\test-upload-library-reference-guards.php',
     'tools\test-upload-reference-write-toctou-contract.php',
     'tools\test-wallet-amount-regression.php',
     'tools\test-public-upload-svg-safety.php',
+    'tools\test-upload-security-hardening.php',
+    'tools\test-upload-dedupe-mariadb.php',
     'tools\catalog-public-upload-type.php',
     'tools\test-resource-comment-management-contract.php',
     'tools\test-shop-goods-comment-management-contract.php',
@@ -169,20 +177,33 @@ $required = @(
     'tools\tests\test_credential_console_server.py',
     'tools\tests\test-internal-download-secret.ps1',
     'tools\deploy-ssh.py',
+    'tools\install-production-media-runtime.py',
+    'docs\PRODUCTION_MEDIA_RUNTIME.md',
     'tools\publish-android-ssh.py',
     'tools\verify-production-release-ssh.py',
+    'tools\harden-production-permissions.py',
+    'tools\tests\test-production-permission-hardening.py',
+    'deploy\nginx-uploads-static-only.conf.example',
+    'docs\PRODUCTION_PERMISSION_HARDENING.md',
     'tools\requirements-release.txt',
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
     'tools\tests\test_connection_identity_release_gate.py',
     'tools\tests\test_device_upgrade_gate.py',
     'tools\tests\test_download_audience_separation.py',
+    '..\android\tools\build-legacy-debug-compat.ps1',
+    '..\android\tools\legacy-debug-compat-security.ps1',
+    '..\android\legacy-debug-upgrade-identity.json',
+    'tools\tests\test-legacy-debug-compat-security.ps1',
     'tools\tests\test_internal_download_server.py',
     'tools\tests\test_verification_email_smtp.py',
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_internal_apk_private_deploy.py',
     'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_media_runtime.py',
+    'tools\tests\test_catalog_server_local_preparation.py',
+    'docs\CATALOG_CONFLICT_SERVER_LOCAL_PREPARATION.md',
     '..\download-site\scripts\deploy-site-security-remediation.py',
     '..\download-site\scripts\deploy-internal-apks.py',
     '..\download-site\deploy\internal-apk-verifier.php',
@@ -264,6 +285,11 @@ foreach ($file in $powerShellFiles) {
     }
 }
 
+foreach ($relativePath in @('..\android\tools\build-legacy-debug-compat.ps1', '..\android\tools\legacy-debug-compat-security.ps1')) {
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root $relativePath), [ref]$null, [ref]$parseErrors) | Out-Null
+    if ($parseErrors.Count -gt 0) { throw "PowerShell parse failed: $relativePath`n$($parseErrors -join "`n")" }
+}
 $credentialPackageContract = Join-Path $root 'tools\tests\test-export-account-credential-packages.ps1'
 & powershell -NoProfile -ExecutionPolicy Bypass -File $credentialPackageContract
 if ($LASTEXITCODE -ne 0) {
@@ -285,14 +311,22 @@ if ($LASTEXITCODE -ne 0) {
     throw 'DPAPI internal-download signing secret contract failed.'
 }
 
+$legacyDebugCompatibilityContract = Join-Path $root 'tools\tests\test-legacy-debug-compat-security.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $legacyDebugCompatibilityContract
+if ($LASTEXITCODE -ne 0) {
+    throw 'Legacy Debug HTTPS compatibility APK security contract failed.'
+}
+
 $python = Get-Command python -ErrorAction SilentlyContinue
 if ($null -eq $python) {
     throw 'Python is required for deployment and release safety checks.'
 }
 $pythonFiles = @(
     'tools\deploy-ssh.py',
+    'tools\install-production-media-runtime.py',
     'tools\publish-android-ssh.py',
     'tools\verify-production-release-ssh.py',
+    'tools\harden-production-permissions.py',
     'tools\credential-console-server.py',
     'tools\test-deploy-ssh-safety.py',
     'tools\tests\test_publish_android_ssh_security.py',
@@ -307,7 +341,10 @@ $pythonFiles = @(
     'tools\tests\test_internal_apk_private_deploy.py',
     '..\download-site\scripts\deploy-internal-apks.py',
     '..\download-site\scripts\deploy-site-security-remediation.py',
-    'tools\tests\test_release_evidence_chain.py'
+    'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_media_runtime.py',
+    'tools\tests\test_catalog_server_local_preparation.py',
+    'tools\tests\test-production-permission-hardening.py'
 )
 & $python.Source -W error -m py_compile @($pythonFiles | ForEach-Object { Join-Path $root $_ })
 if ($LASTEXITCODE -ne 0) {
@@ -325,7 +362,10 @@ foreach ($testFile in @(
     'tools\tests\test_download_site_atomic_publish.py',
     'tools\tests\test_download_site_security_remediation.py',
     'tools\tests\test_internal_apk_private_deploy.py',
-    'tools\tests\test_release_evidence_chain.py'
+    'tools\tests\test_release_evidence_chain.py',
+    'tools\tests\test_install_production_media_runtime.py',
+    'tools\tests\test_catalog_server_local_preparation.py',
+    'tools\tests\test-production-permission-hardening.py'
 )) {
     $testPath = Join-Path $root $testFile
     $previousErrorActionPreference = $ErrorActionPreference
@@ -520,6 +560,16 @@ exit($invalid === [] ? 0 : 1);
         throw "Catalog public quarantine contract checks failed.`n$catalogPublicQuarantineOutput"
     }
     Write-Host "Catalog public quarantine contract checks: passed"
+    $catalogConflictRepairOutput = & $php.Source (Join-Path $root 'tools\test-catalog-public-conflict-repair-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Catalog public conflict repair contract checks failed.`n$catalogConflictRepairOutput"
+    }
+    Write-Host "Catalog public conflict repair contract checks: passed"
+    $catalogServerLocalOutput = & $php.Source (Join-Path $root 'tools\test-catalog-conflict-server-local-preparation.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Catalog server-local conflict preparation checks failed.`n$catalogServerLocalOutput"
+    }
+    Write-Host "Catalog server-local conflict preparation checks: passed"
     $uploadReferenceOutput = & $php.Source (Join-Path $root 'tools\test-upload-library-reference-guards.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Upload-library reference guard checks failed.`n$uploadReferenceOutput"
@@ -540,6 +590,16 @@ exit($invalid === [] ? 0 : 1);
         throw "Public upload SVG safety checks failed.`n$publicSvgOutput"
     }
     Write-Host "Public upload SVG safety checks: passed"
+    $uploadHardeningOutput = & $php.Source (Join-Path $root 'tools\test-upload-security-hardening.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Upload security hardening checks failed.`n$uploadHardeningOutput"
+    }
+    Write-Host "Upload security hardening checks: passed"
+    $uploadDedupeOutput = & $php.Source (Join-Path $root 'tools\test-upload-dedupe-mariadb.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Upload dedupe MariaDB contract checks failed.`n$uploadDedupeOutput"
+    }
+    Write-Host "Upload dedupe MariaDB contract checks: passed"
     $resourceCommentOutput = & $php.Source (Join-Path $root 'tools\test-resource-comment-management-contract.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Resource comment management contract checks failed.`n$resourceCommentOutput"

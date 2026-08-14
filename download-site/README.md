@@ -71,10 +71,20 @@ python download-site/scripts/deploy-site-security-remediation.py `
 
 ## 对内 APK 短时下载源
 
-`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。Debug 轨道固定为 `2.7.15 (60)`；Stable candidate 轨道从当前 release manifest 和 release identity 动态读取 `1.0.0 (65)`，并拒绝低于 code64、身份不一致、非 pending 或非 Stable 的候选。每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。默认 dry-run 会用 `aapt2`、`apksigner`、文件大小和 SHA-256 复核八个真实 APK，全程不读取签名秘密、不连接服务器：
+`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。`2.7.15 (60)` Debug 是冻结的历史审计锚，只允许 break-glass dry-run，禁止 `--execute` 或上传。可执行的 Debug 轨道必须改用当前全局版本（当前为 `1.0.0 (65)`）的专用 `DebugCompatibility` 清单；该清单必须位于 `releases/internal/legacy-debug-compat/1.0.0/release-manifest.json`，且版本名/版本号与当前 Stable pending 清单完全一致、versionCode 大于 60。Stable candidate 轨道从当前 release manifest 和 release identity 动态读取，并拒绝低于 code64、身份不一致、非 pending 或非 Stable 的候选。每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。
+
+不传兼容清单的默认命令只审计冻结的旧 `2.7.15` Debug 与当前 Stable candidate，始终是 dry-run，不能作为部署命令：
 
 ```powershell
 python download-site/scripts/deploy-internal-apks.py
+```
+
+当前兼容轨道也应先 dry-run；脚本会用 `aapt2`、`apksigner`、编译后的网络安全配置、DEX 端点、文件大小和 SHA-256 复核八个真实 APK，全程不读取签名秘密、不连接服务器：
+
+```powershell
+$compatManifest = (Resolve-Path .\releases\internal\legacy-debug-compat\1.0.0\release-manifest.json).Path
+python download-site/scripts/deploy-internal-apks.py `
+  --debug-compatibility-manifest $compatManifest
 ```
 
 生产服务器没有 `secure_link` 模块，因此受审片段使用 Nginx `auth_request` 调用公网页根之外的只读 PHP 验证器。Sites 与验证器的唯一签名契约为：
@@ -90,7 +100,9 @@ Sites 托管 secret 名为 `YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET`，必须
 主站配置必须已经包含显式片段或受控的单层 `*.conf` extension include。执行时同时传入该 include 原文、其证据配置、FPM 证据配置和目标片段路径。下列占位路径必须换成已只读确认的真实路径；两个确认常量缺一不可：
 
 ```powershell
+$compatManifest = (Resolve-Path .\releases\internal\legacy-debug-compat\1.0.0\release-manifest.json).Path
 python download-site/scripts/deploy-internal-apks.py `
+  --debug-compatibility-manifest $compatManifest `
   --execute `
   --confirmation INTERNAL_APK_PRIVATE_DEPLOY_EXECUTE_CONFIRMED `
   --nginx-confirmation INTERNAL_APK_NGINX_AUTH_REQUEST_CONFIRMED `
@@ -104,5 +116,7 @@ python download-site/scripts/deploy-internal-apks.py `
   --remote-nginx-include <上述include覆盖的internal-apks.conf绝对路径> `
   --remote-secret-include /etc/nginx/private/yiyunying-internal-apks-secret.conf
 ```
+
+`--execute` 会强制要求上述当前全局版本的精确 `--debug-compatibility-manifest` 路径；冻结的 `2.7.15` 旧轨和任意非当前、复制或改名的兼容清单都不能回退执行。
 
 执行闭环固定为 pinned `known_hosts`/`RejectPolicy`、独占锁、私有同盘 staging、逐文件上传回读、PHP 语法检查、数据/秘密/配置分别同目录原子改名、`nginx -t`、reload、八包 HTTPS HEAD、两轨 Range `206`、ETag `304`、非法 Range `416`、错误签名 `404`、过期链接 `410`、非 GET/HEAD 拒绝和非法文件名 `404`。任一步失败会恢复旧数据、旧秘密和旧 Nginx 片段并再次执行 `nginx -t`/reload；回滚不完整时保留锁与事务现场。短链在五分钟内仍可转发，不得宣称绑定当前用户。

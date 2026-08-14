@@ -477,7 +477,9 @@ public final class ModuleRegistry {
                 multilineRequired("reason", "暂定原因与后续要求（必填）")).fixed("audit_status", "on_hold"))
              .action(itemAction("编辑", "PUT", "/api/admin/apps/{app_id}/resources/{resource_id}",
                  integer("category_id", "分类编号"), field("title", "标题"), multiline("description", "描述"),
-                 field("cover_url", "封面地址"), field("download_url", "下载地址"), integer("price_balance", "余额价格"),
+                 integer("cover_upload_id", "封面上传编号（resource_cover 场景）"),
+                 integer("source_upload_id", "资源上传编号（resource_source 场景）"),
+                 json("attachments", "展示附件（仅保存上传编号或表情编号）"), integer("price_balance", "余额价格"),
                  bool("is_top", "置顶"), bool("is_recommended", "推荐"), integer("status", "状态")))
              .action(confirmItem("删除", "DELETE", "/api/admin/apps/{app_id}/resources/{resource_id}", true)).build());
         result.add(ModuleSpec.builder("resource_comments", "资源评论管理", role).group("社区").requiresApp()
@@ -495,8 +497,10 @@ public final class ModuleRegistry {
             .path("/api/admin/apps/{app_id}/store-apps").paged().searchable("keyword")
             .primary("name", "version_name", "id").secondary("package_name", "account", "audit_status_label", "audit_reason", "reviewer_name", "audited_at", "download_count", "price_balance")
             .create(action("上架应用", "POST", "/api/admin/apps/{app_id}/store-apps",
-                req("name", "应用名称"), req("package_name", "应用包名"), field("description", "描述"), req("version_name", "版本"), req("apk_url", "安装包地址"),
-                integer("price_balance", "余额价格"), json("images", "截图列表")))
+                req("name", "应用名称"), req("package_name", "应用包名"), field("description", "描述"), req("version_name", "版本"),
+                integerRequired("source_upload_id", "安装包上传编号（store_app_package 场景）"),
+                integer("icon_upload_id", "图标上传编号（store_app_icon 场景）"),
+                integer("price_balance", "余额价格"), json("attachments", "截图附件（仅保存上传编号）")))
             .action(itemAction("查看审核详情", "GET", "/api/admin/apps/{app_id}/store-apps/{store_app_id}"))
             .action(itemAction("通过", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}/audit",
                 multiline("reason", "通过说明（可选）")).fixed("audit_status", "approved"))
@@ -506,8 +510,11 @@ public final class ModuleRegistry {
                 multilineRequired("reason", "暂定原因与后续要求（必填）")).fixed("audit_status", "on_hold"))
             .action(itemAction("编辑应用", "PUT", "/api/admin/apps/{app_id}/store-apps/{store_app_id}",
                 integer("category_id", "分类编号"), field("name", "应用名称"), multiline("description", "应用介绍"),
-                field("version_name", "版本名称"), integer("version_code", "版本代码"), field("icon_url", "图标地址"),
-                field("apk_url", "安装包地址"), integer("price_balance", "余额价格"), integer("status", "状态")))
+                field("version_name", "版本名称"), integer("version_code", "版本代码"),
+                integer("source_upload_id", "新安装包上传编号（store_app_package 场景）"),
+                integer("icon_upload_id", "新图标上传编号（store_app_icon 场景）"),
+                json("attachments", "替换截图附件（仅保存上传编号）"),
+                integer("price_balance", "余额价格"), integer("status", "状态")))
             .action(confirmItem("删除应用", "DELETE", "/api/admin/apps/{app_id}/store-apps/{store_app_id}", true)).build());
         result.add(ModuleSpec.builder("store_categories", "商店分类", role).group("社区").requiresApp()
             .path("/api/admin/apps/{app_id}/store-categories").dataKey("items")
@@ -859,7 +866,9 @@ public final class ModuleRegistry {
             .secondary("category_name", "price_balance", "rating", "download_count")
             .create(action("投稿资源", "POST", "/api/user/resources",
                 req("title", "标题"), multilineRequired("description", "描述"), integerRequired("category_id", "分类 ID"),
-                req("download_url", "下载地址"), integer("price_balance", "余额价格"))
+                integerRequired("source_upload_id", "资源上传编号（resource_source 场景）"),
+                integer("cover_upload_id", "封面上传编号（resource_cover 场景）"),
+                json("attachments", "展示附件（仅保存上传编号或表情编号）"), integer("price_balance", "余额价格"))
                 .fixed("resource_type", "source_market"))
             .action(itemAction("购买", "POST", "/api/user/resources/{resource_id}/buy").confirm(false).idempotent())
             .action(itemAction("评论", "POST", "/api/user/resources/{resource_id}/comments", multilineRequired("content", "评论")))

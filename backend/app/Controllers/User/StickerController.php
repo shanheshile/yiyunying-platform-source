@@ -11,6 +11,7 @@ use Yiyunying\Core\Validator;
 use Yiyunying\Services\AppService;
 use Yiyunying\Services\AuthService;
 use Yiyunying\Services\LogService;
+use Yiyunying\Services\UploadStorageService;
 
 final class StickerController
 {
@@ -32,8 +33,22 @@ final class StickerController
                 $packIds
             );
         }
+        $validUploads = self::prevalidateStickerUploads(
+            $user,
+            array_map(static fn(array $sticker): int => (int) ($sticker['upload_id'] ?? 0), $stickers),
+            false
+        );
         $grouped = [];
         foreach ($stickers as $sticker) {
+            $uploadId = max(0, (int) ($sticker['upload_id'] ?? 0));
+            $validated = $validUploads[$uploadId] ?? null;
+            // Historical URL-only or physically invalid rows remain stored but
+            // are never exposed as trusted public stickers.
+            if ($uploadId <= 0 || !is_array($validated)) continue;
+            $sticker['image_url'] = (string) $validated['file_url'];
+            $sticker['thumbnail_url'] = (string) $validated['thumbnail_url'];
+            $sticker['width'] = (int) $validated['width'];
+            $sticker['height'] = (int) $validated['height'];
             foreach (['id', 'pack_id', 'upload_id', 'width', 'height', 'sort_order'] as $key) {
                 if ($sticker[$key] !== null) $sticker[$key] = (int) $sticker[$key];
             }
@@ -43,6 +58,7 @@ final class StickerController
             $pack['id'] = (int) $pack['id'];
             $pack['sticker_count'] = (int) $pack['sticker_count'];
             $pack['stickers'] = $grouped[(int) $pack['id']] ?? [];
+            $pack['cover_url'] = (string) ($pack['stickers'][0]['image_url'] ?? '');
         }
         unset($pack);
         return Response::success(['items' => $packs]);
@@ -52,13 +68,16 @@ final class StickerController
     {
         $user = self::user($request);
         $name = Validator::string($request->input('name', ''), 'name', 1, 100);
+        if (trim((string) $request->input('cover_url', '')) !== '') {
+            throw new HttpException('表情包封面不能使用外链；添加首个已验证表情后将自动生成', 0, 422);
+        }
         $id = Database::insert(
             'INSERT INTO sticker_packs
              (admin_id, app_id, user_id, name, cover_url, sticker_count, sort_order, status, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 0, ?, 1, NOW(), NOW())',
             [
                 (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'], $name,
-                mb_substr(trim((string) $request->input('cover_url', '')), 0, 1000),
+                '',
                 (int) $request->input('sort_order', 0),
             ]
         );
@@ -70,11 +89,13 @@ final class StickerController
     {
         $user = self::user($request);
         $pack = self::pack($user, (int) $params['pack_id']);
+        if (trim((string) $request->input('cover_url', '')) !== '') {
+            throw new HttpException('表情包封面由已验证表情自动生成，不能直接填写图片地址', 0, 422);
+        }
         Database::execute(
-            'UPDATE sticker_packs SET name = ?, cover_url = ?, sort_order = ?, status = ?, updated_at = NOW() WHERE id = ?',
+            'UPDATE sticker_packs SET name = ?, sort_order = ?, status = ?, updated_at = NOW() WHERE id = ?',
             [
                 mb_substr(trim((string) $request->input('name', $pack['name'])), 0, 100),
-                mb_substr(trim((string) $request->input('cover_url', $pack['cover_url'])), 0, 1000),
                 (int) $request->input('sort_order', $pack['sort_order']),
                 Validator::integer($request->input('status', $pack['status']), 'status', 0, 1),
                 (int) $pack['id'],
@@ -97,8 +118,12 @@ final class StickerController
         $pack = self::pack($user, (int) $params['pack_id']);
         $item = $request->all();
         $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
-        $created = Database::transaction(static function () use ($user, $pack, $item, $uploadId): array {
-            $lockedUploads = self::lockStickerUploads($user, $uploadId > 0 ? [$uploadId] : []);
+        if ($uploadId <= 0) {
+            throw new HttpException('添加表情必须提交已验证公开图片的 upload_id', 0, 422);
+        }
+        $prevalidated = self::prevalidateStickerUploads($user, [$uploadId]);
+        $created = Database::transaction(static function () use ($user, $pack, $item, $uploadId, $prevalidated): array {
+            $lockedUploads = self::lockStickerUploads($user, [$uploadId], $prevalidated);
             $payload = self::stickerPayload($item, $lockedUploads);
             $created = self::insertSticker($user, $pack, $payload);
             Database::execute(
@@ -142,15 +167,21 @@ final class StickerController
         foreach ($items as $index => $item) {
             if (!is_array($item)) throw new HttpException('第 ' . ($index + 1) . ' 项表情格式无效', 0, 422);
             $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
-            if ($uploadId > 0) $uploadIds[$uploadId] = true;
+            if ($uploadId <= 0) {
+                throw new HttpException('第 ' . ($index + 1) . ' 项必须提交已验证公开图片的 upload_id', 0, 422);
+            }
+            $uploadIds[$uploadId] = true;
         }
-        $result = Database::transaction(static function () use ($user, $pack, $items, $uploadIds): array {
+        $prevalidated = self::prevalidateStickerUploads($user, array_keys($uploadIds));
+        $result = Database::transaction(static function () use ($user, $pack, $items, $uploadIds, $prevalidated): array {
             $created = [];
             $skipped = [];
-            $lockedUploads = self::lockStickerUploads($user, array_keys($uploadIds));
+            $lockedUploads = self::lockStickerUploads($user, array_keys($uploadIds), $prevalidated);
             foreach ($items as $index => $item) {
                 $payload = self::stickerPayload($item, $lockedUploads);
-                $existing = Database::one('SELECT id FROM stickers WHERE pack_id = ? AND image_url = ?', [(int) $pack['id'], $payload['url']]);
+                $existing = Database::one('SELECT id FROM stickers WHERE pack_id = ? AND upload_id = ?', [
+                    (int) $pack['id'], (int) $payload['upload_id'],
+                ]);
                 if ($existing !== null) {
                     $skipped[] = ['index' => $index, 'reason' => '相同表情已存在', 'sticker_id' => (int) $existing['id']];
                     continue;
@@ -210,7 +241,7 @@ final class StickerController
     }
 
     /** @return array<int, array> */
-    private static function lockStickerUploads(array $user, array $uploadIds): array
+    private static function lockStickerUploads(array $user, array $uploadIds, array $prevalidated): array
     {
         $uploadIds = array_values(array_unique(array_filter(
             array_map('intval', $uploadIds),
@@ -232,33 +263,65 @@ final class StickerController
         }
         $locked = [];
         foreach ($rows as $upload) {
-            if (!str_starts_with(strtolower((string) ($upload['mime_type'] ?? '')), 'image/')) {
-                throw new HttpException('表情包只能使用图片文件', 0, 422);
+            $uploadId = (int) $upload['id'];
+            $validated = $prevalidated[$uploadId] ?? null;
+            if (!is_array($validated)) {
+                throw new HttpException('上传图片缺少事务外完整性校验，请重新上传', 0, 409);
             }
-            $url = trim((string) ($upload['file_url'] ?? ''));
-            if ($url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) {
-                throw new HttpException('上传图片地址无效，请重新上传', 0, 409);
-            }
-            $locked[(int) $upload['id']] = $upload;
+            UploadStorageService::assertLockedPublicImageUpload($upload, $validated);
+            $locked[$uploadId] = $validated;
         }
         return $locked;
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    private static function prevalidateStickerUploads(array $user, array $uploadIds, bool $strict = true): array
+    {
+        $uploadIds = array_values(array_unique(array_filter(
+            array_map('intval', $uploadIds),
+            static fn(int $uploadId): bool => $uploadId > 0
+        )));
+        sort($uploadIds, SORT_NUMERIC);
+        if ($uploadIds === []) return [];
+        $placeholders = implode(',', array_fill(0, count($uploadIds), '?'));
+        $rows = Database::all(
+            "SELECT * FROM uploads WHERE id IN ({$placeholders})
+             AND admin_id = ? AND app_id = ? AND user_id = ? AND status = 1 ORDER BY id",
+            array_merge($uploadIds, [
+                (int) $user['admin_id'], (int) $user['app_id'], (int) $user['id'],
+            ])
+        );
+        $byId = [];
+        foreach ($rows as $row) $byId[(int) $row['id']] = $row;
+        $validated = [];
+        foreach ($uploadIds as $uploadId) {
+            if (!isset($byId[$uploadId])) {
+                if ($strict) throw new HttpException('上传图片已失效、被删除或不属于当前账号，请重新上传', 0, 409);
+                continue;
+            }
+            try {
+                $validated[$uploadId] = UploadStorageService::validatedPublicImageUpload($byId[$uploadId]);
+            } catch (HttpException $failure) {
+                if ($strict) throw $failure;
+            }
+        }
+        return $validated;
     }
 
     private static function stickerPayload(array $item, array $lockedUploads): array
     {
         $uploadId = max(0, (int) ($item['upload_id'] ?? 0));
         $upload = $uploadId > 0 ? ($lockedUploads[$uploadId] ?? null) : null;
-        if ($uploadId > 0 && $upload === null) {
+        if ($uploadId <= 0 || $upload === null) {
             throw new HttpException('上传图片未在当前保存事务中锁定，请重新上传', 0, 409);
         }
-        $url = trim((string) ($upload['file_url'] ?? ($item['image_url'] ?? '')));
-        if ($url === '' || preg_match('#^(https?://|/)#i', $url) !== 1) throw new HttpException('请上传图片或填写正确的图片地址', 0, 422);
+        $url = (string) $upload['file_url'];
         return [
-            'upload_id' => $uploadId > 0 ? $uploadId : null,
+            'upload_id' => $uploadId,
             'url' => mb_substr($url, 0, 1000),
             'name' => mb_substr(trim((string) ($item['name'] ?? '')), 0, 100),
-            'thumbnail_url' => mb_substr(trim((string) ($item['thumbnail_url'] ?? ($upload['thumbnail_url'] ?? ''))), 0, 1000),
-            'width' => max(0, (int) ($item['width'] ?? 0)), 'height' => max(0, (int) ($item['height'] ?? 0)),
+            'thumbnail_url' => mb_substr((string) $upload['thumbnail_url'], 0, 1000),
+            'width' => (int) $upload['width'], 'height' => (int) $upload['height'],
             'sort_order' => (int) ($item['sort_order'] ?? 0),
         ];
     }

@@ -615,6 +615,9 @@ class ReleaseEvidenceChainTest(unittest.TestCase):
 
     def test_project_finalize_binds_distinct_ancestor_and_annotated_tag(self) -> None:
         source = read(PACKAGE_PATH)
+        self.assertIn("[System.IO.File]::OpenRead($Path)", source)
+        self.assertIn("$sha256.ComputeHash($stream)", source)
+        self.assertNotIn("Get-FileHash", source)
         for marker in (
             "--untracked-files=all",
             '$tag -ne $expectedTagForChannel',
