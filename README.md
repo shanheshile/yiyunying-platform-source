@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-正式首发候选 `1.0.0 (63)` 已从源码提交 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成四端生产签名 Stable Build；schema 4 pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。四端完整单测、Release Lint、assemble 和签名/身份检查通过，但 code62→63 真实设备升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或称为已上线。原 `2.8.0 (62)` 制品仍只作为隔离的内部升级基线；线上仍是既有 `2.7.14 (59)` Debug 测试版。
+正式首发候选 `1.0.0 (65)` 已从源码提交 A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 完成四端生产签名 Stable Build；schema 4 pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`。从四端 Gradle XML 独立汇总的 1,400 项单测、Release Lint、assemble 和签名/身份检查通过，但 code62→65 真实设备升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或称为已上线。旧 code63、code64 候选均已从发布工作目录移入本机私有 superseded 目录；原 `2.8.0 (62)` 制品仍只作为隔离的内部升级基线；线上生命周期策略仍是既有 `2.7.14 (59)` Debug 测试版，客户公开下载保持失败关闭。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -48,8 +48,9 @@
 - 论坛评论只直接展示主评论，子回复提供预览、更多、回复关系、只看相关以及时间/热度/综合排序和分页；同步完善群头像、群管理、主题字体、弹窗颜色、状态栏安全区、底部弹层手势和媒体堆叠跟随动画。
 - 默认登录凭据改为禁用占位并加入审计；发布链路增加固定主机密钥、备份/回滚、四包身份、完整下载、Range/ETag、策略原子激活与生产回读门禁。
 - 官方下载站覆盖四角色下载、十三个系统接入示例和 58 条精确后端路由；API 文档支持 cURL/Java/JavaScript 示例切换、复制、分享（Web Share 与复制链接降级）、打印样式、锚点/新窗口打开和 APK 安装与 SHA-256 校验指引。
-- `1.0.0 (63)` 已在干净源码 A 上重新完成 Stable Build：四端各 338 项/合计 1,352 项单测均 0 failure、0 error、0 skipped，四端 Release Lint 0 error、assemble、production signer 与 APK 身份检查通过。
-- Android 升级门禁已调整为同角色 `2.8.0/code62` 内部基线 → `1.0.0/code63` 正式候选，要求包名、production signer、UID、dataDir、启动、登录与数据连续；当前没有可用 ADB 设备，尚未执行安装。
+- `1.0.0 (65)` 已在干净源码 A 上重新完成 Stable Build：从四个 Gradle JUnit XML 目录独立汇总为四端各 350 项/合计 1,400 项单测，均 0 failure、0 error、0 skipped；四个 Release Lint XML 均为 0 error、0 fatal，四端 assemble、production signer 与 APK 身份检查通过。
+- Android 升级门禁已调整为同角色 `2.8.0/code62` 内部基线 → `1.0.0/code65` 正式候选，要求包名、production signer、UID、dataDir、启动、登录与数据连续；当前没有可用 ADB 设备，尚未执行安装。
+- MariaDB 11.4.5 隔离验证库已按固定顺序对迁移 61、62、63、64、65 连续实跑两轮，全部 exit 0 且最终结构/迁移标记验证 PASS。此前一次生产部署在迁移 62 处失败后已完整回滚；当前 code65 后端、数据库迁移和 APK 均未部署。
 
 APK 只嵌入公开的应用唯一 ID，不嵌入服务端 `app_secret`；轮换 secret 不会使 APK 失效。生产维护已完成独立随机密码、DPAPI 本机恢复材料、应用 secret 轮换和全部 access/refresh Token 撤销；无验证恢复渠道的账号只停用、不删除数据，平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 
@@ -97,7 +98,7 @@ corepack pnpm export:static
 
 - [项目文档索引](docs/PROJECT_INDEX.md)
 - [全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)
-- [1.0.0 Stable Build-pending 说明：code63 制品与 62→63 设备门禁](docs/releases/1.0.0.md)
+- [1.0.0 Stable Build-pending 说明：code65 制品与 62→65 设备门禁](docs/releases/1.0.0.md)
 - [2.8.0 隔离内部基线说明：禁止公开与 Finalize](docs/releases/2.8.0.md)
 - [2.7.15 Debug 候选说明：管理重构、身份链与功能闭环](docs/releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](docs/releases/2.7.14.md)

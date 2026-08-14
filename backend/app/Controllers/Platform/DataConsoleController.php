@@ -38,6 +38,7 @@ final class DataConsoleController
         'identity_bindings', 'identity_unbind_requests',
         'card_batches', 'cards', 'card_redeem_logs', 'card_login_bindings',
         'document_shares', 'payment_channels', 'api_request_logs', 'system_error_logs',
+        'catalog_legacy_url_quarantines',
     ];
     private const SENSITIVE_COLUMNS = [
         'password_hash', 'token_hash', 'app_secret_hash', 'secret', 'private_key',

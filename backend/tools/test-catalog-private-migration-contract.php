@@ -5,6 +5,7 @@ $root = dirname(__DIR__);
 $paths = [
     'migrator' => $root . '/tools/migrate-catalog-private-files.php',
     'verifier' => $root . '/tools/verify-catalog-migration-report.php',
+    'retention' => $root . '/tools/catalog-private-retention.php',
     'inspection' => $root . '/app/Services/SubmissionInspectionService.php',
     'app_service' => $root . '/app/Services/AppService.php',
     'admin_app' => $root . '/app/Controllers/Admin/AppController.php',
@@ -26,6 +27,7 @@ foreach ($paths as $name => $path) {
     }
     $source[$name] = (string) file_get_contents($path);
 }
+require_once $paths['retention'];
 $releaseIdentity = json_decode($source['release_identity'], true);
 $downloadPackage = json_decode($source['download_package'], true);
 $androidVersionName = preg_match('/^VERSION_NAME=(.+)$/m', $source['android_version'], $versionNameMatch) === 1
@@ -41,6 +43,19 @@ $receiptWrite = strpos($source['verifier'], 'writeNewPrivateFile($pendingReceipt
 $receiptPublish = strpos($source['verifier'], 'rename($pendingReceipt, $receiptPath)');
 $gateActivation = strpos($source['verifier'], 'setCatalogMigrationGate(true)');
 $checks = [
+    'retention policy requires private bytes for purchases and live rows' =>
+        !catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 0, 'audit_status' => 'on_hold',
+        ], true, true)
+        && !catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 1, 'audit_status' => 'on_hold',
+        ], false, true)
+        && catalogPrivateRowIsInert([
+            'deleted_at' => null, 'source_upload_id' => null, 'legacy_url' => '',
+            'status' => 0, 'audit_status' => 'on_hold',
+        ], false, true),
     'apply binds evidence to a release and never opens runtime before a durable report' =>
         str_contains($source['migrator'], "cliOption(\$argv, '--release-version')")
         && str_contains($source['migrator'], "'release_version' => \$releaseVersion")
@@ -100,10 +115,16 @@ $checks = [
         && str_contains($source['migration'], "INDEX_NAME = 'idx_uploads_scene_sha256'")
         && str_contains($source['migration'], "INDEX_NAME = 'idx_catalog_file_migration_old_path'")
         && str_contains($source['migration'], "INDEX_NAME = 'idx_catalog_file_migration_sha256'"),
-    'tombstones only bypass missing bytes while a wrong upload scene always blocks' =>
+    'only deleted or privately audited inactive rows bypass missing bytes while wrong scenes block' =>
         str_contains($source['migrator'], "if (\$upload === null)")
         && str_contains($source['migrator'], '上传记录场景不匹配，必须人工核对其公开文件并修复引用')
-        && str_contains($source['migrator'], "\$row['deleted_at'] !== null && !\$hasPurchase")
+        && str_contains($source['migrator'], 'catalogPrivateRowIsInert(')
+        && str_contains($source['verifier'], 'catalogPrivateRowIsInert(')
+        && str_contains($source['retention'], "if (\$hasPurchase) return false")
+        && str_contains($source['retention'], "\$row['deleted_at']")
+        && str_contains($source['retention'], "['on_hold', 'rejected']")
+        && str_contains($source['migrator'], 'catalog_legacy_url_quarantines')
+        && str_contains($source['verifier'], 'catalog_legacy_url_quarantines')
         && str_contains($source['migrator'], 'uploads/.gitkeep'),
     'catalog mutations share the app gate row without globally serializing normal traffic' =>
         str_contains($source['inspection'], 'catalogWriteTransaction(')

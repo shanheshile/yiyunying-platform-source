@@ -1,6 +1,6 @@
 # 易云盈平台全量需求与实施总纲
 
-更新基线：`1.0.0 (63)` Stable Build-pending（待 62→63 设备门禁）；线上非强制 Debug 测试版 `2.7.14 (59)`
+更新基线：`1.0.0 (65)` Stable Build-pending（待 62→65 设备门禁）；线上生命周期策略为非强制 Debug 测试版 `2.7.14 (59)`，客户公开下载失败关闭
 建立日期：2026-08-01
 适用范围：Android 用户端（4）、三级管理端（1/2/3）、PHP API、MySQL、下载站、更新链路与运维平台
 
@@ -273,13 +273,15 @@
 
 ### 1.0.0 本地正式首发候选
 
-- Android、后端发布身份和下载站包版本已统一为 `1.0.0 (63)`；`versionName=1.0.0` 是客户看到的首发版本，`versionCode=63` 保持高于内部 code62，避免 Android 降级安装。
+- Android、后端发布身份和下载站包版本已统一为 `1.0.0 (65)`；`versionName=1.0.0` 是客户看到的首发版本，`versionCode=65` 保持高于内部 code62 和已隔离的旧 code63、code64 候选，避免 Android 降级安装或复用版本号。
 - 管理端四栏、多应用控制、源码内登录身份、用户快捷模块、三态审核、短视频、相机、论坛线程、群管理、资源私有审核、维护身份冲突保护和发布门禁已进入源码与自动化闭环。
 - 官网覆盖四角色下载、13 个系统接入示例、58 条精确路由，以及复制、分享、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开和 APK 安装/校验指引。
-- 1.0.0 已从 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 完成 Stable Build：四端各 338/总 1,352 项单测、Release Lint 0 error、assemble、production signer 与 APK 身份检查通过；pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。
+- 1.0.0 已从 A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 完成 Stable Build：从四个 Gradle JUnit XML 目录独立汇总为四端各 350/总 1,400 项单测，0 failure/error/skipped，四个 Release Lint XML 均为 0 error/0 fatal，assemble、production signer 与 APK 身份检查通过；pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`。
 - 原 2.8.0/code62 pending 制品、manifest 与校验和已隔离到外层 `.rc/superseded/2.8.0-code62-pending/`，标记 internal-only，禁止 Finalize、tag、部署或公开。
-- 设备升级验收为 BLOCKED：固件虚拟化关闭，AVD 无法进入 ADB，没有安装 code62 基线或 code63 Stable。门禁固定验证同角色 `2.8.0/code62 → 1.0.0/code63`，包括包名、production signer、UID、dataDir、启动、登录和数据连续。
-- 固定顺序为新 A → Stable Build → 62→63 设备门禁 → 证据 B → annotated tag `v1.0.0` → Finalize → 备份/部署/公网回读 → 推送/归档，最终状态只按 finalized manifest 与 Git refs 回读。
+- 旧源码 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 的 code63 候选和旧源码 A `7bbf955f56394bd8af838b6e30cf5d57afbe7fcf` 的 code64 候选均已移入本机私有 superseded 目录，禁止恢复到当前发布目录、Finalize、部署或公开。
+- MariaDB 11.4.5 隔离验证库已按固定顺序对迁移 61—65 连续实跑两轮，十次迁移均 exit 0 且终态验证 PASS；此前一次生产尝试在迁移 62 处失败后已完整回滚。当前 code65 后端、数据库迁移和 APK 均未部署。
+- 设备升级验收为 BLOCKED：固件虚拟化关闭，AVD 无法进入 ADB，没有安装 code62 基线或 code65 Stable。门禁固定验证同角色 `2.8.0/code62 → 1.0.0/code65`，包括包名、production signer、UID、dataDir、启动、登录和数据连续。
+- 固定顺序为新 A → Stable Build → 62→65 设备门禁 → 证据 B → annotated tag `v1.0.0` → Finalize → 重新备份/部署/公网回读 → 推送/归档，最终状态只按 finalized manifest 与 Git refs 回读。
 
 ### 2.7.14 已发布恢复基线
 

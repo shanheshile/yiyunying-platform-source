@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本路线图以线上 `2.7.14 (59)` Debug 为恢复基线，并推进 `1.0.0 (63)` Stable Build-pending。A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 的四包和 pending manifest 已生成；原 2.8.0/code62 继续作为隔离升级基线。固件虚拟化关闭导致 AVD 无 ADB，设备升级未执行，因此不能 Finalize、部署、公开发布、打标签或归档。
+本路线图以线上 `2.7.14 (59)` Debug 生命周期策略为恢复基线，并推进 `1.0.0 (65)` Stable Build-pending。A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 的四包和 pending manifest 已生成；原 2.8.0/code62 继续作为隔离升级基线，旧 code63、code64 候选已移入本机私有 superseded 目录。固件虚拟化关闭导致 AVD 无 ADB，设备升级未执行，因此不能 Finalize、部署、公开发布、打标签或归档；客户公开下载保持失败关闭。
 
 ## 阶段 0：建立可信发布基线
 
@@ -12,14 +12,15 @@
 - 持续执行 `2.7.3` 建立并由 `2.7.4`、`2.7.5`、`2.7.6` 延续的 APK 包名、包内版本、签名、体积和 SHA-256 一致性校验。
 - 建立可重复构建、制品校验、签名验证、升级安装和回滚演练。
 - `2.7.14 (59)` 已按“备份、迁移、隐藏上传、四包校验、原子公开、策略事务、生产/公网回读”完成 Debug 测试部署；后续版本继续沿用同一失败停止、补偿回滚和幂等重跑门禁。
-- `1.0.0 (63)` 继续使用 pinned known_hosts、备份/停写/迁移报告/回滚、恰好四包、完整下载、Range/ETag、Stable public whitelist 和策略原子激活；只有真实执行并独立回读后才能标记完成。
-- Stable Build 已完成：A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1`，四端各 338/总 1,352 项单测、Release Lint 0 error、assemble、production signer 和 APK 身份检查通过；pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`。
+- `1.0.0 (65)` 继续使用 pinned known_hosts、备份/停写/迁移报告/回滚、恰好四包、完整下载、Range/ETag、Stable public whitelist 和策略原子激活；只有真实执行并独立回读后才能标记完成。
+- Stable Build 已完成：A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78`；从四个 Gradle JUnit XML 目录独立汇总为四端各 350/总 1,400 项单测，0 failure/error/skipped，四个 Release Lint XML 均为 0 error/0 fatal，assemble、production signer 和 APK 身份检查通过；pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`。
+- MariaDB 11.4.5 隔离验证已按 61→65 连续实跑两轮并验证终态，全部 PASS；此前生产在迁移 62 失败的尝试已完整回滚。正式重试仍须从新备份开始，不能把演练或回滚当成已部署。
 - 2.8.0/code62 四包已连同原 manifest 与校验和隔离到 `.rc/superseded/2.8.0-code62-pending/`，只允许作为同签名升级基线。
 - 官网已完成四角色下载、13 个接入示例、58 条精确路由和复制/分享/打印/cURL-Java-JavaScript 格式切换/打开安装说明的测试闭环；正式下载仍保持关闭。
-- 下一步解除设备 BLOCKED：在 BIOS 开启虚拟化并重启，或连接真实设备；先安装同角色 2.8.0/code62 隔离基线，再用 1.0.0/code63 覆盖升级，验证包名、签名、UID、dataDir、登录身份链、网络请求与数据保留。
+- 下一步解除设备 BLOCKED：在 BIOS 开启虚拟化并重启，或连接真实设备；先安装同角色 2.8.0/code62 隔离基线，再用 1.0.0/code65 覆盖升级，验证包名、签名、UID、dataDir、登录身份链、网络请求与数据保留。
 - 为数据库迁移增加版本号、备份、恢复测试和回滚说明。
 - 为四端建立最小冒烟测试，所有历史崩溃加入回归集。
-- 后续固定顺序为 62→63 设备门禁 → B → annotated tag `v1.0.0` → Finalize；之后才备份、部署、公网回读、推送和新归档。
+- 后续固定顺序为 62→65 设备门禁 → B → annotated tag `v1.0.0` → Finalize；之后才重新备份、部署、公网回读、推送和新归档。
 
 **完成标准：** 四端 release 包可安装升级；公网下载复算哈希一致；凭据扫描通过；数据库可从备份恢复；发布清单可追溯到提交。
 

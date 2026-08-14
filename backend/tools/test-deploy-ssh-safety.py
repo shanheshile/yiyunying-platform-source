@@ -46,6 +46,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertIn('archive.pax_headers.get("comment", "")', SOURCE)
         self.assertIn('"backend/config/release-identity.json"', SOURCE)
         self.assertIn('"backend/tools/audit-default-credentials.php"', SOURCE)
+        self.assertIn('"backend/tools/backfill-catalog-source-uploads.php"', SOURCE)
+        self.assertIn('"backend/tools/quarantine-catalog-public-files.php"', SOURCE)
         self.assertIn('Archive release identity does not match --release-identity', SOURCE)
         self.assertIn('ACTUAL_IDENTITY_SHA256=$(sha256sum', SOURCE)
         self.assertIn(r'test \"${{ACTUAL_IDENTITY_SHA256%% *}}\"', SOURCE)
@@ -231,6 +233,12 @@ class DeploySshSafetyContractTest(unittest.TestCase):
             'f"database-migration-{index}"',
             '"catalog-gate-closed-readback"',
             '"deploy-files"',
+            '"catalog-binding-dry-run"',
+            '"catalog-public-quarantine-dry-run"',
+            '"catalog-binding-apply"',
+            '"catalog-binding-report-check"',
+            '"catalog-public-quarantine-apply"',
+            '"catalog-public-quarantine-report-check"',
             '"catalog-dry-run"',
             '"catalog-apply"',
             '"catalog-apply-report-check"',
@@ -247,6 +255,8 @@ class DeploySshSafetyContractTest(unittest.TestCase):
         self.assertIn("'catalog-apply-report=passed'", SOURCE)
         self.assertIn("'residual_catalog_metadata_mismatches'", SOURCE)
         self.assertIn("catalog-gate=true", SOURCE)
+        self.assertIn("'catalog-binding-report=passed'", SOURCE)
+        self.assertIn("'catalog-public-quarantine-report=passed'", SOURCE)
 
     def test_catalog_tools_target_the_live_root_after_code_switch(self) -> None:
         self.assertIn('f"cd {quote(args.remote_root)}; " + catalog_php', SOURCE)

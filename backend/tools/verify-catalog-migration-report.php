@@ -12,6 +12,7 @@ if (PHP_SAPI !== 'cli') {
 
 $root = dirname(__DIR__);
 require_once __DIR__ . '/catalog-public-upload-type.php';
+require_once __DIR__ . '/catalog-private-retention.php';
 require $root . '/bootstrap.php';
 
 $reportArgument = cliOption($argv, '--report');
@@ -244,9 +245,11 @@ function assertDatabaseAndPrivateFilesReady(): void
         $afterId = 0;
         while (true) {
             $resourceType = $definition['kind'] === 'resource' ? 'c.resource_type' : "'app_store'";
+            $legacyUrl = $definition['kind'] === 'resource' ? 'c.download_url' : 'c.apk_url';
             $rows = Database::all(
                 "SELECT c.id, c.admin_id, c.app_id, c.source_upload_id, c.size_bytes, c.file_sha256,
-                        c.deleted_at, {$resourceType} AS resource_type,
+                        c.status, c.audit_status, c.deleted_at, {$legacyUrl} AS legacy_url,
+                        {$resourceType} AS resource_type,
                         EXISTS(SELECT 1 FROM {$definition['purchase_table']} p
                                WHERE p.{$definition['purchase_column']} = c.id) AS has_purchase
                  FROM {$definition['table']} c
@@ -256,7 +259,18 @@ function assertDatabaseAndPrivateFilesReady(): void
             if ($rows === []) break;
             foreach ($rows as $row) {
                 $afterId = (int) $row['id'];
-                if ($row['deleted_at'] !== null && (int) ($row['has_purchase'] ?? 0) !== 1) continue;
+                $quarantineEvidence = Database::one(
+                    'SELECT legacy_url_sha256 FROM catalog_legacy_url_quarantines
+                     WHERE catalog_kind = ? AND catalog_id = ? AND admin_id = ? AND app_id = ? LIMIT 1',
+                    [$definition['kind'], (int) $row['id'], (int) $row['admin_id'], (int) $row['app_id']]
+                );
+                $hasQuarantineEvidence = $quarantineEvidence !== null
+                    && preg_match('/^[a-f0-9]{64}$/D', strtolower((string) ($quarantineEvidence['legacy_url_sha256'] ?? ''))) === 1;
+                if (catalogPrivateRowIsInert(
+                    $row,
+                    (int) ($row['has_purchase'] ?? 0) === 1,
+                    $hasQuarantineEvidence
+                )) continue;
                 $uploadId = (int) ($row['source_upload_id'] ?? 0);
                 if ($uploadId <= 0) throw new RuntimeException('仍需保留的目录条目缺少私有上传');
                 $scene = $definition['kind'] === 'resource'

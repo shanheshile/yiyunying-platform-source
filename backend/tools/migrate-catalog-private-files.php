@@ -11,6 +11,7 @@ if (PHP_SAPI !== 'cli') {
 
 $root = dirname(__DIR__);
 require_once __DIR__ . '/catalog-public-upload-type.php';
+require_once __DIR__ . '/catalog-private-retention.php';
 require $root . '/bootstrap.php';
 
 $apply = in_array('--apply', $argv, true);
@@ -339,9 +340,17 @@ function inspectCatalogRow(array $definition, array $row): array
         "SELECT id FROM {$purchaseTable} WHERE {$purchaseColumn} = ? LIMIT 1",
         [(int) $row['id']]
     ) !== null;
-    // A non-deleted item remains downloadable by its owner even when stopped.
-    // A deleted tombstone is exempt only when no historical buyer has rights.
-    $inert = $row['deleted_at'] !== null && !$hasPurchase;
+    $quarantineEvidence = Database::one(
+        'SELECT legacy_url_sha256 FROM catalog_legacy_url_quarantines
+         WHERE catalog_kind = ? AND catalog_id = ? AND admin_id = ? AND app_id = ? LIMIT 1',
+        [$definition['kind'], $item['id'], $item['admin_id'], $item['app_id']]
+    );
+    $hasQuarantineEvidence = $quarantineEvidence !== null
+        && preg_match('/^[a-f0-9]{64}$/D', strtolower((string) ($quarantineEvidence['legacy_url_sha256'] ?? ''))) === 1;
+    // Purchased/live rows always retain private bytes.  A non-deleted stopped
+    // row becomes inert only after the maintenance tool preserved its legacy
+    // URL in the private quarantine ledger and cleared the public URL.
+    $inert = catalogPrivateRowIsInert($row, $hasPurchase, $hasQuarantineEvidence);
     $uploadId = max(0, (int) ($row['source_upload_id'] ?? 0));
     if ($uploadId <= 0) {
         if ($inert && $legacyUrl === '') {
@@ -595,14 +604,22 @@ function countCatalogMetadataMismatches(): int
     $resource = Database::one(
         "SELECT COUNT(*) AS total FROM resources r
          LEFT JOIN uploads up ON up.id = r.source_upload_id AND up.admin_id = r.admin_id AND up.app_id = r.app_id
+         LEFT JOIN catalog_legacy_url_quarantines q
+           ON q.catalog_kind = 'resource' AND q.catalog_id = r.id AND q.admin_id = r.admin_id AND q.app_id = r.app_id
          WHERE r.deleted_at IS NULL
+           AND NOT (q.id IS NOT NULL AND r.source_upload_id IS NULL AND TRIM(r.download_url) = ''
+             AND r.status = 0 AND r.audit_status IN ('on_hold','rejected'))
            AND (up.id IS NULL OR up.file_path NOT LIKE 'private/%'
              OR LOWER(r.file_sha256) <> LOWER(up.sha256) OR r.size_bytes <> up.size_bytes)"
     );
     $store = Database::one(
         "SELECT COUNT(*) AS total FROM store_apps s
          LEFT JOIN uploads up ON up.id = s.source_upload_id AND up.admin_id = s.admin_id AND up.app_id = s.app_id
+         LEFT JOIN catalog_legacy_url_quarantines q
+           ON q.catalog_kind = 'store_app' AND q.catalog_id = s.id AND q.admin_id = s.admin_id AND q.app_id = s.app_id
          WHERE s.deleted_at IS NULL
+           AND NOT (q.id IS NOT NULL AND s.source_upload_id IS NULL AND TRIM(s.apk_url) = ''
+             AND s.status = 0 AND s.audit_status IN ('on_hold','rejected'))
            AND (up.id IS NULL OR up.file_path NOT LIKE 'private/%'
              OR LOWER(s.file_sha256) <> LOWER(up.sha256) OR s.size_bytes <> up.size_bytes)"
     );

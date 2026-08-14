@@ -203,6 +203,11 @@ def validate_release_archive(
         "backend/public/index.php",
         "backend/config/release-identity.json",
         "backend/tools/audit-default-credentials.php",
+        "backend/tools/backfill-catalog-source-uploads.php",
+        "backend/tools/catalog-legacy-upload-binding.php",
+        "backend/tools/catalog-private-retention.php",
+        "backend/tools/catalog-public-quarantine-contract.php",
+        "backend/tools/quarantine-catalog-public-files.php",
         *(f"backend/{path}" for path in REQUIRED_RELEASE_MIGRATIONS),
     }
     try:
@@ -607,6 +612,76 @@ def main() -> int:
             )
             code_changed = True
             run(client, deploy, "deploy-files")
+
+            application_origin_value = args.app_url.strip()
+            if not application_origin_value:
+                health_origin = urlsplit(args.health_url)
+                application_origin_value = f"{health_origin.scheme}://{health_origin.netloc}"
+            parsed_application_origin = urlsplit(application_origin_value)
+            if parsed_application_origin.scheme not in {"http", "https"} or not parsed_application_origin.hostname:
+                raise RuntimeError("A canonical application origin is required for catalog reconciliation")
+            catalog_allowed_origin = f"{parsed_application_origin.scheme}://{parsed_application_origin.netloc}"
+
+            catalog_binding_dry_run = (
+                f"cd {quote(args.remote_root)}; " + catalog_php
+                + f"\"$PHP_BIN\" tools/backfill-catalog-source-uploads.php --release-version {quote(args.release_version)} "
+                + f"--allowed-origin {quote(catalog_allowed_origin)}"
+            )
+            run(client, catalog_binding_dry_run, "catalog-binding-dry-run")
+            catalog_quarantine_dry_run = (
+                f"cd {quote(args.remote_root)}; " + catalog_php
+                + f"\"$PHP_BIN\" tools/quarantine-catalog-public-files.php --release-version {quote(args.release_version)}"
+            )
+            run_with_status(client, catalog_quarantine_dry_run, "catalog-public-quarantine-dry-run", {0, 2})
+
+            catalog_binding_apply = catalog_binding_dry_run + " --apply --maintenance-confirmed"
+            database_changed = True
+            binding_output = run(client, catalog_binding_apply, "catalog-binding-apply")
+            binding_reports = [
+                line[len("CATALOG_BINDING_REPORT=") :].strip()
+                for line in binding_output.splitlines()
+                if line.startswith("CATALOG_BINDING_REPORT=")
+            ]
+            if len(binding_reports) != 1 or not binding_reports[0]:
+                raise RuntimeError("Catalog binding apply did not return exactly one report path")
+            binding_report_assertion = (
+                f"cd {quote(args.remote_root)}; " + catalog_php
+                + "\"$PHP_BIN\" -r "
+                + quote(
+                    '$report = json_decode((string) file_get_contents($argv[1]), true); '
+                    "if (!is_array($report) || ($report['mode'] ?? null) !== 'apply' "
+                    "|| ($report['status'] ?? null) !== 'applied_verified' "
+                    "|| (int) ($report['summary']['unresolved'] ?? -1) !== 0) exit(33); "
+                    "echo 'catalog-binding-report=passed';"
+                )
+                + f" {quote(binding_reports[0])}"
+            )
+            run(client, binding_report_assertion, "catalog-binding-report-check")
+
+            catalog_quarantine_apply = catalog_quarantine_dry_run + " --apply --maintenance-confirmed"
+            uploads_changed = True
+            quarantine_output = run(client, catalog_quarantine_apply, "catalog-public-quarantine-apply")
+            quarantine_reports = [
+                line[len("report=") :].strip()
+                for line in quarantine_output.splitlines()
+                if line.startswith("report=")
+            ]
+            if len(quarantine_reports) != 1 or not quarantine_reports[0]:
+                raise RuntimeError("Catalog public quarantine did not return exactly one report path")
+            quarantine_report_assertion = (
+                f"cd {quote(args.remote_root)}; " + catalog_php
+                + "\"$PHP_BIN\" -r "
+                + quote(
+                    '$report = json_decode((string) file_get_contents($argv[1]), true); '
+                    "if (!is_array($report) || ($report['mode'] ?? null) !== 'apply' "
+                    "|| ($report['passed'] ?? null) !== true "
+                    "|| (int) ($report['conflicts'] ?? -1) !== 0 "
+                    "|| (int) ($report['quarantined'] ?? -1) !== (int) ($report['would_quarantine'] ?? -2)) exit(34); "
+                    "echo 'catalog-public-quarantine-report=passed';"
+                )
+                + f" {quote(quarantine_reports[0])}"
+            )
+            run(client, quarantine_report_assertion, "catalog-public-quarantine-report-check")
 
             catalog_dry_run = (
                 f"cd {quote(args.remote_root)}; " + catalog_php

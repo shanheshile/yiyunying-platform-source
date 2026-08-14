@@ -134,6 +134,14 @@ $required = @(
     'tools\test-maintenance-write-guard-contract.php',
     'tools\test-purchase-history-foreign-key-contract.php',
     'tools\test-catalog-private-migration-contract.php',
+    'tools\catalog-legacy-upload-binding.php',
+    'tools\audit-catalog-legacy-upload-bindings.php',
+    'tools\backfill-catalog-source-uploads.php',
+    'tools\test-catalog-legacy-upload-binding.php',
+    'tools\catalog-private-retention.php',
+    'tools\catalog-public-quarantine-contract.php',
+    'tools\quarantine-catalog-public-files.php',
+    'tools\test-catalog-public-quarantine-contract.php',
     'tools\test-upload-library-reference-guards.php',
     'tools\test-upload-reference-write-toctou-contract.php',
     'tools\test-wallet-amount-regression.php',
@@ -502,6 +510,16 @@ exit($invalid === [] ? 0 : 1);
         throw "Catalog private migration contract checks failed.`n$catalogMigrationOutput"
     }
     Write-Host "Catalog private migration contract checks: passed"
+    $catalogBindingOutput = & $php.Source (Join-Path $root 'tools\test-catalog-legacy-upload-binding.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Catalog legacy upload binding checks failed.`n$catalogBindingOutput"
+    }
+    Write-Host "Catalog legacy upload binding checks: passed"
+    $catalogPublicQuarantineOutput = & $php.Source (Join-Path $root 'tools\test-catalog-public-quarantine-contract.php') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Catalog public quarantine contract checks failed.`n$catalogPublicQuarantineOutput"
+    }
+    Write-Host "Catalog public quarantine contract checks: passed"
     $uploadReferenceOutput = & $php.Source (Join-Path $root 'tools\test-upload-library-reference-guards.php') 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Upload-library reference guard checks failed.`n$uploadReferenceOutput"

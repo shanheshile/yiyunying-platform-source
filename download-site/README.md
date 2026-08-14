@@ -24,7 +24,7 @@ python download-site/scripts/serve-internal-downloads.py `
 
 Debug 只能走本机或专用私有存储，`deploy-static.py` 会拒绝把 Debug 或项目资产发布到公网。Nginx `/downloads/` 默认返回 404，仅放行四个不含 `-debug` 的 Stable APK 命名；正式客户别名与生命周期发布器生成的不可变 token 目录都受该白名单限制。
 
-官网目标正式首发版本 `1.0.0 (63)` 已完成本地 Stable Build，pending manifest SHA-256 为 `B0FE890BA2F5D542D1A8C2DB26611287482EB68385A49A0AEE9F9640E0159EF9`；但 code62→63 真机升级、Finalize 和 APK 生产部署尚未完成，不能切换正式下载。生产生命周期策略仍为 `2.7.14 (59)` Debug；客户页已于 2026-08-13 原子切换为失败关闭状态，四个旧 Debug 公网 URL 已由 Nginx 封为 404。在 finalized 证据就绪前页面必须继续失败关闭。
+官网目标正式首发版本 `1.0.0 (65)` 已从 A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 完成本地 Stable Build，pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`；但 code62→65 真机升级、Finalize、`v1.0.0` tag 和 APK 生产部署尚未完成，不能切换正式下载。生产生命周期策略仍为 `2.7.14 (59)` Debug；客户页已于 2026-08-13 原子切换为失败关闭状态，四个旧 Debug 公网 URL 已由 Nginx 封为 404。在 finalized 证据就绪前页面必须继续失败关闭。旧 code63、code64 候选只保存在本机私有 superseded 目录，不得进入客户 HTML、脚本、下载目录或生产部署。MariaDB 61—65 两轮隔离实跑 PASS 不等同生产部署；此前生产在迁移 62 失败的尝试已完整回滚，当前 code65 未部署。
 
 ## 客户页安全修复事务
 
@@ -71,7 +71,7 @@ python download-site/scripts/deploy-site-security-remediation.py `
 
 ## 对内 APK 短时下载源
 
-`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。它只接受两条冻结轨道：`Debug 2.7.15 (60)` 与仍为 `pending` 的 `Stable 1.0.0 (63)`；每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。默认 dry-run 会用 `aapt2`、`apksigner`、文件大小和 SHA-256 复核八个真实 APK，全程不读取签名秘密、不连接服务器：
+`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。Debug 轨道固定为 `2.7.15 (60)`；Stable candidate 轨道从当前 release manifest 和 release identity 动态读取 `1.0.0 (65)`，并拒绝低于 code64、身份不一致、非 pending 或非 Stable 的候选。每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。默认 dry-run 会用 `aapt2`、`apksigner`、文件大小和 SHA-256 复核八个真实 APK，全程不读取签名秘密、不连接服务器：
 
 ```powershell
 python download-site/scripts/deploy-internal-apks.py

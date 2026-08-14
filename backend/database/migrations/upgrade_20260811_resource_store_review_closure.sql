@@ -24,6 +24,25 @@ CREATE TABLE IF NOT EXISTS upload_file_deletions (
         REFERENCES uploads (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS catalog_legacy_url_quarantines (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    catalog_kind VARCHAR(20) NOT NULL,
+    catalog_id BIGINT UNSIGNED NOT NULL,
+    admin_id BIGINT UNSIGNED NOT NULL,
+    app_id BIGINT UNSIGNED NOT NULL,
+    legacy_url MEDIUMTEXT NOT NULL,
+    legacy_url_sha256 CHAR(64) NOT NULL,
+    legacy_size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    legacy_file_sha256 CHAR(64) NOT NULL DEFAULT '',
+    reason_code VARCHAR(80) NOT NULL,
+    release_version VARCHAR(40) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_catalog_legacy_quarantine_row (catalog_kind, catalog_id, admin_id, app_id),
+    KEY idx_catalog_legacy_quarantine_app (admin_id, app_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS store_app_purchases (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     admin_id BIGINT UNSIGNED NOT NULL,
