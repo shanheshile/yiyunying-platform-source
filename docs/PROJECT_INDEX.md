@@ -4,13 +4,15 @@
 
 ## 当前基线
 
-- Android Stable Build-pending：`1.0.0 (65)`；A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 已完成四端 Build，从 XML 独立汇总为各 350/总 1,400 项单测，Release Lint 0 error/0 fatal、assemble、production signer 与身份检查通过；pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`
-- 内部升级基线：`2.8.0`（`versionCode 62`）已隔离到外层 `.rc/superseded/2.8.0-code62-pending/`，只用于 62→65 设备门禁，禁止 Finalize、tag、部署或公开；旧 code63、code64 候选另存本机私有 superseded 目录
-- 数据库验证：MariaDB 11.4.5 对迁移 61—65 连续实跑两轮并完成终态核验，全部 PASS；生产先前在迁移 62 失败的尝试已完整回滚，当前 code65 未部署
+- Android Stable Build-pending：`1.0.0 (66)`；A `9c645c035a290d2bfbec53022eb495c15265b29f` 已生成四端 Stable APK，pending manifest SHA-256 为 `F6EC5BD2F20F869DF1D0A4B4E7DE14EBB528B5033AD52D3E3F789BEC329D916F`
+- 旧 Debug 兼容 Build：四端 `1.0.0/code66 legacyCompat` 已生成，保持旧 Debug 包名与 signer、非 debuggable、internal-only；不能作为 Stable 或公开下载
+- 设备状态：用户后续自行真机验收；当前计划为 `risk-waiver`、状态只能是 `pending-user-validation`，不得写成 `passed`
+- 历史基线：上一轮 code65 已移到 `D:\易运盈\superseded-releases\1.0.0-code65-old-source-3a78b8c1`；`2.8.0/code62` 仍在隔离目录，只能用于用户后续的 code62→66 Stable 设备验证，禁止 Finalize、tag、部署或公开
+- 数据库验证：MariaDB 11.4.5 对迁移 61—65 连续实跑两轮并完成终态核验，全部 PASS；生产先前在迁移 62 失败的尝试已完整回滚，当前 code66 未部署
 - 线上 Debug 测试版：`2.7.14`（`versionCode 59`）；四端非强制更新已上线，58→59 可更新、59→59 无更新
 - 客户端形态：用户端、管理员端、授权端、总控端
 - 服务端：PHP API、MySQL 数据库、WebSocket/TURN/推送等外部基础设施
-- 下载站：正式官网、四角色下载中心、13 个系统接入示例、58 条后端路由与复制/分享/打印/示例格式切换/打开安装指引
+- 下载站：正式官网、四角色下载中心、13 个系统接入示例、60 条后端路由与复制/分享/打印/接口搜索/示例格式切换/打开安装指引
 - 历史说明：由本机留存源码包、发布清单、校验和及功能归档重建，不伪造旧 Git 提交
 
 ## 目录导航
@@ -29,7 +31,7 @@
 - [全量需求与实施总纲](MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)：唯一主需求索引、编号、真实状态、实施顺序与完成定义
 
 - [项目总览](../README.md)
-- [1.0.0 Stable Build-pending 说明：code65 制品与 62→65 设备门禁](releases/1.0.0.md)
+- [1.0.0 Stable Build-pending 说明：code66 Stable、legacyCompat 与用户待真机验收](releases/1.0.0.md)
 - [2.8.0 隔离内部基线说明：禁止公开与 Finalize](releases/2.8.0.md)
 - [2.7.15 本地候选说明：管理重构、身份链与功能闭环](releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](releases/2.7.14.md)
@@ -75,9 +77,9 @@
 ## 阅读原则
 
 - “源码入口存在”不等于“生产环境已验收”。
-- 1.0.0 已形成 A、四包和 pending manifest，但固件虚拟化关闭、AVD 无 ADB、未安装 APK。完成 `2.8.0/code62 → 1.0.0/code65` 设备证据前禁止 Finalize、公开部署、打 `v1.0.0` 标签或归档；线上生命周期策略仍为 2.7.14，客户公开下载保持失败关闭。
-- 后续固定顺序为 62→65 真机门禁 → 证据 B → annotated tag `v1.0.0` → Finalize；精确 B 与有效 tag 只按 finalized manifest/Git refs 回读。
+- 1.0.0/code66 已形成 A、Stable 四包、legacyCompat 四包和 pending manifest，但未安装 APK、未 Finalize 或部署。用户将后续完成真机验收；risk-waiver 只允许设备状态保持 `pending-user-validation`，不能写成通过。线上生命周期策略仍为 2.7.14，客户公开下载保持失败关闭。
+- 后续固定顺序为 code66 元数据/文档形成证据 B → annotated tag `v1.0.0` → 完整设备证据与一次性 risk-waiver 二选一 → Finalize；精确 B、有效 tag 和设备状态只按 finalized manifest/Git refs 回读。
 - 历史归档用于追溯，当前可发布状态以当前源码、构建结果和发布清单为准。
 - 涉及资金、权限、隐私、通话、推送和升级的能力，必须经过服务端、数据库及真机联合验收。
 - 文档中的未来方向是规划，不应被解释为已经交付。
-- 1.0.0 Stable Build 已通过，但缺少真实设备升级、Finalize 与生产/公网验收，仍不能称为正式商业 Release。
+- 1.0.0/code66 Stable 与 legacyCompat Build 已完成，但真机仍为用户待验收，且缺少 Finalize 与生产/公网验收，仍不能称为已上线正式商业 Release。

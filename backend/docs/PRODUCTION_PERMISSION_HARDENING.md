@@ -51,7 +51,7 @@
 | `/srv/yiyunying-internal-apks/current` | `root:www` | `0750` | `0640` | Nginx/FPM 可读，不可写 |
 | 内部下载 secret | `root:root` | `0700` | `0600` | 不可访问 |
 
-不要对 STT 使用 `chmod -R 0640`、`chmod -R 0750` 或重新复制去重。正式 runtime 必须按 `PRODUCTION_STT_RUNTIME.md` 从固定哈希的离线 bundle 新建到 `releases` 并原子切换 `current`；不得从旧 www 可写字节重建。legacy 三目录继续保留且不改拓扑，供旧 Debug 回退。权限工具不会修改 STT；apply 前会要求整树 owner 为 `root`、group 为 `www`，拒绝任何 owner 为 `www` 的依赖，验证 legacy 链接不逃逸，并对正式 releases 额外拒绝全部 hardlink。
+不要对 STT 使用 `chmod -R 0640`、`chmod -R 0750` 或重新复制去重。正式 runtime 必须按 `PRODUCTION_STT_RUNTIME.md` 从固定哈希的离线 bundle 新建到 `releases` 并原子切换 `current`；不得从旧 www 可写字节重建。legacy 三目录继续保留且不改拓扑，供旧 Debug 回退。权限工具只在另行提供 `--stt-maintenance-confirmed www-processes-stopped-stt-backup-reviewed`、确认全部 `www` 进程已停止，并且 STT 节点仅落入受审的 0775/0664/0750/0640 可修复矩阵时，才消费预先冻结的 NUL inventory：目录设为 `root:www 0750`、`*/bin/*` 普通文件设为 `root:www 0750`、其他普通文件设为 `root:www 0640`、symlink 只用 `chown -h` 改为 `root:www`。它不会复制、去重或改写文件内容与链接目标；未知模式、特殊节点、逃逸链接、正式 release hardlink 或扫描前后内容/拓扑变化仍会失败关闭。
 
 STT 门禁不是静态 `test -x`。矩阵和链接检查通过后，有受信 `current` 时必须优先用 `current/python/bin/python3`，否则才用 legacy `venv/bin/python3`；随后以 `www` 的空环境、根目录工作目录运行隔离标准库与 `faster_whisper.WhisperModel` 两个无写入探针。`-B` 禁止生成 pyc；探针失败即阻断，不会尝试在线修复或下载模型。
 
@@ -66,7 +66,7 @@ STT 门禁不是静态 `test -x`。矩阵和链接检查通过后，有受信 `c
 7. 用 `nginx-uploads-static-only.conf.example` 替换原主站的 `location /uploads/`，不能同时保留两个相同 location。先 `nginx -t`，暂不释放维护。
 8. 再跑 dry-run，但不要把“exit 0 / 所有权限已经正确”误当成 apply 的前置条件。`APPLY_READY_STRUCTURE_FUNCTION=no` 才表示结构/功能阻断：未知路径或类型、symlink/hardlink、特殊节点/挂载点、危险上传或发布 orphan、STT 矩阵/真实 www 运行探针、FPM socket、扫描期 shape 稳定性任一失败都禁止 apply。`APPLY_READY_STRUCTURE_FUNCTION=yes` 且 `EXPECTED_PERMISSION_DRIFT=yes` 表示仅有 apply 预期修复的 owner/group/mode 漂移；`WILL_CREATE_PRIVATE_UPLOADS=yes` 表示唯一允许由事务创建的目录尚不存在。这两类预期状态仍会令 dry-run 返回 2，但在写入已停止、备份已复核且结构/功能项为 yes 时属于 apply-ready，不应要求先手工 chmod 或 mkdir。只有 `AUDIT_RESULT=pass` 才返回 0。
 9. 审计从整棵 backend 的路径、节点类型、device、inode 和 link count 生成扫描前/后 shape hash；完整覆盖 backend 根与顶层普通文件、public 根与所有白名单子树、storage/private、deploy-backups 和 STT。扫描期间任一树形变化、未知 symlink/hardlink、特殊节点或跨设备挂载点均 fail closed，避免 `find -xdev` 静默漏扫子树。
-10. apply 会先在 `/www/backup/yiyunying/permission-hardening-.../` 写入 root-only 的完整 ACL/owner/mode 快照、SHA-256、整树 shape hash，再生成 NUL 分隔且带 SHA-256 的精确变更清单。清单与“除 STT 外的整树节点集合”哈希必须完全一致，并记录每个原节点的 path/type/device/inode；随后只逐项消费清单，禁止对未经清点的现场 `find -exec chmod/chown`。
+10. apply 会先在 `/www/backup/yiyunying/permission-hardening-.../` 写入 root-only 的完整 ACL/owner/mode 快照、SHA-256、整树 shape hash，再生成 NUL 分隔且带 SHA-256 的精确变更清单。清单与整棵 backend（包括 STT）的受管节点集合哈希必须完全一致，并记录每个原节点的 path/type/device/inode；随后只逐项消费清单，禁止对未经清点的现场 `find -exec chmod/chown`。STT 还单独保存内容/拓扑承诺与 symlink 原 owner/group，供失败时精确恢复。
 11. apply 在权限变更前创建 `transaction-ledger.tsv`。唯一允许的新目录集合固定为“原先不存在时的空 `storage/private/uploads`”；其创建前先写 ledger，创建后立即冻结 expected post-classified、expected post-shape 和新目录 inode/type 回执。cache/logs/tmp/uploads/private/uploads/public/uploads 的每个随机探针也在创建前写入 ledger；正常探针创建和删除均以 www 身份执行。
 12. 写 committed 回执前必须再次执行完整结构/分类检查、原 inventory SHA-256 与 path/type/device/inode 复核、唯一新目录身份复核、整棵 expected post-shape、精确 owner/group/mode 矩阵、FPM socket 和真实 STT www 探针；不是只复查 STT。维护期同名替换或新增任何异物都会进入失败 trap。
 13. 任一失败 trap 先按 ledger 删除探针，再精确 `rmdir` 本事务新建的空目录，然后恢复 ACL 并核对原 shape hash。任何探针未删、目录非空、ledger 损坏、ACL 恢复失败、shape 不一致或状态文件写入失败，最终状态只能是 `recovery_required`（退出 97），绝不能写 `restored`。禁止 `rmdir ... || true` 吞错。
@@ -112,7 +112,7 @@ python backend/tools/harden-production-permissions.py `
 - apply 只允许消费校验过的 NUL inventory，不允许 `find -exec chmod/chown` 直接改未经清点的目标；
 - `.env` 只能为 root:www 0640，www 可读不可写；
 - symlink、Windows reparse、非预期 hardlink、未知路径和 public orphan 均 fail closed；
-- STT 只做 root:www 只读/可执行/链接边界门禁，并真实以 www 运行隔离 Python 与 faster-whisper import；权限工具不猜测或重写其执行位；
+- STT 先做可修复矩阵、内容/拓扑、链接和真实路径门禁，再按冻结 inventory 精确恢复执行位与只读权限，并真实以 www 运行隔离 Python 与 faster-whisper import；权限工具不猜测未列入 inventory 的节点；
 - 动态故障注入必须证明：正常失败能删除 ledger 探针/新目录并写 `restored`；目录非空或 ACL 恢复失败均退出 97 且只写 `recovery_required`；未知非 STT hardlink 会被整树门禁拒绝；提交前新增异物或同名替换 inventory 节点均被 post-classified/inode+type/shape 门禁捕获并进入 `recovery_required`；
 - Nginx uploads 使用 `^~`、禁脚本/SVG、禁 symlink、仅 GET/HEAD、nosniff，且不含 fastcgi。
 

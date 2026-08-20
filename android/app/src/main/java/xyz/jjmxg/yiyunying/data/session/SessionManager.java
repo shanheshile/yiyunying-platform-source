@@ -8,6 +8,7 @@ import androidx.annotation.Nullable;
 import xyz.jjmxg.yiyunying.BuildConfig;
 import xyz.jjmxg.yiyunying.domain.AppEdition;
 import xyz.jjmxg.yiyunying.domain.Role;
+import java.util.List;
 import java.util.UUID;
 
 public final class SessionManager implements SessionProvider {
@@ -124,6 +125,16 @@ public final class SessionManager implements SessionProvider {
     @Override
     public String baseUrl() {
         return preferences.getString(KEY_BASE_URL, BuildConfig.DEFAULT_API_BASE_URL);
+    }
+
+    @Override
+    public List<String> baseUrls() {
+        return EndpointPolicy.configuredRoutes(
+            baseUrl(),
+            BuildConfig.API_BASE_URLS,
+            BuildConfig.ALLOW_HTTP_ENDPOINTS,
+            BuildConfig.ENABLE_API_FAILOVER
+        );
     }
 
     @Override
@@ -258,6 +269,12 @@ public final class SessionManager implements SessionProvider {
         final String buildBase;
         try {
             buildBase = EndpointPolicy.normalize(BuildConfig.DEFAULT_API_BASE_URL);
+            EndpointPolicy.configuredRoutes(
+                buildBase,
+                BuildConfig.API_BASE_URLS,
+                BuildConfig.ALLOW_HTTP_ENDPOINTS,
+                BuildConfig.ENABLE_API_FAILOVER
+            );
         } catch (IllegalArgumentException exception) {
             // Do not crash before LoginActivity can show its Chinese configuration error. The
             // invalid build must also never fall back to a previously persisted endpoint.

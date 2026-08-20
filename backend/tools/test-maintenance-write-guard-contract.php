@@ -77,6 +77,11 @@ $appIdentityMismatchRejected = static function (Request $request) use ($provided
 };
 $ipAllowlisted = new ReflectionMethod(Yiyunying\Services\LifecycleService::class, 'clientIpAllowlisted');
 $ipAllowlisted->setAccessible(true);
+$maintenanceContextStart = strpos($source['lifecycle'], 'public static function maintenanceContextForApp');
+$activeMaintenanceStart = strpos($source['lifecycle'], 'public static function activeMaintenance');
+$maintenanceContextSource = ($maintenanceContextStart !== false && $activeMaintenanceStart !== false)
+    ? substr($source['lifecycle'], $maintenanceContextStart, $activeMaintenanceStart - $maintenanceContextStart)
+    : '';
 
 $checks = [
     'only state-changing HTTP methods enter the guard' =>
@@ -241,6 +246,10 @@ $checks['public lifecycle and write guard share one active-policy selector'] =
     && str_contains($source['guard'], 'LifecycleService::activeMaintenance($context, $request->clientIp())')
     && substr_count($source['lifecycle'], 'FROM maintenance_policies m') === 1;
 
+$checks['maintenance context query uses columns present in the current admin schema'] =
+    str_contains($maintenanceContextSource, 'AND a.status = 1')
+    && !str_contains($maintenanceContextSource, 'a.deleted_at');
+
 $checks['policy matching is status and time bounded and tenant scoped'] =
     str_contains($source['lifecycle'], "m.edition_code IN ('all', ?)")
     && str_contains($source['lifecycle'], 'm.status = 1')
@@ -273,14 +282,15 @@ $checks['valid bearer token rejects every explicit cross-application identity'] 
     );
 
 $httpExceptionCatch = strpos($source['guard'], 'catch (HttpException $exception)');
-$throwableCatch = strpos($source['guard'], 'catch (Throwable)');
+$throwableCatch = strpos($source['guard'], 'catch (Throwable $exception)');
 $checks['intentional identity errors are rethrown before generic database fail closed'] =
     $httpExceptionCatch !== false && $throwableCatch !== false && $httpExceptionCatch < $throwableCatch
     && str_contains($source['guard'], "catch (HttpException \$exception) {\n            throw \$exception;\n        }");
 
 $checks['maintenance lookup failure is fail closed with a generic 503'] =
-    str_contains($source['guard'], 'catch (Throwable)')
+    str_contains($source['guard'], 'catch (Throwable $exception)')
     && str_contains($source['guard'], "'reason_code' => 'maintenance_state_unavailable'")
+    && str_contains($source['guard'], "config('app.debug', false)")
     && substr_count($source['guard'], "throw new HttpException(") >= 2
     && substr_count($source['guard'], "\n                503,\n                503,") >= 1;
 

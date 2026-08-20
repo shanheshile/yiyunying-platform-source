@@ -3,7 +3,7 @@
 clear_env = no
 env[APP_ENV] = production
 env[APP_DEBUG] = false
-env[APP_URL] = http://appht.jjmxg.xyz
+env[APP_URL] = https://appht.jjmxg.xyz
 env[DB_HOST] = 127.0.0.1
 env[DB_PORT] = 3306
 env[DB_NAME] = appht

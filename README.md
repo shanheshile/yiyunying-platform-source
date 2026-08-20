@@ -2,7 +2,7 @@
 
 易运盈是一套面向 Android 的多角色社区与即时通信平台。本仓库是可交接、可复现构建的完整维护源码，包含 Android 四端、PHP/MySQL API、下载中心以及数据库初始化脚本。
 
-正式首发候选 `1.0.0 (65)` 已从源码提交 A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 完成四端生产签名 Stable Build；schema 4 pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`。从四端 Gradle XML 独立汇总的 1,400 项单测、Release Lint、assemble 和签名/身份检查通过，但 code62→65 真实设备升级尚未执行，因此不能 Finalize、部署、公开发布、创建 `v1.0.0` 标签或称为已上线。旧 code63、code64 候选均已从发布工作目录移入本机私有 superseded 目录；原 `2.8.0 (62)` 制品仍只作为隔离的内部升级基线；线上生命周期策略仍是既有 `2.7.14 (59)` Debug 测试版，客户公开下载保持失败关闭。
+正式首发候选 `1.0.0 (66)` 已从源码提交 A `9c645c035a290d2bfbec53022eb495c15265b29f` 完成四端生产签名 Stable Build；schema 4 manifest 仍为 `pending`，设备计划为 `risk-waiver`。同版本四端 `legacyCompat` 也已构建，用于旧 Debug 包名的受控兼容升级。真机验证由用户后续完成，当前只能标记 `pending-user-validation`，不能写成 `passed`；本轮尚未 Finalize、部署、公开发布或创建 `v1.0.0` 标签。上一轮 `1.0.0/code65` 已移到 `D:\易运盈\superseded-releases\1.0.0-code65-old-source-3a78b8c1`，只作历史核验；线上生命周期策略仍是既有 `2.7.14 (59)` Debug 测试版，客户公开下载保持失败关闭。
 
 本仓库区分“存在源码入口”和“已经通过生产验收”。页面、按钮或接口存在并不自动代表业务闭环完成；完整产品范围、实施顺序和验收定义以[全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)为主，当前能力边界、阻塞项和证据另见[当前状态](docs/CURRENT_STATUS.md)与[需求追踪](docs/REQUIREMENTS_TRACEABILITY.md)。
 
@@ -38,7 +38,7 @@
 - AI 问答、天气、新闻、语音转写、应用内语音/视频通话
 - 更新、维护、公告、下载中心、审计、反馈和运行状态
 
-## 1.0.0 Stable Build-pending（待设备验收）
+## 1.0.0/code66 Stable Build-pending（用户待真机验收）
 
 - 管理员端重构为“首页、源码示例、交流、我的”四栏，支持多应用切换、应用内功能入口、源码分类和管理员社区入口。
 - 登录页不再展示服务器地址、平台标识或应用标识；这些身份由开发者写入 `BuildConfig`，后端仍按角色校验账号、密码、KEY、应用唯一 ID、时效性 Token 与登录状态。
@@ -47,14 +47,15 @@
 - 软件内拍照/录像支持变焦和录像中聚焦；拍摄完成先在当前页面固定预览，确认后进入发送，取消后留在拍摄页重拍。
 - 论坛评论只直接展示主评论，子回复提供预览、更多、回复关系、只看相关以及时间/热度/综合排序和分页；同步完善群头像、群管理、主题字体、弹窗颜色、状态栏安全区、底部弹层手势和媒体堆叠跟随动画。
 - 默认登录凭据改为禁用占位并加入审计；发布链路增加固定主机密钥、备份/回滚、四包身份、完整下载、Range/ETag、策略原子激活与生产回读门禁。
-- 官方下载站覆盖四角色下载、十三个系统接入示例和 58 条精确后端路由；API 文档支持 cURL/Java/JavaScript 示例切换、复制、分享（Web Share 与复制链接降级）、打印样式、锚点/新窗口打开和 APK 安装与 SHA-256 校验指引。
-- `1.0.0 (65)` 已在干净源码 A 上重新完成 Stable Build：从四个 Gradle JUnit XML 目录独立汇总为四端各 350 项/合计 1,400 项单测，均 0 failure、0 error、0 skipped；四个 Release Lint XML 均为 0 error、0 fatal，四端 assemble、production signer 与 APK 身份检查通过。
-- Android 升级门禁已调整为同角色 `2.8.0/code62` 内部基线 → `1.0.0/code65` 正式候选，要求包名、production signer、UID、dataDir、启动、登录与数据连续；当前没有可用 ADB 设备，尚未执行安装。
-- MariaDB 11.4.5 隔离验证库已按固定顺序对迁移 61、62、63、64、65 连续实跑两轮，全部 exit 0 且最终结构/迁移标记验证 PASS。此前一次生产部署在迁移 62 处失败后已完整回滚；当前 code65 后端、数据库迁移和 APK 均未部署。
+- 官方下载站覆盖四角色下载、十三个系统接入示例和 60 条精确后端路由（新增上传与列表浏览闭环）；API 文档支持 cURL/Java/JavaScript 示例切换、复制、分享（Web Share 与复制链接降级）、打印样式、锚点/新窗口打开和 APK 安装与 SHA-256 校验指引。
+- `1.0.0 (66)` 已从干净源码 A `9c645c035a290d2bfbec53022eb495c15265b29f` 生成四个 Stable APK；manifest SHA-256 为 `F6EC5BD2F20F869DF1D0A4B4E7DE14EBB528B5033AD52D3E3F789BEC329D916F`，release identity 为 `DA8114FADBD08AD3B7DAE782AAC6DB24B89797A4F8BD72E6203728DA4261AEA5`。
+- 四个 `1.0.0/code66 legacyCompat` APK 也已生成，保持旧 Debug 包名和 signer、`debuggable=false`、HTTPS-only，只能用于内部兼容轨道，不能作为 Stable 或进入客户公网目录。
+- 用户将自行完成真机验证；当前没有设备证据，设备状态只能是 `pending-user-validation`。本次一次性 `risk-waiver` 只改变 Finalize 的证据选择，不代表 Stable `code62→66`、旧 Debug `code59/60（≤60）→66 legacyCompat`、登录或数据连续性已经通过。
+- MariaDB 11.4.5 隔离验证库已按固定顺序对迁移 61、62、63、64、65 连续实跑两轮，全部 exit 0 且最终结构/迁移标记验证 PASS。此前一次生产部署在迁移 62 处失败后已完整回滚；当前 code66 后端、数据库迁移和 APK 均未部署。
 
 APK 只嵌入公开的应用唯一 ID，不嵌入服务端 `app_secret`；轮换 secret 不会使 APK 失效。生产维护已完成独立随机密码、DPAPI 本机恢复材料、应用 secret 轮换和全部 access/refresh Token 撤销；无验证恢复渠道的账号只停用、不删除数据，平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 
-上述内容证明本地 Stable Build，不代表设备升级、Finalize、生产部署或公开发布完成。阶段说明见 [1.0.0 Stable Build-pending 说明](docs/releases/1.0.0.md)；被隔离的历史内部基线见 [2.8.0 Build-pending 说明](docs/releases/2.8.0.md)。
+上述内容证明本地 Stable 与 legacyCompat Build，不代表设备升级、Finalize、生产部署或公开发布完成。阶段说明见 [1.0.0 Stable Build-pending 说明](docs/releases/1.0.0.md)；被隔离的历史内部基线见 [2.8.0 Build-pending 说明](docs/releases/2.8.0.md)。
 
 ## 快速开始
 
@@ -68,9 +69,9 @@ Set-Location backend
 php -S 127.0.0.1:8788 -t public public/router.php
 ```
 
-直接导入只创建不可登录的禁用占位身份，不提供任何默认账号或默认密码。需要本地闭环测试时，
-按 [生产部署说明](backend/deploy/DEPLOY.md) 在一次性数据库会话中显式注入测试身份；上线时必须使用独立强口令和随机密钥，
-并通过环境变量配置数据库、邮件、推送、地图、AI、支付和 TURN 服务。
+直接导入只创建不可登录的禁用占位身份，不提供任何默认账号或默认密码。需要本地闭环测试时，可按
+[测试说明](docs/TESTING.md) 使用隔离 MariaDB 一键闭环，或按 [生产部署说明](backend/deploy/DEPLOY.md)
+在一次性数据库会话中显式注入测试身份；上线时必须使用独立强口令和随机密钥，并通过环境变量配置数据库、邮件、推送、地图、AI、支付和 TURN 服务。
 
 ### 2. Android
 
@@ -82,8 +83,13 @@ Set-Location android
 模拟器默认 API 地址是 `http://10.0.2.2:8788/`。真机或生产构建请使用 Gradle 参数或环境变量：
 
 ```powershell
-.\gradlew.bat assembleUserDebug -PapiBaseUrl=https://api.example.com/
+# 不可执行的地址格式示例；买断方必须替换为自己的服务器。
+.\gradlew.bat assembleUserDebug -PconnectionMode=self_host -PapiBaseUrl=https://api.your-company.example/
 ```
+
+官方 Stable 四端固定使用 `https://appht.jjmxg.xyz/`；源码买断自建版必须显式使用
+`self_host` 并配置买方自己的 HTTP/HTTPS 地址。多线路与 HTTP 风险门禁见
+`android/README.md`。
 
 ### 3. 下载中心
 
@@ -98,7 +104,7 @@ corepack pnpm export:static
 
 - [项目文档索引](docs/PROJECT_INDEX.md)
 - [全量需求与实施总纲](docs/MASTER_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)
-- [1.0.0 Stable Build-pending 说明：code65 制品与 62→65 设备门禁](docs/releases/1.0.0.md)
+- [1.0.0 Stable Build-pending 说明：code66 Stable、legacyCompat 与用户待真机验收](docs/releases/1.0.0.md)
 - [2.8.0 隔离内部基线说明：禁止公开与 Finalize](docs/releases/2.8.0.md)
 - [2.7.15 Debug 候选说明：管理重构、身份链与功能闭环](docs/releases/2.7.15.md)
 - [2.7.14 Debug 测试版说明：治理、媒体与可恢复更新](docs/releases/2.7.14.md)

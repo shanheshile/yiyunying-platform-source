@@ -1,6 +1,6 @@
 # 当前状态
 
-更新时间：2026-08-13
+更新时间：2026-08-15
 
 ## 状态口径
 
@@ -17,7 +17,7 @@
 
 ## 已确认事实
 
-- 当前 `1.0.0 (65)` 已完成本地 Stable Build 和 pending manifest；真机升级证据尚未生成。线上生命周期策略仍为非强制 Debug `2.7.14 (59)`，但客户官网已失败关闭，旧 Debug 公网下载 URL 已全部返回 404。
+- 当前 `1.0.0 (66)` 已从 A `9c645c035a290d2bfbec53022eb495c15265b29f` 完成本地四端 Stable Build 和四端 legacyCompat Build；Stable manifest 仍为 pending，设备计划为 `risk-waiver`。真机由用户后续验收，当前只能标记 `pending-user-validation`，绝不能写成 `passed`。线上生命周期策略仍为非强制 Debug `2.7.14 (59)`，客户官网保持失败关闭，旧 Debug 公网下载 URL 保持 404。
 - 仓库包含用户端、管理员端、授权端、总控端四种 Android 构建形态。
 - 后端采用 PHP API 与 MySQL，客户端依赖推送、WebSocket、TURN/STUN、地图、天气、语音识别等外部能力。
 - 本仓库只有从 `2.7.2` 建立的真实 Git 历史；更早历史由本机归档和发布证据重建，未伪造旧提交。
@@ -34,33 +34,35 @@
 - 下载站发布元数据只在全部校验通过后生成；
 - 发布目录采用暂存后切换，失败时回滚版本与元数据。
 
-线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线。本地 `1.0.0 (65)` 已完成 Stable Build，但尚未完成设备升级、Finalize 或发布；当前边界见 [1.0.0 Stable Build-pending 说明](releases/1.0.0.md)。
+线上 `2.7.14 (59)` 已作为非强制 Debug 测试更新上线。本地 `1.0.0 (66)` Stable 与 legacyCompat 已完成 Build，但尚未完成用户真机验收、Finalize 或发布；当前边界见 [1.0.0 Stable Build-pending 说明](releases/1.0.0.md)。
 
-## 2026-08-14 1.0.0 正式首发候选
+## 2026-08-15 1.0.0/code66 正式首发候选
 
 ### 已完成
 
-- Android、后端发布身份和官网包版本已统一为 `1.0.0 (65)`；`versionName` 是客户看到的正式首发版本，`versionCode=65` 保持 Android 安装序号严格大于内部 code62 和已隔离的旧 code63、code64 候选。
-- Build 源码 A：`3a78b8c1f5bae6cf49a7d4e5832f99c734371a78`；pending manifest SHA-256：`7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`；release identity SHA-256：`A797012310C84E14263D747AE92920C33B363E5A586615BD41241CD6DD099C65`。
+- Android、后端发布身份和官网包版本已统一为 `1.0.0 (66)`；`versionName` 是客户看到的正式首发版本，`versionCode=66` 保持 Android 安装序号严格大于内部 code62 和已隔离的旧 code63、code64、code65 候选。
+- Build 源码 A：`9c645c035a290d2bfbec53022eb495c15265b29f`；pending manifest SHA-256：`F6EC5BD2F20F869DF1D0A4B4E7DE14EBB528B5033AD52D3E3F789BEC329D916F`；release identity SHA-256：`DA8114FADBD08AD3B7DAE782AAC6DB24B89797A4F8BD72E6203728DA4261AEA5`。
 - 生产 signer 保持 `6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772`；正式 Build 必须从干净 A 重跑 Stable 验证并独立审计。
-- 从四个 Gradle JUnit XML 目录独立汇总：Android 四端各 350 项/合计 1,400 项单测均 0 failure、0 error、0 skipped；四个 Release Lint XML 均为 0 error、0 fatal，assemble、production signer 与独立 APK 身份检查通过。
-- 四包实际大小/SHA-256：用户端 85,927,165 字节 / `BAD4F06B2BB9B14AAA5EE9A4D7568F993F50B79DCD7747FEB37D5757D3BDEA23`，管理员 22,649,105 字节 / `448B74A57F6B40C95349421BA7AB37C5B080BD597F94CC5BABB77959210333C5`，授权平台 22,649,113 字节 / `5380E84D51D85EF63305D8980E2A49C0D0CA6CBD3AFBE376F6BB83D6183BB78D`，平台总控 22,649,105 字节 / `154E324E06609D34EDB0CD6E27031D9C4AC2D0E50A53A158B33A1ACACB314D6F`；统一 production signer 见 [1.0.0 说明](releases/1.0.0.md)。
-- 官网与接口文档完成四角色下载、13 个系统接入示例和 58 条精确路由；复制、分享/复制 canonical URL 降级、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开、APK 安装和 SHA-256 校验说明已通过 build、rendered HTML、静态导出、ESLint、敏感信息及原子部署合同测试。
+- 四个 code66 Stable APK 已生成；上一轮 code65 的 1,400 项测试、Release Lint 和 assemble 证据保留为 superseded 历史，不冒充本轮真机证据。
+- Stable 四包实际大小/SHA-256：用户端 85,927,165 字节 / `CB0C7A77A0DCEF60CF5247EABEF67D6A11FCE1E4C9ACD380230B52D83E26AAE6`，管理员 22,649,105 字节 / `9A9607D7CB32A8CCF43645B77D88EBA5F3EAB828963F9935F39EFFCE3A82A375`，授权平台 22,649,113 字节 / `BC56570E5F1E3B03FEAC116CB82CB8D2A7D156135A5BB39E47AFC5A13C3783E6`，平台总控 22,649,105 字节 / `9705A3528B15AC51EFE9303B97CC4B96A1ED311A9997A657366C96B126B53685`；统一 production signer 见 [1.0.0 说明](releases/1.0.0.md)。
+- 四个 code66 legacyCompat APK 也已生成，保持旧 Debug 包名与 signer、非 debuggable、HTTPS-only、internal-only；不能冒充 Stable 或进入客户公网目录。
+- 官网与接口文档完成四角色下载、13 个系统接入示例和 60 条精确路由；文件上传使用 multipart 示例并以列表/SHA-256 回读闭环，复制、分享/复制 canonical URL 降级、打印、cURL/Java/JavaScript 格式切换、锚点/新窗口打开、APK 安装和 SHA-256 校验说明已通过 build、rendered HTML、静态导出、ESLint、敏感信息及原子部署合同测试。
 - 2026-08-13 23:17（Asia/Shanghai）完成下载受众分层的生产安全切换：公开客户页只保留官网功能与接口文档，并对 pending 版本、文件名、包名、SHA、APK URL 和项目资产零输出；`/internal-downloads/` 不进入客户静态站；Nginx 仅允许目录版本与文件版本一致的四个 Stable APK 命名，其余 `/downloads/` 默认 404。四个 `2.7.14` Debug URL 独立公网回读均为 404，站点首页及脚本哈希与本地静态构建一致。
 - 生产 HTTPS 只读 HEAD 复核显示 2.7.14/2.7.15 的 source ZIP、Git bundle、delivery ZIP 和 project manifest 共 8 个历史私有资产 URL 全为 HTTP 404，未公开旧私有项目资产。
 - 生产维护已完成独立随机密码、本机 DPAPI 恢复材料、应用 secret 轮换与全部 access/refresh Token 撤销；无已验证恢复渠道账号只停用、不删除数据；平台 KEY、应用唯一 ID、卡密和 API key 未修改。
 
-### 唯一发布阻塞
+### 当前发布边界
 
 - 原 `2.8.0 (62)` pending 四包、manifest 与校验和已从 `releases/2.8.0/` 移到外层 `.rc/superseded/2.8.0-code62-pending/`，标记 `SUPERSEDED_INTERNAL_ONLY`；它只作同签名内部升级基线，禁止 Finalize、打 `v2.8.0` 标签、部署或公开。
-- 本机固件虚拟化关闭，`Yiyunying_API35` AVD 无法启动到 ADB，当前没有 APK 被安装。
+- 上一轮 code65 Stable 已移到 `D:\易运盈\superseded-releases\1.0.0-code65-old-source-3a78b8c1`，只作历史核验，禁止恢复到当前发布目录、Finalize、部署或公开。
+- 当前没有 APK 被安装，也没有真实设备升级、登录或数据连续证据；用户将后续自行完成真机验收。
 - 旧源码 A `ac574ed7923b826c29ccef2a681bf61fc09fdbb1` 的 code63 候选与旧源码 A `7bbf955f56394bd8af838b6e30cf5d57afbe7fcf` 的 code64 候选均已移入本机私有 superseded 目录，只作历史核验，禁止恢复、Finalize、部署或公开。
 - MariaDB 11.4.5 隔离验证库已按 61→62→63→64→65 顺序连续实跑两轮：十次迁移均 exit 0，迁移标记、migration62 列/索引/功能开关和 migration65 邮件表终态验证 PASS。该结果证明脚本顺序和幂等重跑，不等同生产部署。
-- 此前一次生产尝试在迁移 62 处失败，代码、数据库和维护状态已完整回滚并核验；当前 code65 后端、迁移和 APK 均未部署。
-- 设备门禁固定为同角色 `2.8.0/code62 → 1.0.0/code65`，允许两端 `versionName` 不同但强制包名、production signer、UID、dataDir 和启动连续；当前 ADB 为空，尚未真实执行。
-- 因此严禁 Finalize、部署、公开下载、激活正式更新策略、创建 `v1.0.0` 标签或归档。线上仍是 `2.7.14 (59)`。
+- 此前一次生产尝试在迁移 62 处失败，代码、数据库和维护状态已完整回滚并核验；当前 code66 后端、迁移和 APK 均未部署。
+- 本次 manifest 选择 `risk-waiver`。在 B 与精确指向 B 的 annotated tag 就绪前不存在有效豁免；生成后设备状态也只能是 `pending-user-validation`，绝不能写成 `passed`。完整设备证据与风险豁免必须二选一。
+- 在完成证据 B、tag、设备门禁二选一和 Finalize 前，严禁部署、公开下载或激活正式更新策略。线上仍是 `2.7.14 (59)`。
 - 当前本地和 origin 均不存在 `v1.0.0` tag，APK 未部署，客户官网未开放正式下载。
-- 下一步顺序为：真实设备 62→65 → 提交证据 B → annotated tag `v1.0.0` → Finalize → 重新备份/部署/公网回读 → 推送/归档。
+- 下一步顺序为：提交 code66 元数据/文档形成 B → annotated tag `v1.0.0` → 完整设备证据与一次性 risk-waiver 二选一 → Finalize → 重新备份/部署/公网回读 → 推送/归档。用户真机验收在完成前始终保持 pending。
 
 ## 历史快照：2026-08-13 2.7.15 本地源码候选（已由 2.8.0 取代）
 

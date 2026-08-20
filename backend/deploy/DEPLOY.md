@@ -104,7 +104,7 @@ bash deploy/install-local-stt.sh
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/smoke-speech-transcription.ps1 `
-  -BaseUrl http://appht.jjmxg.xyz
+  -BaseUrl https://appht.jjmxg.xyz
 ```
 
 脚本会上传真实中文 WAV，验证首次本地推理及第二次缓存读取，并自动清理临时租户数据。
@@ -134,7 +134,7 @@ storage/voice-call-ice-servers.json
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/smoke-voice-calls.ps1 `
-  -BaseUrl http://appht.jjmxg.xyz
+  -BaseUrl https://appht.jjmxg.xyz
 ```
 
 脚本会明确断言通话接口返回 TURN 中继服务器，而不是只检查 STUN。

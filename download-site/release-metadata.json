@@ -2,26 +2,28 @@
     "schemaVersion":  4,
     "channel":  "Stable",
     "versionName":  "1.0.0",
-    "versionCode":  65,
-    "buildSourceCommit":  "3a78b8c1f5bae6cf49a7d4e5832f99c734371a78",
+    "versionCode":  66,
+    "buildSourceCommit":  "9c645c035a290d2bfbec53022eb495c15265b29f",
     "releaseEvidenceCommit":  null,
     "releaseTag":  "v1.0.0",
     "finalizationStatus":  "pending",
-    "releaseIdentitySha256":  "a797012310c84e14263d747ae92920c33b363e5a586615bd41241cd6dd099c65",
+    "deviceValidationPlan":  "risk-waiver",
+    "releaseIdentitySha256":  "da8114fadbd08ad3b7dae782aac6db24b89797a4f8bd72e6203728da4261aea5",
     "connectionIdentity":  {
                                "apiBaseUrl":  "https://appht.jjmxg.xyz/",
                                "appKeySha256":  "05872e1f0465c7ab48df13e37dfefa3a95c882c268f3836264ed83f6c0b9f264",
                                "platformKeySha256":  "e8260e22cd152015735ab5a05e392fed162b3e71d639f4392fb8550ae886ef54",
                                "authorizedPlatformKeySha256":  "9d300ae4617dc8f0ebc22444733ab3b8681636ac74ce2676059c7754eab7ff82"
                            },
-    "releaseDate":  "2026-08-14",
-    "generatedAt":  "2026-08-14T04:58:44.6368749+08:00",
+    "releaseDate":  "2026-08-15",
+    "generatedAt":  "2026-08-15T06:00:07.6146459+08:00",
     "downloadRootBase":  "/downloads",
     "releaseNotes":  [
                          "重构管理端主页、源码示例、交流与我的四栏，并完善多应用切换和权限管制",
                          "新增用户端短视频与快捷业务模块，完善群聊、论坛、资源、商城和审核闭环",
                          "优化拍摄变焦与录像聚焦、拍后预览确认、主题字体按钮颜色和系统栏适配",
-                         "补齐登录身份、迁移门禁、四端发布证据和最小功能闭环测试"
+                         "补齐登录身份、迁移门禁、四端发布证据和最小功能闭环测试",
+                         "真机验证待用户完成（不得声明真机通过）"
                      ],
     "releases":  [
                      {
@@ -33,10 +35,10 @@
                          "fileName":  "yiyunying-user-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.user",
                          "versionName":  "1.0.0-user",
-                         "versionCode":  65,
+                         "versionCode":  66,
                          "sizeBytes":  85927165,
                          "size":  "81.95 MB",
-                         "sha256":  "BAD4F06B2BB9B14AAA5EE9A4D7568F993F50B79DCD7747FEB37D5757D3BDEA23",
+                         "sha256":  "CB0C7A77A0DCEF60CF5247EABEF67D6A11FCE1E4C9ACD380230B52D83E26AAE6",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "blue"
                      },
@@ -49,10 +51,10 @@
                          "fileName":  "yiyunying-admin-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.admin",
                          "versionName":  "1.0.0-admin",
-                         "versionCode":  65,
+                         "versionCode":  66,
                          "sizeBytes":  22649105,
                          "size":  "21.60 MB",
-                         "sha256":  "448B74A57F6B40C95349421BA7AB37C5B080BD597F94CC5BABB77959210333C5",
+                         "sha256":  "9A9607D7CB32A8CCF43645B77D88EBA5F3EAB828963F9935F39EFFCE3A82A375",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "green"
                      },
@@ -65,10 +67,10 @@
                          "fileName":  "yiyunying-authorized-platform-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.authorized",
                          "versionName":  "1.0.0-authorized-platform",
-                         "versionCode":  65,
+                         "versionCode":  66,
                          "sizeBytes":  22649113,
                          "size":  "21.60 MB",
-                         "sha256":  "5380E84D51D85EF63305D8980E2A49C0D0CA6CBD3AFBE376F6BB83D6183BB78D",
+                         "sha256":  "BC56570E5F1E3B03FEAC116CB82CB8D2A7D156135A5BB39E47AFC5A13C3783E6",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "amber"
                      },
@@ -81,10 +83,10 @@
                          "fileName":  "yiyunying-platform-owner-v1.0.0.apk",
                          "packageName":  "xyz.jjmxg.yiyunying.platformowner",
                          "versionName":  "1.0.0-platform-owner",
-                         "versionCode":  65,
+                         "versionCode":  66,
                          "sizeBytes":  22649105,
                          "size":  "21.60 MB",
-                         "sha256":  "154E324E06609D34EDB0CD6E27031D9C4AC2D0E50A53A158B33A1ACACB314D6F",
+                         "sha256":  "9705A3528B15AC51EFE9303B97CC4B96A1ED311A9997A657366C96B126B53685",
                          "signerSha256":  "6CF7B18AF125A1D44E28FEAEE7A5C6D39CA0BBAE89529CA43A8C200B21DB9772",
                          "accent":  "charcoal"
                      }
@@ -115,5 +117,5 @@
                               "description":  "列出项目下载文件体积、SHA-256、Build 源码提交、证据提交和最终注释标签。"
                           }
                       ],
-    "pendingManifestSha256":  "7cb1fbc32a90d205d0bc8070b425f55c4416b0af00d36010be406fc1773bbe5b"
+    "pendingManifestSha256":  "f6ec5bd2f20f869df1d0a4b4e7de14ebb528b5033ad52d3e3f789bec329d916f"
 }

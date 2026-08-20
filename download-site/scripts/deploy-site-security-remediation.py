@@ -73,9 +73,17 @@ FORBIDDEN_GENERIC_TEXT = (
     "release-manifest.json",
     "SHA256SUMS.txt",
 )
-FAIL_CLOSED_MARKERS = (
-    "正式版尚未开放",
-    "当前页面不会公开候选版本、安装包名称、校验值或下载地址",
+FAIL_CLOSED_MARKER_SETS = (
+    (
+        "接入资料已开放，客户端仍在发布验收",
+        "下载区在完成正式发布验收前保持关闭",
+    ),
+    # Keep validating already-generated pre-redesign safe trees during offline
+    # rollback tests. Current exports must use the first, customer-facing set.
+    (
+        "正式版尚未开放",
+        "当前页面不会公开候选版本、安装包名称、校验值或下载地址",
+    ),
 )
 OLD_DEBUG_PATHS = (
     "/downloads/2.7.14/yiyunying-user-v2.7.14-debug.apk",
@@ -316,9 +324,11 @@ def validate_site_tree(site_dir: Path, metadata_path: Path) -> list[SiteFile]:
         raise RuntimeError("static-dist contains a download attribute")
 
     index_text = text_by_relative.get("index.html", "")
-    for marker in FAIL_CLOSED_MARKERS:
-        if marker not in index_text:
-            raise RuntimeError(f"fail-closed customer marker is missing: {marker}")
+    if not any(
+        all(marker in index_text for marker in markers)
+        for markers in FAIL_CLOSED_MARKER_SETS
+    ):
+        raise RuntimeError("fail-closed customer marker set is missing")
     site_script = text_by_relative.get("site.js", "")
     if "publicRelease" in site_script and not re.search(
         r"\bconst\s+publicRelease\s*=\s*null\s*;", site_script

@@ -13,7 +13,7 @@
 -- 任一层所需变量缺失或格式不正确时，该层及其下级只会创建随机不可认证、status=0 的占位数据。
 -- 不要把真实明文、哈希或密钥写回本文件，也不要把含真实变量的本地 SQL 文件提交到版本库。
 
-SET NAMES utf8mb4;
+SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 SET FOREIGN_KEY_CHECKS = 0;
 
 CREATE TABLE IF NOT EXISTS `schema_migrations` (
@@ -4294,19 +4294,21 @@ SET @yy_bootstrap_user_ready = IF(
 
 SET @yy_disabled_password_hash = CONCAT('disabled$', SHA2(CONCAT(UUID(), UUID(), RAND(), NOW(6)), 256));
 SET @yy_disabled_app_secret_hash = SHA2(CONCAT(UUID(), UUID(), RAND(), NOW(6)), 256);
-SET @yy_root_platform_key = IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_PLATFORM_KEY), 'bootstrap-disabled-owner');
-SET @yy_root_account = IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_ACCOUNT), 'bootstrap-disabled-owner');
-SET @yy_root_password_hash = IF(@yy_bootstrap_root_ready = 1, @YY_BOOTSTRAP_ROOT_PASSWORD_HASH, @yy_disabled_password_hash);
-SET @yy_authorized_platform_key = IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_PLATFORM_KEY), 'bootstrap-disabled-authorized');
-SET @yy_authorized_account = IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_ACCOUNT), 'bootstrap-disabled-authorized');
-SET @yy_authorized_password_hash = IF(@yy_bootstrap_authorized_ready = 1, @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH, @yy_disabled_password_hash);
-SET @yy_admin_account = IF(@yy_bootstrap_admin_ready = 1, TRIM(@YY_BOOTSTRAP_ADMIN_ACCOUNT), 'bootstrap-disabled-admin');
-SET @yy_admin_password_hash = IF(@yy_bootstrap_admin_ready = 1, @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH, @yy_disabled_password_hash);
-SET @yy_app_key = IF(@yy_bootstrap_app_ready = 1, TRIM(@YY_BOOTSTRAP_APP_KEY), 'bootstrap-disabled-app');
-SET @yy_app_secret_hash = IF(@yy_bootstrap_app_ready = 1, LOWER(@YY_BOOTSTRAP_APP_SECRET_HASH), @yy_disabled_app_secret_hash);
-SET @yy_user_uid = IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_UID), 'bootstrap-disabled-user');
-SET @yy_user_account = IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_ACCOUNT), 'bootstrap-disabled-user');
-SET @yy_user_password_hash = IF(@yy_bootstrap_user_ready = 1, @YY_BOOTSTRAP_USER_PASSWORD_HASH, @yy_disabled_password_hash);
+-- 调用方可能在 SOURCE 前、使用客户端默认 utf8mb4_general_ci 注入变量。
+-- 统一转换为表使用的排序规则，避免 MariaDB/MySQL 在后续等值查询时出现 1267 混用错误。
+SET @yy_root_platform_key = CONVERT(IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_PLATFORM_KEY), 'bootstrap-disabled-owner') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_root_account = CONVERT(IF(@yy_bootstrap_root_ready = 1, TRIM(@YY_BOOTSTRAP_ROOT_ACCOUNT), 'bootstrap-disabled-owner') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_root_password_hash = CONVERT(IF(@yy_bootstrap_root_ready = 1, @YY_BOOTSTRAP_ROOT_PASSWORD_HASH, @yy_disabled_password_hash) USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_authorized_platform_key = CONVERT(IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_PLATFORM_KEY), 'bootstrap-disabled-authorized') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_authorized_account = CONVERT(IF(@yy_bootstrap_authorized_ready = 1, TRIM(@YY_BOOTSTRAP_AUTHORIZED_ACCOUNT), 'bootstrap-disabled-authorized') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_authorized_password_hash = CONVERT(IF(@yy_bootstrap_authorized_ready = 1, @YY_BOOTSTRAP_AUTHORIZED_PASSWORD_HASH, @yy_disabled_password_hash) USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_admin_account = CONVERT(IF(@yy_bootstrap_admin_ready = 1, TRIM(@YY_BOOTSTRAP_ADMIN_ACCOUNT), 'bootstrap-disabled-admin') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_admin_password_hash = CONVERT(IF(@yy_bootstrap_admin_ready = 1, @YY_BOOTSTRAP_ADMIN_PASSWORD_HASH, @yy_disabled_password_hash) USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_app_key = CONVERT(IF(@yy_bootstrap_app_ready = 1, TRIM(@YY_BOOTSTRAP_APP_KEY), 'bootstrap-disabled-app') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_app_secret_hash = CONVERT(IF(@yy_bootstrap_app_ready = 1, LOWER(@YY_BOOTSTRAP_APP_SECRET_HASH), @yy_disabled_app_secret_hash) USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_user_uid = CONVERT(IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_UID), 'bootstrap-disabled-user') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_user_account = CONVERT(IF(@yy_bootstrap_user_ready = 1, TRIM(@YY_BOOTSTRAP_USER_ACCOUNT), 'bootstrap-disabled-user') USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @yy_user_password_hash = CONVERT(IF(@yy_bootstrap_user_ready = 1, @YY_BOOTSTRAP_USER_PASSWORD_HASH, @yy_disabled_password_hash) USING utf8mb4) COLLATE utf8mb4_unicode_ci;
 
 -- 1 级平台所有者：只有三项 ROOT 变量完整且安全时才启用，否则创建不可登录占位账号。
 INSERT INTO `platform_accounts`

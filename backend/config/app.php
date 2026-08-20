@@ -95,6 +95,7 @@ return [
         'user' => (string) $env('DB_USER', 'root'),
         'password' => (string) $env('DB_PASSWORD', ''),
         'charset' => 'utf8mb4',
+        'collation' => 'utf8mb4_unicode_ci',
     ],
     'security' => [
         'platform_token_ttl' => (int) $env('PLATFORM_TOKEN_TTL', 86400),

@@ -44,7 +44,10 @@ final class MaintenanceWriteGuard
             $maintenance = LifecycleService::activeMaintenance($context, $request->clientIp());
         } catch (HttpException $exception) {
             throw $exception;
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            if ((bool) config('app.debug', false)) {
+                error_log('[maintenance-write-guard] ' . get_class($exception) . ': ' . $exception->getMessage());
+            }
             throw new HttpException(
                 '暂时无法确认应用维护状态，请稍后重试',
                 503,

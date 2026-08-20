@@ -1,17 +1,24 @@
 "use client";
 
-import { Check, Clipboard, ExternalLink, Printer, Share2 } from "lucide-react";
+import { Check, Clipboard, ExternalLink, Printer, Search, Share2, X } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
+import { officialApiUrl } from "../public-api.mjs";
 
 type CodeFormat = "curl" | "java" | "javascript";
+
+export type EndpointSearchItem = {
+  method: string;
+  path: string;
+  purpose: string;
+  systemId: string;
+  systemTitle: string;
+};
 
 const CODE_FORMATS: ReadonlyArray<{ id: CodeFormat; label: string }> = [
   { id: "curl", label: "cURL" },
   { id: "java", label: "Java" },
   { id: "javascript", label: "JavaScript" },
 ];
-
-const SAFE_BASE_URL = "https://api.example.com";
 
 async function copyToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
@@ -66,7 +73,7 @@ function useTemporaryStatus(timeout = 2600) {
 }
 
 function parseRequest(raw: string) {
-  const curlMatch = raw.match(/curl\s+--request\s+(GET|POST|PUT|DELETE)\s+['"]https:\/\/api\.example\.com([^'"]+)['"]/i);
+  const curlMatch = raw.match(/curl\s+--request\s+(GET|POST|PUT|DELETE)\s+['"]https:\/\/appht\.jjmxg\.xyz(\/[^'"]+)['"]/i);
   const lineMatch = raw.match(/(?:^|\n)(GET|POST|PUT|DELETE)\s+(\/api\/[^\s；]+)/i);
   const method = (curlMatch?.[1] ?? lineMatch?.[1] ?? "GET").toUpperCase();
   const path = curlMatch?.[2] ?? lineMatch?.[2] ?? "/api/user/me";
@@ -88,7 +95,7 @@ function closureNotes(raw: string) {
 
 function makeSnippet(raw: string, format: CodeFormat) {
   const request = parseRequest(raw);
-  const url = `${SAFE_BASE_URL}${request.path}`;
+  const url = officialApiUrl(request.path);
   const notes = closureNotes(raw);
   const headers = [
     request.body ? ["Content-Type", "application/json"] : null,
@@ -180,6 +187,56 @@ export function DocsPageActions() {
       </div>
       <span className="action-status" role="status" aria-live="polite" aria-atomic="true">{status}</span>
     </div>
+  );
+}
+
+export function EndpointSearch({ catalog }: { catalog: EndpointSearchItem[] }) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
+  const results = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return catalog.filter((item) => [
+      item.method,
+      item.path,
+      item.purpose,
+      item.systemTitle,
+    ].some((value) => value.toLocaleLowerCase("zh-CN").includes(normalizedQuery))).slice(0, 12);
+  }, [catalog, normalizedQuery]);
+
+  return (
+    <section
+      className="endpoint-search"
+      aria-label="搜索公开接口目录"
+      data-endpoint-catalog={JSON.stringify(catalog)}
+    >
+      <div className="endpoint-search-field">
+        <Search aria-hidden="true" />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索接口路径、用途、方法或系统…"
+          aria-label="搜索 60 条公开接口"
+          autoComplete="off"
+        />
+        <button type="button" onClick={() => setQuery("")} aria-label="清空接口搜索" hidden={!query}><X aria-hidden="true" /></button>
+      </div>
+      <p role="status" aria-live="polite">
+        {normalizedQuery ? `找到 ${results.length} 条匹配结果（最多显示 12 条）` : `已索引 ${catalog.length} 条白名单接口；输入关键词后显示匹配项。`}
+      </p>
+      {normalizedQuery ? (
+        <ul>
+          {results.map((item) => (
+            <li key={`${item.method}:${item.path}`}>
+              <a href={`#${item.systemId}`}>
+                <code>{item.method}</code><span>{item.path}</span><small>{item.systemTitle} · {item.purpose}</small>
+              </a>
+            </li>
+          ))}
+          {results.length === 0 ? <li className="endpoint-search-empty">没有匹配的公开接口；请缩短关键词或按左侧系统目录浏览。</li> : null}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 

@@ -88,6 +88,8 @@ $required = @(
     'docs\CONTENT_MODERATION.md',
     'docs\RESOURCE_STORE_REVIEW.md',
     'docs\REQUIREMENT_VERIFICATION_20260721.md',
+    'tools\smoke.ps1',
+    'tools\run-minimum-closure-local.ps1',
     'tools\smoke-maximum.ps1',
     'tools\smoke-platform.ps1',
     'tools\smoke-exchange.ps1',

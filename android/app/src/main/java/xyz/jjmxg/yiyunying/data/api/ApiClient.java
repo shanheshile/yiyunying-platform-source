@@ -12,6 +12,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -76,7 +79,9 @@ public final class ApiClient {
             .readTimeout(25, TimeUnit.SECONDS)
             .writeTimeout(25, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
+            // ApiClient owns the conservative retry policy. Disabling OkHttp's
+            // transparent recovery prevents hidden replay of mutation bodies.
+            .retryOnConnectionFailure(false)
             .followRedirects(false)
             .followSslRedirects(false)
             .build();
@@ -84,7 +89,14 @@ public final class ApiClient {
 
     public RequestHandle enqueue(ApiRequest apiRequest, ApiCallback callback) {
         RequestHandle handle = new RequestHandle();
-        enqueueInternal(apiRequest, callback, handle, true);
+        final List<String> routes;
+        try {
+            routes = requestRoutes();
+        } catch (RuntimeException exception) {
+            dispatch(handle, callback, ApiResult.failure("服务器线路配置无效", exception));
+            return handle;
+        }
+        enqueueInternal(apiRequest, callback, handle, routes, 0, true);
         return handle;
     }
 
@@ -97,7 +109,7 @@ public final class ApiClient {
         RequestHandle handle = new RequestHandle();
         final Request request;
         try {
-            request = buildRequest(apiRequest);
+            request = buildRequest(apiRequest, session.baseUrl());
         } catch (RuntimeException exception) {
             dispatch(handle, callback, ApiResult.failure("缓存请求地址或参数无效", exception));
             return handle;
@@ -119,7 +131,7 @@ public final class ApiClient {
         ApiCallback callback
     ) {
         RequestHandle handle = new RequestHandle();
-        enqueueMultipartInternal(path, fileName, mimeType, fileBody, fields, callback, handle, true);
+        enqueueMultipartInternal(path, fileName, mimeType, fileBody, fields, callback, handle);
         return handle;
     }
 
@@ -130,8 +142,7 @@ public final class ApiClient {
         RequestBody fileBody,
         Map<String, String> fields,
         ApiCallback callback,
-        RequestHandle handle,
-        boolean allowRefresh
+        RequestHandle handle
     ) {
         final Request request;
         final String tokenBefore = session.accessToken();
@@ -163,23 +174,28 @@ public final class ApiClient {
             }
             @Override public void onResponse(Call call, Response response) {
                 ApiResult result = parseResponse(response);
-                if (allowRefresh && result.isAuthenticationFailure() && canRefreshUserToken() && refreshUserToken(tokenBefore)) {
-                    enqueueMultipartInternal(path, fileName, mimeType, fileBody, fields, callback, handle, false);
-                    return;
-                }
+                // Upload is a mutation. A 401 response must be returned without
+                // refreshing and replaying an already-consumed request body.
                 dispatch(handle, callback, result);
             }
         });
     }
 
 
-    private void enqueueInternal(ApiRequest apiRequest, ApiCallback callback, RequestHandle handle, boolean allowRefresh) {
+    private void enqueueInternal(
+        ApiRequest apiRequest,
+        ApiCallback callback,
+        RequestHandle handle,
+        List<String> routes,
+        int routeIndex,
+        boolean allowRefresh
+    ) {
         if (handle.isCancelled()) {
             return;
         }
         final Request request;
         try {
-            request = buildRequest(apiRequest);
+            request = buildRequest(apiRequest, routes.get(routeIndex));
         } catch (RuntimeException exception) {
             dispatch(handle, callback, ApiResult.failure("请求地址或参数无效", exception));
             return;
@@ -189,21 +205,36 @@ public final class ApiClient {
         call.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException exception) {
-                if (!handle.isCancelled()) {
-                    ApiResult cached = readOffline(apiRequest, request);
-                    dispatch(handle, callback, cached == null
-                        ? ApiResult.failure(networkMessage(exception), exception) : cached);
+                if (handle.isCancelled()) return;
+                if (RouteFailoverPolicy.canTryNext(apiRequest, routeIndex, routes.size())
+                        && RouteFailoverPolicy.isRetryableNetworkFailure(exception)) {
+                    enqueueInternal(apiRequest, callback, handle, routes, routeIndex + 1, allowRefresh);
+                    return;
                 }
+                ApiResult cached = readOffline(apiRequest, request);
+                dispatch(handle, callback, cached == null
+                    ? ApiResult.failure(networkMessage(exception), exception) : cached);
             }
 
             @Override
             public void onResponse(Call call, Response response) {
+                if (RouteFailoverPolicy.canTryNext(apiRequest, routeIndex, routes.size())
+                        && RouteFailoverPolicy.isTransientServerStatus(response.code())) {
+                    response.close();
+                    enqueueInternal(apiRequest, callback, handle, routes, routeIndex + 1, allowRefresh);
+                    return;
+                }
                 ApiResult result = parseResponse(response);
                 if (result.isSuccessful()) writeOffline(apiRequest, request, result);
-                if (allowRefresh && result.isAuthenticationFailure() && canRefreshUserToken()) {
+                if (allowRefresh
+                        && RouteFailoverPolicy.isReadOnlyMethod(apiRequest.method())
+                        && result.isAuthenticationFailure()
+                        && canRefreshUserToken()) {
                     String tokenBefore = session.accessToken();
                     if (refreshUserToken(tokenBefore)) {
-                        enqueueInternal(apiRequest, callback, handle, false);
+                        // Refresh is itself a single-route mutation. Retry the read on
+                        // the same selected route after the token update succeeds.
+                        enqueueInternal(apiRequest, callback, handle, routes, routeIndex, false);
                         return;
                     }
                 }
@@ -240,8 +271,8 @@ public final class ApiClient {
         return OfflineCachePolicy.resourceKey(namespace, request.url().toString());
     }
 
-    private Request buildRequest(ApiRequest apiRequest) {
-        HttpUrl resolved = resolveRelative(apiRequest.path());
+    private Request buildRequest(ApiRequest apiRequest, String baseUrl) {
+        HttpUrl resolved = resolveRelative(apiRequest.path(), baseUrl);
         HttpUrl.Builder url = resolved.newBuilder();
         for (Map.Entry<String, String> query : apiRequest.query().entrySet()) {
             url.addQueryParameter(query.getKey(), query.getValue());
@@ -276,17 +307,41 @@ public final class ApiClient {
     }
 
     private HttpUrl resolveRelative(String path) {
+        return resolveRelative(path, session.baseUrl());
+    }
+
+    private HttpUrl resolveRelative(String path, String baseUrl) {
         String value = path == null ? "" : path.trim();
         if (value.matches("(?i)^https?://.*")) {
             throw new IllegalArgumentException("API path must be relative to the configured server");
         }
-        HttpUrl base = HttpUrl.get(session.baseUrl());
+        HttpUrl base = HttpUrl.get(baseUrl);
         HttpUrl resolved = base.resolve(value.startsWith("/") ? value.substring(1) : value);
         if (resolved == null || !resolved.scheme().equals(base.scheme())
             || !resolved.host().equals(base.host()) || resolved.port() != base.port()) {
             throw new IllegalArgumentException("Unable to resolve endpoint on the configured server");
         }
         return resolved;
+    }
+
+    private List<String> requestRoutes() {
+        List<String> configured = session.baseUrls();
+        if (configured == null || configured.isEmpty()) {
+            throw new IllegalArgumentException("No API routes configured");
+        }
+        ArrayList<String> routes = new ArrayList<>(configured.size());
+        for (String route : configured) {
+            HttpUrl parsed = HttpUrl.get(route);
+            String normalized = parsed.toString();
+            if (!normalized.endsWith("/")) normalized += "/";
+            if (!routes.contains(normalized)) routes.add(normalized);
+        }
+        String primary = HttpUrl.get(session.baseUrl()).toString();
+        if (!primary.endsWith("/")) primary += "/";
+        if (routes.isEmpty() || !primary.equals(routes.get(0))) {
+            throw new IllegalArgumentException("Primary API route mismatch");
+        }
+        return Collections.unmodifiableList(routes);
     }
 
     private ApiResult parseResponse(Response response) {

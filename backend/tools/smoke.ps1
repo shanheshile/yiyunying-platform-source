@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
+$TestPassword = [Environment]::GetEnvironmentVariable('YY_SMOKE_TEST_PASSWORD', 'Process')
+if ([string]::IsNullOrWhiteSpace($TestPassword) -or [Text.Encoding]::UTF8.GetByteCount($TestPassword) -lt 12) {
+    throw 'YY_SMOKE_TEST_PASSWORD must be set to an isolated password of at least 12 UTF-8 bytes.'
+}
 
 function Invoke-Api {
     param(
@@ -27,6 +31,15 @@ function Invoke-Api {
         $response = Invoke-RestMethod @params
     } catch {
         $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail) -and $null -ne $_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($null -ne $stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    try { $detail = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                }
+            } catch { }
+        }
         if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
         throw "$Method $Path failed: $detail"
     }
@@ -41,7 +54,7 @@ $adminLogin = Invoke-Api -Method POST -Path '/api/admin/login' -Body @{
     platform_key = 'yiyunying-root'
     app_key = 'yiyunying-demo'
     account = 'admin'
-    password = '123456'
+    password = $TestPassword
     device = 'smoke-test'
 }
 $adminHeaders = @{ Authorization = "Bearer $($adminLogin.access_token)" }
@@ -58,8 +71,8 @@ $account = "test_$suffix"
 $register = Invoke-Api -Method POST -Path '/api/user/register' -Body @{
     app_key = $appKey
     account = $account
-    password = '123456'
-    password_confirmation = '123456'
+    password = $TestPassword
+    password_confirmation = $TestPassword
     nickname = 'Smoke Test User'
     device = 'smoke-test'
 }
@@ -71,7 +84,7 @@ $userHeaders = @{
 $login = Invoke-Api -Method POST -Path '/api/user/login' -Body @{
     app_key = $appKey
     account = $account
-    password = '123456'
+    password = $TestPassword
 }
 $userHeaders.Authorization = "Bearer $($login.access_token)"
 

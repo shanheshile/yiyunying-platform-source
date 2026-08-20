@@ -142,7 +142,11 @@ chmod() { return 0; }
             "inventory-stt-links.nul",
             "inventories.sha256",
             "harden_inventory",
+            "harden_stt_directory_inventory",
+            'harden_exact "$ROOT/storage/stt" directory root "$RUNTIME_GROUP" 750',
+            'harden_inventory "$inventory_stt_exec_files" file root "$RUNTIME_GROUP" 750',
             "verify_inventory",
+            'verify_link_inventory "$inventory_stt_links" root "$RUNTIME_GROUP"',
             "transaction-ledger.tsv",
             "ledger_append newdir",
             "ledger_append probe",
@@ -164,7 +168,11 @@ chmod() { return 0; }
         self.assertNotRegex(command, r"rmdir[^\n]*\|\|\s*true")
         self.assertNotIn("created-paths.txt", command)
         self.assertLess(command.index("validate_full_structure"), command.index("getfacl -R -P -p"))
-        self.assertLess(command.index("validate_stt_strict_permissions"), command.index("getfacl -R -P -p"))
+        pre_snapshot = command.split("shape_preflight=$(shape_hash)", 1)[1].split(
+            "getfacl -R -P -p", 1
+        )[0]
+        self.assertIn("validate_full_structure", pre_snapshot)
+        self.assertNotRegex(pre_snapshot, r"\nvalidate_stt_strict_permissions\n")
         self.assertLess(command.index("getfacl -R -P -p"), command.index("trap automatic_rollback ERR"))
         self.assertLess(command.index("trap automatic_rollback ERR"), command.index("ledger_append newdir"))
         commit = command.index("state=committed")
@@ -173,6 +181,35 @@ chmod() { return 0; }
         self.assertLess(command.rfind("inventory_identity_hash"), commit)
         self.assertLess(command.rfind("managed_path_hash"), commit)
         self.assertLess(command.rfind("stt_content_topology_hash"), commit)
+
+    def test_apply_consumes_stt_inventory_before_strict_post_gate(self) -> None:
+        backup = "/www/backup/yiyunying/permission-hardening-20260814T120000Z-0123456789abcdef"
+        command = self.module.apply_command(self.module.EXPECTED_REMOTE_ROOT, "www", "www", backup)
+        mutation = command.index(
+            'harden_exact "$ROOT/storage/stt" directory root "$RUNTIME_GROUP" 750',
+            command.index('trap automatic_rollback ERR'),
+        )
+        for marker in (
+            'harden_stt_directory_inventory "$inventory_stt_dirs"',
+            'harden_inventory "$inventory_stt_exec_files" file root "$RUNTIME_GROUP" 750',
+            'harden_inventory "$inventory_stt_data_files" file root "$RUNTIME_GROUP" 640',
+            'harden_link_inventory "$inventory_stt_links" root "$RUNTIME_GROUP"',
+        ):
+            self.assertGreater(command.index(marker, mutation), mutation)
+        verification = command.index("verify_complete_permission_matrix", mutation)
+        self.assertGreater(verification, mutation)
+        verify_body = command.split("verify_complete_permission_matrix()", 1)[1].split(
+            'harden_exact "$ROOT"', 1
+        )[0]
+        for marker in (
+            'verify_exact "$ROOT/storage/stt" directory root "$RUNTIME_GROUP" 750',
+            'verify_inventory "$inventory_stt_dirs" directory root "$RUNTIME_GROUP" 750',
+            'verify_inventory "$inventory_stt_exec_files" file root "$RUNTIME_GROUP" 750',
+            'verify_inventory "$inventory_stt_data_files" file root "$RUNTIME_GROUP" 640',
+            'verify_link_inventory "$inventory_stt_links" root "$RUNTIME_GROUP"',
+            "validate_stt_gate",
+        ):
+            self.assertIn(marker, verify_body)
 
     def test_stt_gate_is_strict_root_www_read_only_and_executes_as_www(self) -> None:
         backup = "/www/backup/yiyunying/permission-hardening-20260814T120000Z-0123456789abcdef"
@@ -252,6 +289,16 @@ printf 'FIXABLE|%s|%s|%s|%s\n' "$stt_unfixable_dirs" "$stt_unfixable_exec" "$stt
             result = self.run_bash(source)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("FIXABLE|0|0|0|0", result.stdout)
+
+    def test_fixable_stt_permission_drift_is_apply_ready_not_a_structure_blocker(self) -> None:
+        command = self.module.audit_command(self.module.EXPECTED_REMOTE_ROOT, "www", "www")
+        branch = command.split('elif [ "$stt_permission_bad" -ne 0 ]; then', 1)[1].split(
+            "else", 1
+        )[0]
+        self.assertIn("drift=1", branch)
+        self.assertIn("expected_permission_drift=1", branch)
+        self.assertIn("STT_PERMISSION_MUTATION_AUTHORIZATION|required", branch)
+        self.assertNotIn("apply_blocked=1", branch)
 
     def test_apply_failure_cleanup_is_ledgered_and_fail_closed(self) -> None:
         library = self.module.transaction_shell_library()

@@ -387,6 +387,9 @@ function Read-ReleaseConnectionIdentity([string] $ReleaseChannel) {
     if ($ReleaseChannel -eq 'Stable' -and $uri.Scheme -ne 'https') {
         throw 'Stable 的 YIYUNYING_API_BASE_URL 必须使用 HTTPS。'
     }
+    if ($ReleaseChannel -eq 'Stable' -and $apiBaseUrl -cne 'https://appht.jjmxg.xyz/') {
+        throw '官方 Stable 四端只允许唯一服务器 https://appht.jjmxg.xyz/；源码买断自建版必须使用独立 self_host 构建流程。'
+    }
     $normalizedHost = $uri.Host.Trim('[', ']').ToLowerInvariant()
     if ($uri.IsLoopback -or
         $normalizedHost -in @('localhost', '0.0.0.0', '::', '::1', '10.0.2.2') -or

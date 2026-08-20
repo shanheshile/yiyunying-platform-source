@@ -41,6 +41,9 @@ NGINX_CONFIRMATION = "INTERNAL_APK_NGINX_AUTH_REQUEST_CONFIRMED"
 SECRET_ENV = "YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET"
 EXPECTED_PRIVATE_ROOT = "/srv/yiyunying-internal-apks"
 EXPECTED_SECRET_INCLUDE = "/etc/nginx/private/yiyunying-internal-apks-secret.conf"
+PRIVATE_RUNTIME_GROUP = "www"
+PRIVATE_DIRECTORY_MODE = 0o750
+PRIVATE_FILE_MODE = 0o640
 RELEASE_IDENTITY_PATH = "backend/config/release-identity.json"
 ANDROID_VERSION_PROPERTIES_PATH = "android/version.properties"
 FROZEN_DEBUG_MANIFEST_PATH = "releases/2.7.15/release-manifest.json"
@@ -1062,6 +1065,121 @@ def remote_identity(client, path: str) -> tuple[int, str]:
     return int(parts[0]), parts[1]
 
 
+def resolve_remote_group_gid(client, group: str) -> int:
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", group):
+        raise RuntimeError("Remote runtime group name is invalid")
+    output = run(
+        client,
+        " ; ".join(
+            (
+                "set -eu",
+                f"entry=$(getent group {quote(group)})",
+                'test -n "$entry"',
+                "gid=$(printf '%s\\n' \"$entry\" | awk -F: 'NR == 1 { print $3 }')",
+                'test -n "$gid"',
+                "printf '%s' \"$gid\"",
+            )
+        ),
+        "resolve private runtime group",
+    )
+    if not re.fullmatch(r"[1-9][0-9]*", output):
+        raise RuntimeError("Remote runtime group identity is malformed")
+    return int(output)
+
+
+def private_tree_contract_command(
+    root: str,
+    directories: list[str],
+    files: list[str],
+    runtime_gid: int,
+) -> str:
+    root = validate_remote_path(root, "private tree root")
+    if not isinstance(runtime_gid, int) or runtime_gid <= 0:
+        raise RuntimeError("Private runtime group id is invalid")
+    normalized_directories = [
+        validate_remote_path(path, "private tree directory") for path in directories
+    ]
+    normalized_files = [validate_remote_path(path, "private tree file") for path in files]
+    prefix = root.rstrip("/") + "/"
+    if (
+        root not in normalized_directories
+        or len(set(normalized_directories)) != len(normalized_directories)
+        or len(set(normalized_files)) != len(normalized_files)
+        or set(normalized_directories).intersection(normalized_files)
+        or any(path != root and not path.startswith(prefix) for path in normalized_directories)
+        or any(not path.startswith(prefix) for path in normalized_files)
+    ):
+        raise RuntimeError("Private tree contract paths are incomplete or ambiguous")
+
+    directory_state = f"0:{runtime_gid}:{PRIVATE_DIRECTORY_MODE:o}"
+    file_state = f"0:{runtime_gid}:{PRIVATE_FILE_MODE:o}"
+    named_directory_state = f"root:{PRIVATE_RUNTIME_GROUP}:{PRIVATE_DIRECTORY_MODE:o}"
+    named_file_state = f"root:{PRIVATE_RUNTIME_GROUP}:{PRIVATE_FILE_MODE:o}"
+    commands = [
+        "set -eu",
+        (
+            f"if ! private_symlinks=$(find {quote(root)} -xdev -type l -print -quit); "
+            "then exit 1; fi"
+        ),
+        'test -z "$private_symlinks"',
+        (
+            f"if ! private_special_entries=$(find {quote(root)} -xdev "
+            "! -type d ! -type f ! -type l -print -quit); then exit 1; fi"
+        ),
+        'test -z "$private_special_entries"',
+        (
+            f"if ! private_hardlinks=$(find {quote(root)} -xdev -type f "
+            "! -links 1 -print -quit); then exit 1; fi"
+        ),
+        'test -z "$private_hardlinks"',
+        (
+            f"if ! private_directories=$(find {quote(root)} -xdev -type d -printf x); "
+            "then exit 1; fi"
+        ),
+        f'test "${{#private_directories}}" -eq {len(normalized_directories)}',
+        (
+            f"if ! private_files=$(find {quote(root)} -xdev -type f -printf x); "
+            "then exit 1; fi"
+        ),
+        f'test "${{#private_files}}" -eq {len(normalized_files)}',
+    ]
+    for path in normalized_directories:
+        commands.extend(
+            (
+                f"test -d {quote(path)}",
+                f"test ! -L {quote(path)}",
+                f"test \"$(stat -c %u:%g:%a {quote(path)})\" = {quote(directory_state)}",
+                f"test \"$(stat -c %U:%G:%a {quote(path)})\" = {quote(named_directory_state)}",
+            )
+        )
+    for path in normalized_files:
+        commands.extend(
+            (
+                f"test -f {quote(path)}",
+                f"test ! -L {quote(path)}",
+                f"test \"$(stat -c %h {quote(path)})\" = 1",
+                f"test \"$(stat -c %u:%g:%a {quote(path)})\" = {quote(file_state)}",
+                f"test \"$(stat -c %U:%G:%a {quote(path)})\" = {quote(named_file_state)}",
+            )
+        )
+    return " ; ".join(commands)
+
+
+def verify_remote_private_tree(
+    client,
+    root: str,
+    directories: list[str],
+    files: list[str],
+    runtime_gid: int,
+    label: str,
+) -> None:
+    run(
+        client,
+        private_tree_contract_command(root, directories, files, runtime_gid),
+        label,
+    )
+
+
 def upload_bytes(sftp, payload: bytes, remote_path: str, mode: int) -> tuple[int, str]:
     with sftp.open(remote_path, "wb") as stream:
         stream.write(payload)
@@ -1239,12 +1357,16 @@ def deploy(
     states = {"current": False, "nginx": False, "secret": False}
     try:
         ssh = connect_ssh(args)
+        runtime_gid = resolve_remote_group_gid(ssh, PRIVATE_RUNTIME_GROUP)
         fpm_value = f"{fpm};"
         preflight = " ; ".join(
             (
                 "set -eu",
                 "command -v sha256sum >/dev/null",
                 "command -v stat >/dev/null",
+                "command -v find >/dev/null",
+                "command -v getent >/dev/null",
+                "command -v install >/dev/null",
                 "command -v nginx >/dev/null",
                 "nginx -V 2>&1 | grep -q -- '--with-http_auth_request_module'",
                 f"test -f {quote(php_binary)} && test -x {quote(php_binary)} && test ! -L {quote(php_binary)}",
@@ -1256,9 +1378,26 @@ def deploy(
                 f"test -d {quote(posixpath.dirname(nginx_include))} && test ! -L {quote(posixpath.dirname(nginx_include))}",
                 f"install -d -m 0700 {quote(posixpath.dirname(secret_include))}",
                 f"test -d {quote(posixpath.dirname(secret_include))} && test ! -L {quote(posixpath.dirname(secret_include))}",
-                f"install -d -m 0755 {quote(private_root)}",
+                (
+                    f"if [ ! -e {quote(private_root)} ]; then "
+                    f"install -d -o 0 -g {runtime_gid} -m {PRIVATE_DIRECTORY_MODE:o} {quote(private_root)}; fi"
+                ),
                 f"test -d {quote(private_root)} && test ! -L {quote(private_root)}",
-                f"mkdir {quote(lock)}",
+                (
+                    f"case \"$(stat -c %u:%g:%a {quote(private_root)})\" in "
+                    f"0:0:755|0:{runtime_gid}:{PRIVATE_DIRECTORY_MODE:o}) ;; *) exit 1 ;; esac"
+                ),
+                f"mkdir -m 0700 {quote(lock)}",
+                f"chown 0:{runtime_gid} {quote(private_root)}",
+                f"chmod {PRIVATE_DIRECTORY_MODE:o} {quote(private_root)}",
+                (
+                    f"test \"$(stat -c %u:%g:%a {quote(private_root)})\" = "
+                    f"{quote(f'0:{runtime_gid}:{PRIVATE_DIRECTORY_MODE:o}')}"
+                ),
+                (
+                    f"test \"$(stat -c %U:%G:%a {quote(private_root)})\" = "
+                    f"{quote(f'root:{PRIVATE_RUNTIME_GROUP}:{PRIVATE_DIRECTORY_MODE:o}')}"
+                ),
             )
         )
         run(ssh, preflight, "private download preflight and lock")
@@ -1291,13 +1430,20 @@ def deploy(
                 seen_tracks.add(track)
             directories.append(posixpath.join(stage, f"{track}/{version}"))
         directories.append(posixpath.join(stage, "_auth"))
+        private_files = [
+            posixpath.join(stage, artifact.remote_relative) for artifact in artifacts
+        ]
+        private_files.append(posixpath.join(stage, "_auth/verify.php"))
         run(
             ssh,
             " ; ".join(
                 (
                     "set -eu",
                     f"test ! -e {quote(stage)} && test ! -e {quote(previous)}",
-                    *(f"mkdir -m 0755 {quote(path)}" for path in directories),
+                    *(
+                        f"install -d -o 0 -g {runtime_gid} -m {PRIVATE_DIRECTORY_MODE:o} {quote(path)}"
+                        for path in directories
+                    ),
                     f"test \"$(stat -c %d {quote(private_root)})\" = \"$(stat -c %d {quote(stage)})\"",
                     f"if [ -e {quote(current)} ]; then test -d {quote(current)} && test ! -L {quote(current)} && test \"$(stat -c %d {quote(current)})\" = \"$(stat -c %d {quote(stage)})\"; fi",
                 )
@@ -1311,11 +1457,13 @@ def deploy(
             for artifact in artifacts:
                 remote = posixpath.join(stage, artifact.remote_relative)
                 sftp.put(str(artifact.path), remote, confirm=True)
-                sftp.chmod(remote, 0o644)
+                sftp.chown(remote, 0, runtime_gid)
+                sftp.chmod(remote, PRIVATE_FILE_MODE)
                 expected_remote.append((remote, artifact.size, artifact.sha256))
             verifier_remote = posixpath.join(stage, "_auth/verify.php")
             sftp.put(str(verifier.path), verifier_remote, confirm=True)
-            sftp.chmod(verifier_remote, 0o644)
+            sftp.chown(verifier_remote, 0, runtime_gid)
+            sftp.chmod(verifier_remote, PRIVATE_FILE_MODE)
             expected_remote.append((verifier_remote, verifier.size, verifier.sha256))
             nginx_size, nginx_sha = upload_bytes(sftp, rendered_nginx, nginx_candidate, 0o644)
             secret_size, secret_sha = upload_bytes(sftp, secret_payload, secret_candidate, 0o600)
@@ -1327,6 +1475,14 @@ def deploy(
             raise RuntimeError("Remote staged Nginx identity mismatch")
         if remote_identity(ssh, secret_candidate) != (secret_size, secret_sha):
             raise RuntimeError("Remote staged secret identity mismatch")
+        verify_remote_private_tree(
+            ssh,
+            stage,
+            directories,
+            private_files,
+            runtime_gid,
+            "verify staged private tree permissions and topology",
+        )
         run(
             ssh,
             f"{quote(php_binary)} -l {quote(posixpath.join(stage, '_auth/verify.php'))} >/dev/null",
@@ -1363,6 +1519,18 @@ def deploy(
             active_path = posixpath.join(current, artifact.remote_relative)
             if remote_identity(ssh, active_path) != (artifact.size, artifact.sha256):
                 raise RuntimeError("Activated private APK identity mismatch")
+        active_directories = [
+            current + path[len(stage) :] for path in directories
+        ]
+        active_files = [current + path[len(stage) :] for path in private_files]
+        verify_remote_private_tree(
+            ssh,
+            current,
+            active_directories,
+            active_files,
+            runtime_gid,
+            "verify activated private tree permissions and topology",
+        )
         verify_public_downloads(origin, artifacts, secret_hex)
         completed = True
         rollback_ok = True

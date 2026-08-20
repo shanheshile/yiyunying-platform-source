@@ -38,7 +38,11 @@ Set-Location android
 .\gradlew.bat assembleUserDebug
 ```
 
-API 地址可用 `-PapiBaseUrl` 或 `YIYUNYING_API_BASE_URL` 注入。模拟器访问宿主机使用 `10.0.2.2`，真机使用局域网或 HTTPS 测试域名。
+模拟器在未传连接参数时默认访问 `http://10.0.2.2:8788/`。真机自建测试必须显式传
+`-PconnectionMode=self_host`，再用 `-PapiBaseUrl` / `-PapiBaseUrls`（或对应
+`YIYUNYING_CONNECTION_MODE`、`YIYUNYING_API_BASE_URL(S)` 环境变量）注入买方自己的线路；
+HTTP 还必须显式传 `-PallowHttpEndpoints=true`。官方 Stable 四端只允许
+`https://appht.jjmxg.xyz/`，详细重放与故障切换边界见 `android/README.md`。
 
 ## 下载中心
 

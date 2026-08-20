@@ -158,7 +158,7 @@ final class LifecycleService
              INNER JOIN admins a ON a.id = ap.admin_id
              INNER JOIN platform_accounts p ON p.id = a.platform_id
              WHERE ap.id = ? AND ap.status = 1 AND ap.deleted_at IS NULL
-               AND a.status = 1 AND a.deleted_at IS NULL
+               AND a.status = 1
                AND p.status = 1 AND p.deleted_at IS NULL
              LIMIT 1',
             [$appId]

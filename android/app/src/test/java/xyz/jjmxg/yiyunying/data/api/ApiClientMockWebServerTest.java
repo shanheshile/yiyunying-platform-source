@@ -4,6 +4,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -115,6 +118,141 @@ public class ApiClientMockWebServerTest {
         assertEquals(0, server.getRequestCount());
     }
 
+    @Test
+    public void readFailsOverInOrderOnExplicitTransient503() throws Exception {
+        MockWebServer backup = new MockWebServer();
+        backup.start();
+        try {
+            server.enqueue(json(503, "{\"code\":503,\"msg\":\"primary unavailable\",\"data\":{}}"));
+            backup.enqueue(json(200, "{\"code\":1,\"msg\":\"backup ok\",\"data\":{\"route\":2}}"));
+            useRoutes(server.url("/").toString(), backup.url("/").toString());
+
+            ApiResult result = await(ApiRequest.builder("GET", "/api/health").build());
+
+            assertTrue(result.isSuccessful());
+            assertEquals(2, result.dataObject().get("route").getAsInt());
+            assertEquals(1, server.getRequestCount());
+            assertEquals(1, backup.getRequestCount());
+        } finally {
+            backup.shutdown();
+        }
+    }
+
+    @Test
+    public void readFailsOverAfterConnectionFailure() throws Exception {
+        MockWebServer unavailable = new MockWebServer();
+        unavailable.start();
+        String unavailableUrl = unavailable.url("/").toString();
+        unavailable.shutdown();
+        server.enqueue(json(200, "{\"code\":1,\"msg\":\"ok\",\"data\":{\"route\":2}}"));
+        useRoutes(unavailableUrl, server.url("/").toString());
+
+        ApiResult result = await(ApiRequest.builder("GET", "/api/health").build());
+
+        assertTrue(result.isSuccessful());
+        assertEquals(2, result.dataObject().get("route").getAsInt());
+        assertEquals(1, server.getRequestCount());
+    }
+
+    @Test
+    public void allTransientRoutesFailExactlyOnceAndReturnLastFailure() throws Exception {
+        MockWebServer backup = new MockWebServer();
+        backup.start();
+        try {
+            server.enqueue(json(502, "{\"code\":502,\"msg\":\"gateway one\",\"data\":{}}"));
+            backup.enqueue(json(504, "{\"code\":504,\"msg\":\"gateway two\",\"data\":{}}"));
+            useRoutes(server.url("/").toString(), backup.url("/").toString());
+
+            ApiResult result = await(ApiRequest.builder("GET", "/api/health").build());
+
+            assertTrue(!result.isSuccessful());
+            assertEquals(504, result.httpCode());
+            assertEquals("gateway two", result.message());
+            assertEquals(1, server.getRequestCount());
+            assertEquals(1, backup.getRequestCount());
+        } finally {
+            backup.shutdown();
+        }
+    }
+
+    @Test
+    public void business4xxNeverCrossesToBackup() throws Exception {
+        MockWebServer backup = new MockWebServer();
+        backup.start();
+        try {
+            server.enqueue(json(422, "{\"code\":0,\"msg\":\"validation failed\",\"data\":{}}"));
+            backup.enqueue(json(200, "{\"code\":1,\"msg\":\"must not run\",\"data\":{}}"));
+            useRoutes(server.url("/").toString(), backup.url("/").toString());
+
+            ApiResult result = await(ApiRequest.builder("GET", "/api/user/profile").build());
+
+            assertTrue(!result.isSuccessful());
+            assertEquals("validation failed", result.message());
+            assertEquals(1, server.getRequestCount());
+            assertEquals(0, backup.getRequestCount());
+        } finally {
+            backup.shutdown();
+        }
+    }
+
+    @Test
+    public void generic500DoesNotTriggerCrossRouteReplay() throws Exception {
+        MockWebServer backup = new MockWebServer();
+        backup.start();
+        try {
+            server.enqueue(json(500, "{\"code\":500,\"msg\":\"application failure\",\"data\":{}}"));
+            backup.enqueue(json(200, "{\"code\":1,\"msg\":\"must not run\",\"data\":{}}"));
+            useRoutes(server.url("/").toString(), backup.url("/").toString());
+
+            ApiResult result = await(ApiRequest.builder("GET", "/api/health").build());
+
+            assertTrue(!result.isSuccessful());
+            assertEquals(500, result.httpCode());
+            assertEquals(1, server.getRequestCount());
+            assertEquals(0, backup.getRequestCount());
+        } finally {
+            backup.shutdown();
+        }
+    }
+
+    @Test
+    public void mutation503NeverReplaysAcrossRoutes() throws Exception {
+        MockWebServer backup = new MockWebServer();
+        backup.start();
+        try {
+            server.enqueue(json(503, "{\"code\":503,\"msg\":\"write uncertain\",\"data\":{}}"));
+            backup.enqueue(json(201, "{\"code\":1,\"msg\":\"must not run\",\"data\":{}}"));
+            useRoutes(server.url("/").toString(), backup.url("/").toString());
+
+            ApiResult result = await(ApiRequest.builder("POST", "/api/user/documents").build());
+
+            assertTrue(!result.isSuccessful());
+            assertEquals("write uncertain", result.message());
+            assertEquals(1, server.getRequestCount());
+            assertEquals(0, backup.getRequestCount());
+        } finally {
+            backup.shutdown();
+        }
+    }
+
+    @Test
+    public void mutation401DoesNotRefreshOrReplay() throws Exception {
+        server.enqueue(json(401, "{\"code\":401,\"msg\":\"expired\",\"data\":{}}"));
+
+        ApiResult result = await(ApiRequest.builder("POST", "/api/user/documents").build());
+
+        assertTrue(!result.isSuccessful());
+        assertEquals("access-old", session.accessToken());
+        assertEquals(1, server.getRequestCount());
+    }
+
+    private void useRoutes(String... routes) {
+        session = new FakeSession(Arrays.asList(routes));
+        client = new ApiClient(session, new OkHttpClient.Builder()
+            .retryOnConnectionFailure(false)
+            .build(), Runnable::run);
+    }
+
     private ApiResult await(ApiRequest request) throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<ApiResult> result = new AtomicReference<>();
@@ -129,11 +267,19 @@ public class ApiClientMockWebServerTest {
 
     private static final class FakeSession implements SessionProvider {
         private final String baseUrl;
+        private final List<String> baseUrls;
         private String access = "access-old";
         private String refresh = "refresh-old";
 
-        FakeSession(String baseUrl) { this.baseUrl = baseUrl; }
+        FakeSession(String baseUrl) {
+            this(Collections.singletonList(baseUrl));
+        }
+        FakeSession(List<String> baseUrls) {
+            this.baseUrls = Collections.unmodifiableList(baseUrls);
+            this.baseUrl = this.baseUrls.get(0);
+        }
         @Override public String baseUrl() { return baseUrl; }
+        @Override public List<String> baseUrls() { return baseUrls; }
         @Override public String accessToken() { return access; }
         @Override public String refreshToken() { return refresh; }
         @Override public String appKey() { return "demo-app"; }

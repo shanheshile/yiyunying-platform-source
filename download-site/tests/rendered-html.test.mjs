@@ -16,6 +16,25 @@ const packageMetadata = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 
+const DEVICE_PENDING_NOTICE = "真机验证待用户完成（不得声明真机通过）";
+
+function finalizedManifestFixture(pendingMetadata) {
+  const finalManifest = structuredClone(pendingMetadata);
+  delete finalManifest.pendingManifestSha256;
+  finalManifest.finalizationStatus = "finalized";
+  finalManifest.releaseEvidenceCommit = "b".repeat(40);
+  if (finalManifest.deviceValidationPlan === "risk-waiver") {
+    finalManifest.deviceValidation = {
+      plan: "risk-waiver",
+      status: "pending-user-validation",
+      evidenceFileName: "release-risk-waiver.json",
+      evidenceSha256: "e".repeat(64),
+      publicNotice: DEVICE_PENDING_NOTICE,
+    };
+  }
+  return finalManifest;
+}
+
 async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set(
@@ -89,6 +108,10 @@ test("renders an original customer-facing official website", async () => {
   assert.match(html, /data-action="refresh-health"/);
   assert.match(html, /同源公开健康检查/);
   assert.match(html, /公开服务状态/);
+  assert.match(html, /平台总控客户端与源码买断自建部署有什么区别/);
+  assert.match(html, /自建多线路只会为 GET\/HEAD 读取在连接类异常或 502\/503\/504 时按顺序切换/);
+  assert.match(html, /写请求、上传和 Token 刷新均不会跨线路重放/);
+  assert.doesNotMatch(html, /自动多线路切换仍需完成实现与验收后才能声明可用/);
   assert.doesNotMatch(html, /1,286|3,492|99\.98%|实时在线 238|待审核 12/);
 });
 
@@ -141,9 +164,12 @@ test("requires finalized Stable evidence without Debug markers for the formal UI
     assert.match(html, /Finalized · 四角色一致/);
     assert.match(script, /fetch\("\/api\/health"/);
   } else {
-    assert.match(html, /正式版准备中/);
-    assert.match(html, /正式版尚未开放/);
-    assert.match(html, /功能介绍与接口文档已开放/);
+    assert.match(html, /接入资料已开放，客户端仍在发布验收/);
+    assert.match(html, /下载区在完成正式发布验收前保持关闭/);
+    assert.match(html, /客户接口文档/);
+    assert.match(html, /60 条已核验白名单路由/);
+    assert.doesNotMatch(html, /正式版尚未开放/);
+    assert.doesNotMatch(html, /当前页面不会公开候选版本/);
     assert.doesNotMatch(html, /发布候选|候选包|仅供闭环测试/);
     assert.doesNotMatch(html, /已正式发布/);
   }
@@ -177,10 +203,7 @@ test("exports four formal clients only from a finalized manifest bound to pendin
     const metadataPath = join(temporary, "release-metadata.json");
     const manifestPath = join(temporary, "release-manifest.json");
     const outputPath = join(temporary, "public");
-    const finalManifest = structuredClone(releaseMetadata);
-    delete finalManifest.pendingManifestSha256;
-    finalManifest.finalizationStatus = "finalized";
-    finalManifest.releaseEvidenceCommit = "b".repeat(40);
+    const finalManifest = finalizedManifestFixture(releaseMetadata);
     await writeFile(metadataPath, JSON.stringify(releaseMetadata), "utf8");
     await writeFile(manifestPath, JSON.stringify(finalManifest), "utf8");
 
@@ -260,10 +283,7 @@ test("exports four formal clients only from a finalized manifest bound to pendin
 });
 
 test("formal public projection rejects immutable, identity and pending-evidence drift", () => {
-  const finalManifest = structuredClone(releaseMetadata);
-  delete finalManifest.pendingManifestSha256;
-  finalManifest.finalizationStatus = "finalized";
-  finalManifest.releaseEvidenceCommit = "b".repeat(40);
+  const finalManifest = finalizedManifestFixture(releaseMetadata);
   assert.equal(
     createPublicReleaseProjection(releaseMetadata, {
       ...finalManifest,
@@ -325,7 +345,7 @@ test("future Stable code >=66 cannot omit the device validation plan", () => {
 });
 
 test("risk-waiver projection stays pending and publishes the user-validation notice", async () => {
-  const notice = "真机验证待用户完成（不得声明真机通过）";
+  const notice = DEVICE_PENDING_NOTICE;
   const pending = structuredClone(releaseMetadata);
   pending.versionCode = 66;
   pending.deviceValidationPlan = "risk-waiver";
@@ -389,12 +409,19 @@ test("risk-waiver projection stays pending and publishes the user-validation not
 test("renders audited four-role and per-system API guides", async () => {
   const html = await renderedHtml("/api-docs/");
   for (const text of [
-    "用户端", "管理员端", "授权代理端（Level 2）", "买断总控端（Level 1）",
+    "用户端", "管理员端", "授权代理端（Level 2）", "平台总控客户端（官方托管，Level 1）",
     "APP_API_UNIQUE_ID", "PLATFORM_KEY_PLACEHOLDER", "OWNER_PLATFORM_KEY_PLACEHOLDER",
     "用户系统", "邮箱系统", "论坛系统", "文档系统", "好友系统", "群聊系统",
     "聊天系统", "安全系统", "卡密系统", "云仓库", "商城系统", "公告、更新与维护",
     "代表性最小闭环示例", "关键参数", "成功结果", "常见失败", "怎么用",
-    "trace_id", "page", "limit", "上传安全",
+    "trace_id", "page", "limit", "上传安全", "先看清公开文档能证明什么",
+    "60 条白名单路由", "四角色认证矩阵", "统一响应与状态回读", "最小功能闭环验收",
+    "路由存在不等同部署环境已开通或生产验收通过", "写入成功提示不是最终业务状态",
+    "官方托管与源码买断自建是两条独立轨道", "https://appht.jjmxg.xyz/",
+    "https://api.your-company.example/", "http://dev-api.your-company.example/",
+    "均为不可执行的域名格式示例", "自动切线仅适用于 GET/HEAD 的连接类异常或 502/503/504",
+    "写请求、上传和 Token 刷新不跨线路重放", "全部失败也不回退官方服务",
+    "搜索接口路径、用途、方法或系统…", "已索引 60 条白名单接口",
   ]) assert.ok(html.includes(text), `API guide missing: ${text}`);
 
   const endpointContracts = [
@@ -408,6 +435,8 @@ test("renders audited four-role and per-system API guides", async () => {
     ["POST", "/api/user/messages/private", "to_uid/to_user_id, content"],
     ["POST", "/api/user/cards/redeem", "card_code；Bearer"],
     ["POST", "/api/user/cloud-sync/snapshots", "data_type=chat/stickers/favorites"],
+    ["GET", "/api/user/uploads", "keyword, scene, category, date_from, date_to"],
+    ["POST", "/api/user/uploads", "multipart/form-data"],
     ["POST", "/api/user/shop-goods/{goods_id}/buy", "quantity"],
     ["GET", "/api/public/lifecycle", "edition_code（必填）"],
     ["PUT", "/api/admin/apps/{app_id}/versions", "version_name, update_content, version_code, apk_url, package_name, sha256, size_bytes"],
@@ -429,7 +458,8 @@ test("renders audited four-role and per-system API guides", async () => {
   assert.doesNotMatch(html, /&quot;code&quot;:0/);
   assert.doesNotMatch(html, /api\.internal|10\.\d+\.\d+\.\d+/i);
   const { apiBaseUrl: publicApiBaseUrl, ...sensitiveIdentityEvidence } = releaseMetadata.connectionIdentity ?? {};
-  assert.ok(!publicApiBaseUrl || /^https:\/\//i.test(String(publicApiBaseUrl)), "formal API base URL must remain public HTTPS metadata");
+  assert.equal(publicApiBaseUrl, "https://appht.jjmxg.xyz/", "official API base URL must not drift");
+  assert.doesNotMatch(html, /http:\/\/appht\.jjmxg\.xyz\/?/i, "official API must never advertise HTTP downgrade");
   for (const value of Object.values(sensitiveIdentityEvidence)) {
     assert.ok(!html.includes(String(value)), "connection identity hash leaked into API guide");
   }
@@ -457,32 +487,48 @@ test("renders customer operation closures with safe no-script fallbacks", async 
     "分享当前接口", "打印全部文档", "公开文档链接可访问，无需登录",
     "分享本系统", "打印当前系统", "新窗口打开示例", "一键复制",
     "复制代码", "cURL", "Java", "JavaScript",
-    "当前浏览器已禁用 JavaScript", "https://api.example.com",
+    "当前浏览器已禁用 JavaScript", "https://appht.jjmxg.xyz/",
   ]) assert.ok(docs.includes(text), `API operation closure missing: ${text}`);
 
   assert.match(docs, /<noscript>/i);
   assert.match(docs, /role="tablist"/i);
   assert.match(docs, /role="tabpanel"/i);
   assert.match(docs, /aria-live="polite"/i);
+  assert.match(docs, /data-endpoint-catalog=/i);
   assert.match(docs, /href="#user-system"[^>]+target="_blank"/i);
   assert.ok((docs.match(/复制代码/g) ?? []).length >= 17, "every role/system code example must be copyable");
+  const uploadSection = docs.match(/<section class="upload-section" id="uploads">([\s\S]*?)<\/section>/i)?.[1] ?? "";
+  assert.match(uploadSection, /multipart\/form-data/);
+  assert.match(uploadSection, /--form/);
+  assert.match(uploadSection, /GET \/api\/user\/uploads/);
+  assert.doesNotMatch(uploadSection, /--header (?:&#x27;|')Content-Type: application\/json/i);
   assert.ok((docs.match(/打印当前系统/g) ?? []).length >= 13, "every system must expose print operation");
 });
 
 test("operation source contract keeps sharing, copying, formatting and print safe", async () => {
-  const [actions, home, styles, docsSource, staticExporter] = await Promise.all([
+  const [actions, home, styles, docsSource, staticExporter, publicApiConfig] = await Promise.all([
     readFile(new URL("../app/api-docs/docs-actions.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/home-client.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api-docs/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../scripts/export-static.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/public-api.mjs", import.meta.url), "utf8"),
   ]);
 
   for (const contract of [
     "navigator.share", "navigator.clipboard", "document.execCommand(\"copy\")",
     "url.search = \"\"", "window.print()", "afterprint", "CodeFormat",
-    '"curl"', '"java"', '"javascript"', "SAFE_BASE_URL",
+    '"curl"', '"java"', '"javascript"', "officialApiUrl", "EndpointSearch",
+    "catalog.filter", "slice(0, 12)", "清空接口搜索",
   ]) assert.ok(actions.includes(contract), `client operation contract missing: ${contract}`);
+  assert.match(publicApiConfig, /OFFICIAL_API_BASE_URL = "https:\/\/appht\.jjmxg\.xyz\/"/);
+  assert.match(publicApiConfig, /SELF_HOSTED_API_BASE_URL_EXAMPLE = "https:\/\/api\.your-company\.example\/"/);
+  assert.match(publicApiConfig, /SELF_HOSTED_HTTP_API_BASE_URL_EXAMPLE = "http:\/\/dev-api\.your-company\.example\/"/);
+  assert.doesNotMatch(publicApiConfig, /http:\/\/appht\.jjmxg\.xyz/i);
+  assert.ok(staticExporter.includes("OFFICIAL_API_BASE_URL"), "static docs converter must use the official base URL contract");
+  assert.ok(staticExporter.includes("renderEndpointSearch"), "static docs export must preserve endpoint search interaction");
+  assert.ok(staticExporter.includes('endpointSearchInput?.addEventListener("input"'), "static endpoint search must react to user input");
+  assert.ok(staticExporter.includes("endpointSearchResults.replaceChildren()"), "static endpoint search must replace stale results");
   assert.ok(home.includes("navigator.share"), "homepage share must prefer Web Share");
   assert.ok(home.includes('fetch("/api/health"'), "homepage must read only the same-origin public health endpoint");
   assert.ok(home.includes('cache: "no-store"'), "live public health must bypass stale browser caches");
@@ -521,9 +567,12 @@ test("operation source contract keeps sharing, copying, formatting and print saf
   ]) assert.ok(!sharedStatusScript.includes(forbidden), `static live-status script leaked or requested forbidden data: ${forbidden}`);
 
   const catalog = [...docsSource.matchAll(/ep\("([A-Z]+)",\s*"([^"]+)"/g)];
-  assert.equal(catalog.length, 58, "public API catalog must retain all 58 audited routes");
+  assert.equal(catalog.length, 60, "public API catalog must retain all 60 audited routes");
   const examples = docsSource.slice(docsSource.indexOf("const SYSTEM_EXAMPLES"), docsSource.indexOf("const ERROR_CODES"));
-  assert.doesNotMatch(examples, /appht\.jjmxg\.xyz|api\.internal|https?:\/\/10\.\d+\.\d+\.\d+/i);
+  assert.doesNotMatch(examples, /api\.internal|https?:\/\/10\.\d+\.\d+\.\d+/i);
+  for (const source of [actions, docsSource, staticExporter]) {
+    assert.ok(!source.includes("https://api.example.com"), "obsolete placeholder API base must not remain executable");
+  }
   for (const value of Object.values(releaseMetadata.connectionIdentity ?? {})) {
     assert.ok(!examples.includes(String(value)), "real connection identity leaked into format source");
   }
@@ -630,7 +679,7 @@ test("published API endpoint catalog exists in the generated route directory", a
   const catalog = [...docsSource.matchAll(/ep\("([A-Z]+)",\s*"([^"]+)"/g)].map(
     ([, method, path]) => `${method} ${path}`,
   );
-  assert.equal(catalog.length, 58, "public catalog must retain all audited system routes");
+  assert.equal(catalog.length, 60, "public catalog must retain all audited system routes");
   for (const route of catalog) assert.ok(actualRoutes.has(route), `catalog route does not exist: ${route}`);
 
   const examples = docsSource.slice(

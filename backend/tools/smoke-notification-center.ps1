@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
+$TestPassword = [Environment]::GetEnvironmentVariable('YY_SMOKE_TEST_PASSWORD', 'Process')
+if ([string]::IsNullOrWhiteSpace($TestPassword) -or [Text.Encoding]::UTF8.GetByteCount($TestPassword) -lt 12) {
+    throw 'YY_SMOKE_TEST_PASSWORD must be set to an isolated password of at least 12 UTF-8 bytes.'
+}
 
 function Invoke-Api {
     param(
@@ -25,6 +29,13 @@ function Invoke-Api {
     try { $response = Invoke-RestMethod @request }
     catch {
         $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail) -and $null -ne $_.Exception.Response) {
+            try {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $detail = $reader.ReadToEnd()
+                $reader.Dispose()
+            } catch { }
+        }
         if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
         throw "$Method $Path failed: $detail"
     }
@@ -40,7 +51,10 @@ function User-Headers([object]$login, [string]$appKey) {
 }
 
 $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$adminLogin = Invoke-Api POST '/api/admin/login' -Body @{ account = 'admin'; password = '123456'; device = 'notification-test-admin' }
+$adminLogin = Invoke-Api POST '/api/admin/login' -Body @{
+    platform_key = 'yiyunying-root'; app_key = 'yiyunying-demo'
+    account = 'admin'; password = $TestPassword; device = 'notification-test-admin'
+}
 $adminHeaders = @{ Authorization = "Bearer $($adminLogin.access_token)" }
 $appId = 0
 $chatItemCount = 0
@@ -56,11 +70,11 @@ try {
         name = 'Notification Test Plate'; description = 'Comment, like, favorite and system notification test'
     }
     $ownerLogin = Invoke-Api POST '/api/user/register' -Body @{
-        app_key = $appKey; account = "notify_owner_$suffix"; password = '123456'; password_confirmation = '123456'
+        app_key = $appKey; account = "notify_owner_$suffix"; password = $TestPassword; password_confirmation = $TestPassword
         nickname = 'Notification Owner'; device = 'notification-test-owner'
     }
     $actorLogin = Invoke-Api POST '/api/user/register' -Body @{
-        app_key = $appKey; account = "notify_actor_$suffix"; password = '123456'; password_confirmation = '123456'
+        app_key = $appKey; account = "notify_actor_$suffix"; password = $TestPassword; password_confirmation = $TestPassword
         nickname = 'Notification Actor'; device = 'notification-test-actor'
     }
     $ownerHeaders = User-Headers $ownerLogin $appKey

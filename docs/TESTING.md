@@ -13,6 +13,22 @@
 - 下载中心依赖锁定安装、Lint 与渲染测试
 - 版本链一致性、疑似密钥和超大文件检查
 
+## 隔离 MariaDB 最小功能闭环
+
+Windows 本机已安装 MariaDB 11.4.5 与 PHP `pdo_mysql/curl/mbstring` 扩展时，可执行：
+
+```powershell
+.\backend\tools\run-minimum-closure-local.ps1
+```
+
+脚本每次创建独立数据库目录和随机端口，使用随机数据库密码、随机应用密钥及仅通过进程环境传递的随机测试口令，严格导入当前 `install.sql`，再通过真实 HTTP 依次执行 `core`、`forum`、`notifications`、`chat-commerce` 四条闭环。SQL `SOURCE` 任一错误、服务启动失败或任何 smoke 失败都会非零退出；服务进程在 `finally` 中按 PID 停止。证据默认保存在仓库外的 `D:\易运盈\.test-evidence\minimum-closure\<run-id>`，不能提交，也不能把隔离测试身份用于生产。
+
+定向复测可使用：
+
+```powershell
+.\backend\tools\run-minimum-closure-local.ps1 -Suites core,forum
+```
+
 ## 必须真机验证的场景
 
 - Android 14/15/16，至少覆盖小米、vivo、OPPO/一加、华为/荣耀和原生 Android

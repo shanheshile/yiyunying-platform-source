@@ -1,6 +1,6 @@
 # 易运盈后台 API 快速指南
 
-基础地址：由部署者显式配置，例如 `https://api.example.com`；文档不预填生产地址。
+官方托管基础地址固定为 `https://appht.jjmxg.xyz/`。源码买断自建由部署者显式配置自己的 HTTP/HTTPS 地址；例如 `https://api.your-company.example/` 只是不可执行的地址格式示例，不能直接用于构建或部署。
 
 本文件用于快速接入。完整角色与参数见 [API_FULL.md](API_FULL.md)，四级规则见 [PLATFORM_GOVERNANCE.md](PLATFORM_GOVERNANCE.md)，599 条实际路由见 [ROUTES.md](ROUTES.md)，177 张表的精确结构见 [SCHEMA.md](SCHEMA.md)，简云能力取长补短的原生映射见 [JIANYUN_CAPABILITY_MAPPING.md](JIANYUN_CAPABILITY_MAPPING.md)，论坛付费分节与热度规则见 [FORUM_EXPERIENCE.md](FORUM_EXPERIENCE.md)。浏览器可直接打开 `/api-docs.html` 查看并检索全部接口。
 
@@ -53,7 +53,7 @@ Content-Type: application/json
     "share": {
       "id": 18,
       "share_code": "D-SZAHiCwapVZ98x",
-      "share_url": "http://appht.jjmxg.xyz/api/public/note-shares/D-SZAHiCwapVZ98x",
+      "share_url": "https://appht.jjmxg.xyz/api/public/note-shares/D-SZAHiCwapVZ98x",
       "expired_at": null,
       "password_required": false,
       "status": 1,

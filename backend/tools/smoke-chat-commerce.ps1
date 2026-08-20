@@ -2,6 +2,10 @@ param([string]$BaseUrl = 'http://127.0.0.1:8789')
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
+$TestPassword = [Environment]::GetEnvironmentVariable('YY_SMOKE_TEST_PASSWORD', 'Process')
+if ([string]::IsNullOrWhiteSpace($TestPassword) -or [Text.Encoding]::UTF8.GetByteCount($TestPassword) -lt 12) {
+    throw 'YY_SMOKE_TEST_PASSWORD must be set to an isolated password of at least 12 UTF-8 bytes.'
+}
 $script:Checks = 0
 $operatorId = 0
 $rootHeaders = @{}
@@ -75,29 +79,34 @@ try {
     Assert-True ($health.database -eq 'connected') 'database health'
 
     $rootLogin = Invoke-Api POST '/api/platform/login' @{} @{
-        platform_key = 'yiyunying-root'; account = 'root'; password = '123456'
+        platform_key = 'yiyunying-root'; account = 'root'; password = $TestPassword
     }
     $rootHeaders = @{ Authorization = "Bearer $($rootLogin.access_token)" }
 
     $operatorAccount = "commerce_l2_$suffix"
     $operator = Invoke-Api POST '/api/platform/operators' $rootHeaders @{
-        account = $operatorAccount; password = '123456'; nickname = 'Commerce Level 2'
+        account = $operatorAccount; password = $TestPassword; nickname = 'Commerce Level 2'
         membership_days = 30; admin_quota = 2; balance = 20; allowed_weekdays = @(1,2,3,4,5,6,7)
     }
     $operatorId = [int]$operator.operator.id
     $platformKey = [string]$operator.operator.platform_key
     $operatorLogin = Invoke-Api POST '/api/platform/login' @{} @{
-        platform_key = $platformKey; account = $operatorAccount; password = '123456'
+        platform_key = $platformKey; account = $operatorAccount; password = $TestPassword
     }
     $operatorHeaders = @{ Authorization = "Bearer $($operatorLogin.access_token)" }
 
     $adminAccount = "commerce_l3_$suffix"
+    $bootstrapAppKey = "commerce_bootstrap_$suffix"
     Invoke-Api POST '/api/platform/admins' $operatorHeaders @{
-        account = $adminAccount; password = '123456'; nickname = 'Commerce Level 3'
-        vip_days = 30; app_quota = 1; remote_document_quota = 3; balance = 20
+        account = $adminAccount; password = $TestPassword; nickname = 'Commerce Level 3'
+        app_key = $bootstrapAppKey; app_name = 'Commerce Bootstrap'
+        # managedProvision always creates one bootstrap app; reserve one extra slot
+        # for the isolated commerce app exercised below.
+        vip_days = 30; app_quota = 2; remote_document_quota = 3; balance = 20
     } | Out-Null
     $adminLogin = Invoke-Api POST '/api/admin/login' @{} @{
-        platform_key = $platformKey; account = $adminAccount; password = '123456'
+        platform_key = $platformKey; app_key = $bootstrapAppKey
+        account = $adminAccount; password = $TestPassword
     }
     $adminHeaders = @{ Authorization = "Bearer $($adminLogin.access_token)" }
     $createdApp = Invoke-Api POST '/api/admin/apps' $adminHeaders @{
@@ -115,13 +124,13 @@ try {
     $accountB = "commerce_b_$suffix"
     $accountC = "commerce_c_$suffix"
     $createdA = Invoke-Api POST "/api/admin/apps/$appId/users" $adminHeaders @{
-        account = $accountA; password = '123456'; nickname = 'Commerce Alpha'
+        account = $accountA; password = $TestPassword; nickname = 'Commerce Alpha'
     }
     $createdB = Invoke-Api POST "/api/admin/apps/$appId/users" $adminHeaders @{
-        account = $accountB; password = '123456'; nickname = 'Commerce Beta'
+        account = $accountB; password = $TestPassword; nickname = 'Commerce Beta'
     }
     $createdC = Invoke-Api POST "/api/admin/apps/$appId/users" $adminHeaders @{
-        account = $accountC; password = '123456'; nickname = 'Commerce Gamma'
+        account = $accountC; password = $TestPassword; nickname = 'Commerce Gamma'
     }
     $userA = [int]$createdA.user.id
     $userB = [int]$createdB.user.id
@@ -136,9 +145,9 @@ try {
         asset_type = 'balance'; change_value = 100; remark = 'commerce smoke seed'
     } | Out-Null
 
-    $loginA = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountA; password = '123456' }
-    $loginB = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountB; password = '123456' }
-    $loginC = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountC; password = '123456' }
+    $loginA = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountA; password = $TestPassword }
+    $loginB = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountB; password = $TestPassword }
+    $loginC = Invoke-Api POST '/api/user/login' @{} @{ app_key = $appKey; account = $accountC; password = $TestPassword }
     $headersA = @{ Authorization = "Bearer $($loginA.access_token)"; 'X-App-Key' = $appKey }
     $headersB = @{ Authorization = "Bearer $($loginB.access_token)"; 'X-App-Key' = $appKey }
     $headersC = @{ Authorization = "Bearer $($loginC.access_token)"; 'X-App-Key' = $appKey }

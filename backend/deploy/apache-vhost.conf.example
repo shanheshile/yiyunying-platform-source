@@ -17,7 +17,8 @@
 
     SetEnv APP_ENV production
     SetEnv APP_DEBUG false
-    SetEnv APP_URL http://appht.jjmxg.xyz
+    # TLS 可在本 vhost 或可信反向代理终止；应用公开身份始终使用 HTTPS。
+    SetEnv APP_URL https://appht.jjmxg.xyz
     SetEnv DB_HOST 127.0.0.1
     SetEnv DB_PORT 3306
     SetEnv DB_NAME appht

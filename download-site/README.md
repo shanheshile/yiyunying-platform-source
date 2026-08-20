@@ -24,11 +24,11 @@ python download-site/scripts/serve-internal-downloads.py `
 
 Debug 只能走本机或专用私有存储，`deploy-static.py` 会拒绝把 Debug 或项目资产发布到公网。Nginx `/downloads/` 默认返回 404，仅放行四个不含 `-debug` 的 Stable APK 命名；正式客户别名与生命周期发布器生成的不可变 token 目录都受该白名单限制。
 
-官网目标正式首发版本 `1.0.0 (65)` 已从 A `3a78b8c1f5bae6cf49a7d4e5832f99c734371a78` 完成本地 Stable Build，pending manifest SHA-256 为 `7CB1FBC32A90D205D0BC8070B425F55C4416B0AF00D36010BE406FC1773BBE5B`；但 code62→65 真机升级、Finalize、`v1.0.0` tag 和 APK 生产部署尚未完成，不能切换正式下载。生产生命周期策略仍为 `2.7.14 (59)` Debug；客户页已于 2026-08-13 原子切换为失败关闭状态，四个旧 Debug 公网 URL 已由 Nginx 封为 404。在 finalized 证据就绪前页面必须继续失败关闭。旧 code63、code64 候选只保存在本机私有 superseded 目录，不得进入客户 HTML、脚本、下载目录或生产部署。MariaDB 61—65 两轮隔离实跑 PASS 不等同生产部署；此前生产在迁移 62 失败的尝试已完整回滚，当前 code65 未部署。
+官网目标正式首发版本 `1.0.0 (66)` 已从 A `9c645c035a290d2bfbec53022eb495c15265b29f` 完成本地 Stable Build，pending manifest SHA-256 为 `F6EC5BD2F20F869DF1D0A4B4E7DE14EBB528B5033AD52D3E3F789BEC329D916F`；同版本四端 `legacyCompat` 也已构建并保持 internal-only。设备计划为 `risk-waiver`，真机由用户后续验收，当前只能显示 `pending-user-validation`，绝不能写成 `passed`。Finalize、`v1.0.0` tag 和 APK 生产部署尚未完成，因此不能切换正式下载。生产生命周期策略仍为 `2.7.14 (59)` Debug；客户页保持失败关闭，四个旧 Debug 公网 URL 保持 404。在 finalized 证据就绪前页面必须继续失败关闭。上一轮 code65 已移到 `D:\易运盈\superseded-releases\1.0.0-code65-old-source-3a78b8c1`，旧 code63、code64 候选也只作私有历史核验；它们均不得进入客户 HTML、脚本、下载目录或生产部署。MariaDB 61—65 两轮隔离实跑 PASS 不等同生产部署；此前生产在迁移 62 失败的尝试已完整回滚，当前 code66 未部署。
 
 ## 客户页安全修复事务
 
-`deploy-site-security-remediation.py` 与正式版 `deploy-static.py` 完全独立。它只允许上传经过严格白名单检查的 `download-site/static-dist`，要求客户页处于“正式版尚未开放”的失败关闭状态，并拒绝 APK、候选版本/文件名/包名/SHA、项目私有资产、内部下载路由或额外文件。默认命令只做本地检查，不建立 SSH 连接：
+`deploy-site-security-remediation.py` 与正式版 `deploy-static.py` 完全独立。它只允许上传经过严格白名单检查的 `download-site/static-dist`，要求客户页明确显示“接入资料已开放，客户端仍在发布验收”且下载区保持失败关闭，并拒绝 APK、候选版本/文件名/包名/SHA、项目私有资产、内部下载路由或额外文件。默认命令只做本地检查，不建立 SSH 连接：
 
 ```powershell
 python download-site/scripts/deploy-site-security-remediation.py
@@ -71,7 +71,7 @@ python download-site/scripts/deploy-site-security-remediation.py `
 
 ## 对内 APK 短时下载源
 
-`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。`2.7.15 (60)` Debug 是冻结的历史审计锚，只允许 break-glass dry-run，禁止 `--execute` 或上传。可执行的 Debug 轨道必须改用当前全局版本（当前为 `1.0.0 (65)`）的专用 `DebugCompatibility` 清单；该清单必须位于 `releases/internal/legacy-debug-compat/1.0.0/release-manifest.json`，且版本名/版本号与当前 Stable pending 清单完全一致、versionCode 大于 60。Stable candidate 轨道从当前 release manifest 和 release identity 动态读取，并拒绝低于 code64、身份不一致、非 pending 或非 Stable 的候选。每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。
+`deploy-internal-apks.py` 独立维护对内下载站使用的私有 APK 源，不修改客户官网和公网 `/downloads`。`2.7.15 (60)` Debug 是冻结的历史审计锚，只允许 break-glass dry-run，禁止 `--execute` 或上传。当前专用 `DebugCompatibility` 清单位于 `releases/internal/legacy-debug-compat/1.0.0/release-manifest.json`，四端 `1.0.0/code66 legacyCompat` APK 已构建；它们的版本与当前 Stable pending 清单一致、保持旧 Debug 包名与 signer、非 debuggable 且仅限内部兼容轨道。Stable candidate 轨道从当前 release manifest 和 release identity 动态读取，并拒绝低于 code64、身份不一致、非 pending 或非 Stable 的候选。每条轨道必须恰好包含用户端、管理员端、代理端和买断总控端四包。
 
 不传兼容清单的默认命令只审计冻结的旧 `2.7.15` Debug 与当前 Stable candidate，始终是 dry-run，不能作为部署命令：
 
@@ -95,7 +95,7 @@ expires = 当前 Unix 秒 + 300
 sig = base64url_no_padding(HMAC-SHA256(hex_to_32_bytes(secret), expires + "\n" + path))
 ```
 
-Sites 托管 secret 名为 `YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET`，必须是 64 个小写十六进制字符；SSH 密码仍只从 `YY_SSH_PASSWORD` 读取。执行脚本不会输出二者。远端秘密写入固定的 `/etc/nginx/private/yiyunying-internal-apks-secret.conf`，权限为 `0600`；APK 和验证器原子切换到固定的 `/srv/yiyunying-internal-apks/current`，不进入任何 web root。PHP-FPM 地址和对应 PHP CLI 必须先从现有服务器配置只读确认，再以显式参数传入；当前生产 FPM 证据值为 `unix:/tmp/php-cgi-82.sock`，不可由脚本猜测。服务器 PATH 中的 `php` 是 7.0，禁止用于本闭环；`--remote-php-binary` 必须指向非符号链接的绝对可执行文件，脚本会调用该文件验证自身版本严格为 `8.2`，并只用它执行验证器语法检查。
+Sites 托管 secret 名为 `YIYUNYING_INTERNAL_DOWNLOAD_SIGNING_SECRET`，必须是 64 个小写十六进制字符；SSH 密码仍只从 `YY_SSH_PASSWORD` 读取。执行脚本不会输出二者。远端秘密写入固定的 `/etc/nginx/private/yiyunying-internal-apks-secret.conf`，权限为 `0600`；APK 和验证器原子切换到固定的 `/srv/yiyunying-internal-apks/current`，不进入任何 web root。私有树必须为 `root:www`：目录 `0750`，8 个 APK 与 `verify.php` 普通文件 `0640`；部署器会在激活前后拒绝 owner/group/mode、链接类型或文件数量漂移。PHP-FPM 地址和对应 PHP CLI 必须先从现有服务器配置只读确认，再以显式参数传入；当前生产 FPM 证据值为 `unix:/tmp/php-cgi-82.sock`，不可由脚本猜测。服务器 PATH 中的 `php` 是 7.0，禁止用于本闭环；`--remote-php-binary` 必须指向非符号链接的绝对可执行文件，脚本会调用该文件验证自身版本严格为 `8.2`，并只用它执行验证器语法检查。
 
 主站配置必须已经包含显式片段或受控的单层 `*.conf` extension include。执行时同时传入该 include 原文、其证据配置、FPM 证据配置和目标片段路径。下列占位路径必须换成已只读确认的真实路径；两个确认常量缺一不可：
 

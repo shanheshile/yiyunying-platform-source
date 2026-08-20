@@ -8,6 +8,8 @@ $checker = (string) file_get_contents($root . '/tools/check-deployment.ps1');
 $deployDoc = (string) file_get_contents($root . '/deploy/DEPLOY.md');
 $apiGenerator = (string) file_get_contents($root . '/tools/generate-api-html.php');
 $publicApiDoc = (string) file_get_contents($root . '/public/api-docs.html');
+$databaseConfig = (string) file_get_contents($root . '/config/app.php');
+$databaseCore = (string) file_get_contents($root . '/app/Core/Database.php');
 
 $failures = [];
 $assert = static function (bool $condition, string $message) use (&$failures): void {
@@ -51,6 +53,17 @@ $assert(
 $assert(
     str_contains($install, 'SET @yy_disabled_app_secret_hash = SHA2(CONCAT(UUID(), UUID(), RAND(), NOW(6)), 256);'),
     '未配置 app_secret 时必须生成随机哈希'
+);
+$assert(
+    str_contains($install, 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;')
+        && substr_count($install, 'COLLATE utf8mb4_unicode_ci;') >= 10,
+    '首次安装必须统一客户端变量与数据表的 utf8mb4_unicode_ci 排序规则'
+);
+$assert(
+    str_contains($databaseConfig, "'collation' => 'utf8mb4_unicode_ci'")
+        && str_contains($databaseCore, 'SET NAMES {$charset} COLLATE {$collation}')
+        && str_contains($databaseCore, "defined('PDO::MYSQL_ATTR_INIT_COMMAND')"),
+    'PDO 连接必须显式锁定与 install.sql 一致的排序规则'
 );
 $assert(substr_count($install, '`status` = VALUES(`status`)') >= 4, '各级占位身份必须保持条件 status');
 $assert(

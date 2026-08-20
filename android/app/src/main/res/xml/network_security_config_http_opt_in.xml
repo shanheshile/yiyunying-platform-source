@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Selected only when a self_host build explicitly opts in to HTTP. This is a
+  build-wide risk choice: Android network security configuration cannot safely
+  express an arbitrary runtime host allowlist from BuildConfig.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

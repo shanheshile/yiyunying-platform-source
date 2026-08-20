@@ -634,7 +634,6 @@ if [ "$stt_repair_ready" -ne 1 ]; then
 elif [ "$stt_permission_bad" -ne 0 ]; then
   drift=1
   expected_permission_drift=1
-  apply_blocked=1
   printf 'STT_PERMISSION_MUTATION_AUTHORIZATION|required\n'
 else
   printf 'STT_PERMISSION_MUTATION_AUTHORIZATION|not-needed\n'
@@ -1055,7 +1054,6 @@ validate_full_structure() {
 
 shape_preflight=$(shape_hash)
 validate_full_structure
-validate_stt_strict_permissions
 test "$shape_preflight" = "$(shape_hash)"
 assert_runtime_quiesced
 
@@ -1288,6 +1286,12 @@ verify_complete_permission_matrix() {
   verify_inventory "$inventory_private_upload_dirs" directory "$RUNTIME_USER" "$RUNTIME_GROUP" 700
   verify_inventory "$inventory_private_upload_files" file "$RUNTIME_USER" "$RUNTIME_GROUP" 600
   verify_inventory "$inventory_storage_files" file root "$RUNTIME_GROUP" 640
+  verify_exact "$ROOT/storage/stt" directory root "$RUNTIME_GROUP" 750
+  verify_inventory "$inventory_stt_dirs" directory root "$RUNTIME_GROUP" 750
+  verify_inventory "$inventory_stt_exec_files" file root "$RUNTIME_GROUP" 750
+  verify_inventory "$inventory_stt_data_files" file root "$RUNTIME_GROUP" 640
+  verify_link_inventory "$inventory_stt_links" root "$RUNTIME_GROUP"
+  validate_stt_gate
   su -s /bin/sh -c "test -r '$ROOT/.env' && test ! -w '$ROOT/.env' && test -r '$ROOT/bootstrap.php' && test ! -w '$ROOT/bootstrap.php'" "$RUNTIME_USER"
   su -s /bin/sh -c "test ! -w '$ROOT/public/downloads' && test ! -w '$ROOT/public/download-center'" "$RUNTIME_USER"
 }
@@ -1310,6 +1314,11 @@ harden_inventory "$inventory_private_upload_dirs" directory "$RUNTIME_USER" "$RU
 harden_inventory "$inventory_private_upload_files" file "$RUNTIME_USER" "$RUNTIME_GROUP" 600
 harden_inventory "$inventory_storage_files" file root "$RUNTIME_GROUP" 640
 harden_exact "$private/uploads" directory "$RUNTIME_USER" "$RUNTIME_GROUP" 700
+harden_exact "$ROOT/storage/stt" directory root "$RUNTIME_GROUP" 750
+harden_stt_directory_inventory "$inventory_stt_dirs"
+harden_inventory "$inventory_stt_exec_files" file root "$RUNTIME_GROUP" 750
+harden_inventory "$inventory_stt_data_files" file root "$RUNTIME_GROUP" 640
+harden_link_inventory "$inventory_stt_links" root "$RUNTIME_GROUP"
 
 verify_complete_permission_matrix
 

@@ -2,11 +2,48 @@
 
 原生 Android 应用，使用 Java 17 和 Android SDK 36。四个 product flavor 分别对应平台总控、授权平台、管理员和用户端，共享聊天、媒体、缓存、权限与设计系统。
 
-版本由 `version.properties` 管理。API 与平台密钥不得写死，可通过 Gradle 属性或环境变量注入：
+版本由 `version.properties` 管理。平台与应用 KEY 不得写死，可通过 Gradle 属性或环境变量注入。
+
+## 两套部署与多线路
+
+连接身份在编译时固定，登录页不能临时改服务器：
+
+- 官方托管版（`hosted`，默认）四个 Stable 端只允许唯一主线
+  `https://appht.jjmxg.xyz/`，不接受备用线路，也不允许 HTTP 或 HTTPS→HTTP 降级。
+- 源码买断自建版必须显式使用 `self_host`，并显式提供买方自己的服务器；构建门禁拒绝继续使用
+  `appht.jjmxg.xyz`。`apiBaseUrls` 按书写顺序排列，用分号、逗号或换行分隔，规范化后去重。
+- 只有 GET/HEAD 读取在连接/DNS/超时/连接重置，或明确的 502/503/504 时尝试下一线路。
+  4xx、业务错误、普通 500 不切换；POST/PUT/PATCH/DELETE、上传和 Token 刷新始终只发一次且只走主线路。
+
+官方托管配置可用非敏感校验任务复核：
 
 ```powershell
-.\gradlew.bat assembleUserDebug -PapiBaseUrl=https://api.example.com/
+.\gradlew.bat :app:printConnectionConfig
 ```
+
+源码买断自建 HTTPS 多线路示例：
+
+```powershell
+.\gradlew.bat assembleUserRelease `
+  -PconnectionMode=self_host `
+  '-PapiBaseUrls=https://api.customer.example/;https://api-backup.customer.example/'
+```
+
+也可使用 `YIYUNYING_CONNECTION_MODE`、`YIYUNYING_API_BASE_URLS` 环境变量。只配置一条线路时，
+继续兼容 `-PapiBaseUrl` / `YIYUNYING_API_BASE_URL`。
+
+HTTP 仅供买方明确接受明文传输风险的自建环境，除 `self_host` 外还要第二次显式授权；该开关会选择允许
+cleartext 的 Android 网络安全配置，不能用于官方包：
+
+```powershell
+.\gradlew.bat assembleUserRelease `
+  -PconnectionMode=self_host `
+  '-PapiBaseUrls=http://192.0.2.10:8080/;https://api-backup.customer.example/' `
+  -PallowHttpEndpoints=true
+```
+
+Release 仍要求买方注入自己的签名、平台 KEY、应用 KEY 等材料。Debug 在没有任何连接参数时保留
+`http://10.0.2.2:8788/` 本机模拟器默认值；一旦显式传入自建地址，同样执行上述模式与 HTTP 门禁。
 
 常用校验：
 

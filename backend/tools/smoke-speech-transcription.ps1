@@ -1,5 +1,5 @@
 param(
-    [string]$BaseUrl = 'http://appht.jjmxg.xyz',
+    [string]$BaseUrl = 'https://appht.jjmxg.xyz',
     [string]$AudioFile = ''
 )
 

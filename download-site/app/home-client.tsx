@@ -168,7 +168,7 @@ async function shareOfficialWebsite(onDone: (message: string) => void) {
     try {
       await navigator.share({
         title: "易云盈｜软件授权与运营平台",
-        text: "易云盈正式官网、接口文档与四角色客户端下载",
+        text: "易云盈产品介绍、接口文档与客户端发布状态",
         url: canonicalUrl,
       });
       onDone("系统分享面板已打开，官网链接可直接访问");
@@ -337,6 +337,9 @@ export default function Home({
   const selected =
     PUBLIC_RELEASES.find((release) => release.id === selectedId) ??
     PUBLIC_RELEASES[0];
+  const selectedDisplayName = selected?.id === "owner"
+    ? "平台总控客户端（官方托管）"
+    : selected?.name;
 
   const downloadUrl = selected
     ? DOWNLOAD_ROOT +
@@ -361,9 +364,9 @@ export default function Home({
           <a href="#security">安全保障</a>
         </nav>
         <a className="header-download" href="#download">
-          下载客户端 <ArrowRight size={16} aria-hidden="true" />
+          {IS_FORMAL_RELEASE ? "下载客户端" : "公开入口"} <ArrowRight size={16} aria-hidden="true" />
         </a>
-        <button className="header-share" data-action="share-home" type="button" onClick={() => shareOfficialWebsite(setToast)} aria-label="分享易云盈正式官网">
+        <button className="header-share" data-action="share-home" type="button" onClick={() => shareOfficialWebsite(setToast)} aria-label="分享易云盈官网">
           <Share2 size={16} aria-hidden="true" />分享官网
         </button>
       </header>
@@ -563,14 +566,14 @@ export default function Home({
             <p>DEVELOPER FIRST</p>
             <h2>接口文档清楚，接入路径可验证</h2>
             <span>
-              从身份校验到业务状态回读，文档按系统组织请求、字段与响应说明。开发者只需在自己的源码中配置所属应用信息，无需让最终用户填写服务器地址或应用标识。
+              正式 API Base URL 固定为 https://appht.jjmxg.xyz/。从身份校验到业务状态回读，文档按系统组织请求、字段与响应说明；开发者只需在自己的源码中配置所属应用信息，无需让最终用户填写服务器地址或应用标识。
             </span>
             <a href={API_DOCS_URL} target="_blank" rel="noreferrer">
               打开接口文档 <ExternalLink size={17} aria-hidden="true" />
             </a>
           </div>
           <div className="api-window" aria-label="安全接入流程示意" data-reveal>
-            <div className="api-window-bar"><span /><span /><span /><code>身份校验流程</code></div>
+            <div className="api-window-bar"><span /><span /><span /><code>https://appht.jjmxg.xyz/</code></div>
             <div className="api-window-body">
               <p><b>1</b><span>app_key / platform_key</span><Check /></p>
               <p><b>2</b><span>账号与登录密码</span><Check /></p>
@@ -599,11 +602,11 @@ export default function Home({
         <section className="download-section" id="download">
           <div className="section-heading centered download-heading" data-reveal>
             <p>OFFICIAL CLIENTS</p>
-            <h2>{IS_FORMAL_RELEASE ? "下载易云盈正式版" : "易云盈正式版准备中"}</h2>
+            <h2>{IS_FORMAL_RELEASE ? "下载易云盈正式版" : "接入资料已开放，客户端仍在发布验收"}</h2>
             <span>
               {IS_FORMAL_RELEASE
-                ? "官网提供用户端、管理员端、授权代理端和买断总控端，请严格按已开通账号角色选择。"
-                : "平台功能介绍与接口文档已开放；客户端下载将在完成正式发布验收后开放。"}
+                ? "官网提供用户端、管理员端、授权代理端和平台总控客户端（官方托管），请严格按已开通账号角色选择。"
+                : "产品能力、接口文档与公开服务状态可直接查看；客户端下载通过正式发布验收后才会在此显示。"}
             </span>
           </div>
 
@@ -622,11 +625,11 @@ export default function Home({
             </article>
             <article>
               <PackageCheck aria-hidden="true" />
-              <span><small>发布证据</small><strong>{IS_FORMAL_RELEASE ? "Finalized · 四角色一致" : "正式验收中"}</strong><b>{IS_FORMAL_RELEASE ? "仅展示最终公开清单" : "候选信息保持私有"}</b></span>
+              <span><small>客户端发布</small><strong>{IS_FORMAL_RELEASE ? "Finalized · 四角色一致" : "正式验收中"}</strong><b>{IS_FORMAL_RELEASE ? "仅展示最终公开清单" : "未验收资料保持私有"}</b></span>
             </article>
             <article>
               <ShieldCheck aria-hidden="true" />
-              <span><small>下载保护</small><strong>{IS_FORMAL_RELEASE ? "HTTPS + SHA-256" : "下载通道未开放"}</strong><b>{IS_FORMAL_RELEASE ? "下载前后均可核验" : "完成验收后自动展示"}</b></span>
+              <span><small>下载保护</small><strong>{IS_FORMAL_RELEASE ? "HTTPS + SHA-256" : "下载区保持关闭"}</strong><b>{IS_FORMAL_RELEASE ? "下载前后均可核验" : "正式证据就绪后开放"}</b></span>
             </article>
           </div>
 
@@ -662,7 +665,7 @@ export default function Home({
                   role="tab"
                   key={release.id}
                 >
-                  <span>{release.shortName}</span><small>{release.audience}</small>
+                  <span>{release.id === "owner" ? "平台总控" : release.shortName}</span><small>{release.id === "owner" ? "官方托管 Level 1" : release.audience}</small>
                 </button>
               ))}
             </div>
@@ -670,7 +673,7 @@ export default function Home({
             <div className="selected-download" id="selected-client-panel" role="tabpanel" aria-live="polite" key={selected.id}>
               <div className="selected-product">
                 <span className="product-mark"><img src="/logo.svg" alt="" width="60" height="60" /></span>
-                <span><small>当前选择</small><strong>{selected.name}</strong><p>{selected.description}</p></span>
+                <span><small>当前选择</small><strong>{selectedDisplayName}</strong><p>{selected.description}</p></span>
                 <b>{selected.size}</b>
               </div>
 
@@ -680,7 +683,7 @@ export default function Home({
                 download={selected.fileName}
                 onClick={() =>
                   setToast(
-                    selected.name + "已开始下载",
+                    selectedDisplayName + "已开始下载",
                   )
                 }
               >
@@ -745,9 +748,26 @@ export default function Home({
           </> : (
             <div className="download-shell release-unavailable" aria-live="polite" data-reveal>
               <ShieldCheck aria-hidden="true" />
-              <h3>正式版尚未开放</h3>
-              <p>当前页面不会公开候选版本、安装包名称、校验值或下载地址。请先浏览完整功能介绍与接口文档，正式版通过验收后将在这里开放。</p>
-              <a className="secondary-action" href={API_DOCS_URL}>查看接口文档</a>
+              <p className="release-unavailable-kicker">PUBLIC ACCESS</p>
+              <h3>先用公开资料完成接入准备</h3>
+              <p>当前可公开使用的内容包括产品能力说明、接口文档和服务状态检测。下载区在完成正式发布验收前保持关闭；通过后，四角色客户端与校验信息将在这里自动显示。</p>
+              <div className="public-access-grid">
+                <a href={API_DOCS_URL}>
+                  <Code2 aria-hidden="true" />
+                  <span><strong>客户接口文档</strong><small>四角色、60 条已核验白名单路由与最小闭环</small></span>
+                  <ArrowRight aria-hidden="true" />
+                </a>
+                <a href="#features">
+                  <FileText aria-hidden="true" />
+                  <span><strong>平台功能说明</strong><small>十二大业务系统、治理能力与接入流程</small></span>
+                  <ArrowRight aria-hidden="true" />
+                </a>
+              </div>
+              <div className="public-release-boundary" aria-label="当前公开边界">
+                <span><Check aria-hidden="true" />产品介绍已开放</span>
+                <span><Check aria-hidden="true" />接口文档已开放</span>
+                <span><Activity aria-hidden="true" />客户端待正式发布验收</span>
+              </div>
             </div>
           )}
         </section>
@@ -759,7 +779,11 @@ export default function Home({
           <div className="faq-list">
             <details>
               <summary>应该下载哪个客户端？<ChevronDown aria-hidden="true" /></summary>
-              <p>普通用户选择用户端，应用运营人员选择管理员端，授权运营方选择代理端，平台所有者选择买断总控端。下载或安装客户端都不会改变账号实际权限。</p>
+              <p>普通用户选择用户端，应用运营人员选择管理员端，授权运营方选择代理端，官方托管平台所有者选择平台总控客户端。下载或安装客户端都不会改变账号实际权限。</p>
+            </details>
+            <details>
+              <summary>平台总控客户端与源码买断自建部署有什么区别？<ChevronDown aria-hidden="true" /></summary>
+              <p>平台总控客户端属于官方托管四端之一，只能通过 HTTPS 连接 https://appht.jjmxg.xyz/ 并使用官方租户、数据和更新通道，不能降级 HTTP。源码买断方在自己的服务器部署整套系统，可按自建环境配置 HTTP/HTTPS 和多条有序自有 Base URL，但 HTTPS 应作为生产默认，HTTP 仅用于明确接受明文风险的可信内网或测试；自建方必须生成自己的 KEY、账号、数据库和更新通道，不得复用官方域名、身份或数据。自建多线路只会为 GET/HEAD 读取在连接类异常或 502/503/504 时按顺序切换；4xx、普通 500、写请求、上传和 Token 刷新均不会跨线路重放，全部线路失败时也绝不回退官方服务。</p>
             </details>
             <details>
               <summary>登录时为什么不需要填写服务器地址和应用标识？<ChevronDown aria-hidden="true" /></summary>

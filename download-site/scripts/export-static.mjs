@@ -5,6 +5,7 @@ import {
   loadPublicReleaseProjection,
   PUBLIC_RELEASE_PROJECTION_KEY,
 } from "./public-release-projection.mjs";
+import { OFFICIAL_API_BASE_URL } from "../app/public-api.mjs";
 
 const BASE_PATH = "/download-center/";
 const DEFAULT_OUTPUT_DIR = new URL("../static-dist/", import.meta.url);
@@ -334,7 +335,7 @@ const browserScript = sharedBrowserScript + "\n" + (isFormalRelease
   : pendingBrowserScript);
 
 const docsBrowserScript = `(() => {
-  const SAFE_BASE_URL = "https://api.example.com";
+  const OFFICIAL_API_BASE_URL = ${JSON.stringify(OFFICIAL_API_BASE_URL)};
 
   function statusFor(element) {
     if (!element || typeof element.closest !== "function") return null;
@@ -390,7 +391,7 @@ const docsBrowserScript = `(() => {
   }
 
   function parseRequest(raw) {
-    const curlMatch = raw.match(/curl\\s+--request\\s+(GET|POST|PUT|DELETE)\\s+['\"]https:\\/\\/api\\.example\\.com([^'\"]+)['\"]/i);
+    const curlMatch = raw.match(/curl\\s+--request\\s+(GET|POST|PUT|DELETE)\\s+['\"]https:\\/\\/appht\\.jjmxg\\.xyz([^'\"]+)['\"]/i);
     const lineMatch = raw.match(/(?:^|\\n)(GET|POST|PUT|DELETE)\\s+(\\/api\\/[^\\s；]+)/i);
     const method = (curlMatch?.[1] || lineMatch?.[1] || "GET").toUpperCase();
     const path = curlMatch?.[2] || lineMatch?.[2] || "/api/user/me";
@@ -405,7 +406,7 @@ const docsBrowserScript = `(() => {
 
   function makeSnippet(raw, format) {
     const request = parseRequest(raw);
-    const url = SAFE_BASE_URL + request.path;
+    const url = new URL(request.path.replace(/^\\/+/, ""), OFFICIAL_API_BASE_URL).toString();
     const headers = [];
     if (request.body) headers.push(["Content-Type", "application/json"]);
     if (request.needsAppKey) headers.push(["X-App-Key", "APP_API_UNIQUE_ID"]);
@@ -436,6 +437,69 @@ const docsBrowserScript = `(() => {
     headers.forEach(([name, value]) => lines.push("  --header '" + name + ": " + value + "'"));
     if (request.body) lines.push("  --data '" + request.body + "'");
     return lines.join(" \\\\\\n");
+  }
+
+  const endpointSearch = document.querySelector("[data-endpoint-catalog]");
+  if (endpointSearch) {
+    const endpointSearchInput = endpointSearch.querySelector('input[type="search"]');
+    const endpointSearchClear = endpointSearch.querySelector('button[aria-label="清空接口搜索"]');
+    const endpointSearchStatus = endpointSearch.querySelector(':scope > [role="status"]');
+    let endpointCatalog = [];
+    try {
+      const parsed = JSON.parse(endpointSearch.dataset.endpointCatalog || "[]");
+      if (Array.isArray(parsed)) endpointCatalog = parsed;
+    } catch {
+      endpointCatalog = [];
+    }
+    const endpointSearchResults = document.createElement("ul");
+    endpointSearchResults.hidden = true;
+    endpointSearch.appendChild(endpointSearchResults);
+
+    function renderEndpointSearch(rawQuery) {
+      const normalized = String(rawQuery || "").trim().toLocaleLowerCase("zh-CN");
+      const matches = normalized
+        ? endpointCatalog.filter((item) => [item.method, item.path, item.purpose, item.systemTitle]
+            .some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(normalized)))
+            .slice(0, 12)
+        : [];
+      endpointSearchResults.replaceChildren();
+      endpointSearchResults.hidden = !normalized;
+      if (endpointSearchClear) endpointSearchClear.hidden = !normalized;
+      if (endpointSearchStatus) {
+        endpointSearchStatus.textContent = normalized
+          ? "找到 " + matches.length + " 条匹配结果（最多显示 12 条）"
+          : "已索引 " + endpointCatalog.length + " 条白名单接口；输入关键词后显示匹配项。";
+      }
+      if (!normalized) return;
+      matches.forEach((item) => {
+        const listItem = document.createElement("li");
+        const link = document.createElement("a");
+        const method = document.createElement("code");
+        const path = document.createElement("span");
+        const detail = document.createElement("small");
+        link.href = "#" + String(item.systemId || "");
+        method.textContent = String(item.method || "");
+        path.textContent = String(item.path || "");
+        detail.textContent = String(item.systemTitle || "") + " · " + String(item.purpose || "");
+        link.append(method, path, detail);
+        listItem.appendChild(link);
+        endpointSearchResults.appendChild(listItem);
+      });
+      if (matches.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "endpoint-search-empty";
+        empty.textContent = "没有匹配的公开接口；请缩短关键词或按左侧系统目录浏览。";
+        endpointSearchResults.appendChild(empty);
+      }
+    }
+
+    endpointSearchInput?.addEventListener("input", () => renderEndpointSearch(endpointSearchInput.value));
+    endpointSearchClear?.addEventListener("click", () => {
+      if (endpointSearchInput) endpointSearchInput.value = "";
+      renderEndpointSearch("");
+      endpointSearchInput?.focus();
+    });
+    renderEndpointSearch(endpointSearchInput?.value || "");
   }
 
   document.querySelectorAll('[data-action="share-docs"]').forEach((button) => button.addEventListener("click", async () => {

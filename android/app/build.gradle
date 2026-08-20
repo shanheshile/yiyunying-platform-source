@@ -34,10 +34,116 @@ def configValue = { String propertyName, String environmentName, String fallback
 def asBuildConfigString = { String value ->
     '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 }
-def defaultApiBaseUrl = configValue('apiBaseUrl', 'YIYUNYING_API_BASE_URL', 'http://10.0.2.2:8788/')
-if (!defaultApiBaseUrl.endsWith('/')) {
-    defaultApiBaseUrl += '/'
+def officialHostedApiBaseUrl = 'https://appht.jjmxg.xyz/'
+def readOptionalConfiguration = { String propertyName, String environmentName ->
+    def propertyValue = project.findProperty(propertyName)
+    if (propertyValue != null && !propertyValue.toString().trim().isEmpty()) {
+        return propertyValue.toString().trim()
+    }
+    def environmentValue = System.getenv(environmentName)
+    if (environmentValue != null && !environmentValue.toString().trim().isEmpty()) {
+        return environmentValue.toString().trim()
+    }
+    return null
 }
+def normalizeConnectionMode = { String raw ->
+    def value = (raw ?: 'hosted').trim().toLowerCase(Locale.ROOT).replace('-', '_')
+    if (!(value in ['hosted', 'self_host'])) {
+        throw new GradleException('connectionMode/YIYUNYING_CONNECTION_MODE 只支持 hosted 或 self_host。')
+    }
+    value
+}
+def parseExplicitBoolean = { String raw, String label ->
+    if (raw == null) return false
+    def value = raw.trim().toLowerCase(Locale.ROOT)
+    if (value in ['1', 'true']) return true
+    if (value in ['0', 'false']) return false
+    throw new GradleException("${label} 只支持 true/false 或 1/0。")
+}
+def normalizeApiEndpoint = { String raw, boolean allowHttp ->
+    def value = raw == null ? '' : raw.trim()
+    if (value.isEmpty()) {
+        throw new GradleException('API 线路不能为空。')
+    }
+    if (!(value ==~ /(?i)^https?:\/\/.+/)) {
+        throw new GradleException("API 线路必须显式包含 http:// 或 https://：${value}")
+    }
+    URI uri
+    try {
+        uri = new URI(value)
+    } catch (URISyntaxException exception) {
+        throw new GradleException("API 线路格式错误：${value}")
+    }
+    def scheme = uri.scheme == null ? '' : uri.scheme.toLowerCase(Locale.ROOT)
+    if (!(scheme in ['http', 'https']) || uri.host == null || uri.host.trim().isEmpty()) {
+        throw new GradleException("API 线路只支持带有效主机名的 HTTP/HTTPS 地址：${value}")
+    }
+    if (scheme == 'http' && !allowHttp) {
+        throw new GradleException('HTTP 线路默认禁止；仅源码买断自建模式可显式设置 allowHttpEndpoints=true。')
+    }
+    if (uri.userInfo != null || uri.query != null || uri.fragment != null) {
+        throw new GradleException("API 线路不能包含账号、查询参数或片段：${value}")
+    }
+    def port = uri.port
+    if ((scheme == 'https' && port == 443) || (scheme == 'http' && port == 80)) port = -1
+    def path = uri.path == null || uri.path.isEmpty() ? '/' : uri.path
+    URI normalizedUri
+    try {
+        normalizedUri = new URI(scheme, null, uri.host.toLowerCase(Locale.ROOT), port, path, null, null).normalize()
+    } catch (URISyntaxException exception) {
+        throw new GradleException("API 线路无法规范化：${value}")
+    }
+    def normalized = normalizedUri.toASCIIString()
+    normalized.endsWith('/') ? normalized : normalized + '/'
+}
+def normalizeApiEndpoints = { String raw, boolean allowHttp ->
+    def result = new LinkedHashSet<String>()
+    (raw ?: '').split(/[;,\r\n]+/).each { candidate ->
+        if (!candidate.trim().isEmpty()) result.add(normalizeApiEndpoint(candidate, allowHttp))
+    }
+    if (result.isEmpty()) {
+        throw new GradleException('至少需要配置一条 API 线路。')
+    }
+    result.toList()
+}
+
+def configuredApiBaseUrlsRaw = readOptionalConfiguration('apiBaseUrls', 'YIYUNYING_API_BASE_URLS')
+def configuredApiBaseUrlRaw = readOptionalConfiguration('apiBaseUrl', 'YIYUNYING_API_BASE_URL')
+def configuredConnectionModeRaw = readOptionalConfiguration('connectionMode', 'YIYUNYING_CONNECTION_MODE')
+def configuredAllowHttpRaw = readOptionalConfiguration('allowHttpEndpoints', 'YIYUNYING_ALLOW_HTTP_ENDPOINTS')
+def connectionMode = normalizeConnectionMode(configuredConnectionModeRaw)
+def allowHttpEndpoints = parseExplicitBoolean(configuredAllowHttpRaw, 'allowHttpEndpoints/YIYUNYING_ALLOW_HTTP_ENDPOINTS')
+def hasExplicitApiEndpoints = configuredApiBaseUrlsRaw != null || configuredApiBaseUrlRaw != null
+def apiBaseUrlsRaw = configuredApiBaseUrlsRaw ?: configuredApiBaseUrlRaw ?: officialHostedApiBaseUrl
+def apiBaseUrls = normalizeApiEndpoints(apiBaseUrlsRaw, allowHttpEndpoints)
+
+if (configuredApiBaseUrlsRaw != null && configuredApiBaseUrlRaw != null) {
+    def legacySingle = normalizeApiEndpoint(configuredApiBaseUrlRaw, allowHttpEndpoints)
+    if (legacySingle != apiBaseUrls.first()) {
+        throw new GradleException('apiBaseUrl 与 apiBaseUrls 第一条线路不一致，拒绝含糊的连接身份。')
+    }
+}
+if (connectionMode == 'hosted') {
+    if (allowHttpEndpoints || apiBaseUrls != [officialHostedApiBaseUrl]) {
+        throw new GradleException("hosted 官方模式只允许唯一线路 ${officialHostedApiBaseUrl}，且绝不允许 HTTP 降级。")
+    }
+} else {
+    if (!hasExplicitApiEndpoints) {
+        throw new GradleException('self_host 源码买断模式必须显式配置自己的 apiBaseUrl/apiBaseUrls。')
+    }
+    if (apiBaseUrls.any { new URI(it).host.equalsIgnoreCase('appht.jjmxg.xyz') }) {
+        throw new GradleException('self_host 源码买断模式不得依赖官方 appht.jjmxg.xyz，请配置买方自己的服务器。')
+    }
+}
+
+def defaultApiBaseUrl = apiBaseUrls.first()
+def encodedApiBaseUrls = apiBaseUrls.join(';')
+def enableApiFailover = connectionMode == 'self_host' && apiBaseUrls.size() > 1
+def implicitLocalDebug = configuredConnectionModeRaw == null && !hasExplicitApiEndpoints && configuredAllowHttpRaw == null
+def debugApiBaseUrls = implicitLocalDebug ? ['http://10.0.2.2:8788/'] : apiBaseUrls
+def debugConnectionMode = implicitLocalDebug ? 'self_host' : connectionMode
+def debugAllowHttpEndpoints = implicitLocalDebug || allowHttpEndpoints
+def debugEnableApiFailover = debugConnectionMode == 'self_host' && debugApiBaseUrls.size() > 1
 def defaultAppKey = configValue('appKey', 'YIYUNYING_APP_KEY', 'yiyunying-local')
 def defaultPlatformKey = configValue('platformKey', 'YIYUNYING_PLATFORM_KEY', 'local-platform')
 def authorizedPlatformKey = configValue(
@@ -92,7 +198,16 @@ android {
             }
         }
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        manifestPlaceholders = [
+            networkSecurityConfig: allowHttpEndpoints
+                ? '@xml/network_security_config_http_opt_in'
+                : '@xml/network_security_config'
+        ]
         buildConfigField 'String', 'DEFAULT_API_BASE_URL', asBuildConfigString(defaultApiBaseUrl)
+        buildConfigField 'String', 'API_BASE_URLS', asBuildConfigString(encodedApiBaseUrls)
+        buildConfigField 'String', 'CONNECTION_MODE', asBuildConfigString(connectionMode)
+        buildConfigField 'boolean', 'ENABLE_API_FAILOVER', enableApiFailover.toString()
+        buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', allowHttpEndpoints.toString()
         buildConfigField 'String', 'DEFAULT_APP_KEY', asBuildConfigString(defaultAppKey)
         buildConfigField 'String', 'DEFAULT_PLATFORM_KEY', asBuildConfigString(defaultPlatformKey)
     }
@@ -169,12 +284,20 @@ android {
         debug {
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
-            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'true'
+            buildConfigField 'String', 'DEFAULT_API_BASE_URL', asBuildConfigString(debugApiBaseUrls.first())
+            buildConfigField 'String', 'API_BASE_URLS', asBuildConfigString(debugApiBaseUrls.join(';'))
+            buildConfigField 'String', 'CONNECTION_MODE', asBuildConfigString(debugConnectionMode)
+            buildConfigField 'boolean', 'ENABLE_API_FAILOVER', debugEnableApiFailover.toString()
+            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', debugAllowHttpEndpoints.toString()
+            manifestPlaceholders = [
+                networkSecurityConfig: debugAllowHttpEndpoints
+                    ? '@xml/network_security_config_http_opt_in'
+                    : '@xml/network_security_config'
+            ]
         }
         release {
             minifyEnabled true
             shrinkResources true
-            buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'false'
             signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -187,7 +310,11 @@ android {
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
             buildConfigField 'String', 'DEFAULT_API_BASE_URL', asBuildConfigString('https://appht.jjmxg.xyz/')
+            buildConfigField 'String', 'API_BASE_URLS', asBuildConfigString('https://appht.jjmxg.xyz/')
+            buildConfigField 'String', 'CONNECTION_MODE', asBuildConfigString('hosted')
+            buildConfigField 'boolean', 'ENABLE_API_FAILOVER', 'false'
             buildConfigField 'boolean', 'ALLOW_HTTP_ENDPOINTS', 'false'
+            manifestPlaceholders = [networkSecurityConfig: '@xml/network_security_config']
             signingConfig signingConfigs.debug
         }
     }
@@ -201,6 +328,17 @@ android {
 
     packaging {
         resources.excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1']
+    }
+}
+
+tasks.register('printConnectionConfig') {
+    group = 'verification'
+    description = 'Prints the normalized non-secret Release connection profile.'
+    doLast {
+        println "mode=${connectionMode}"
+        println "apiBaseUrls=${encodedApiBaseUrls}"
+        println "allowHttpEndpoints=${allowHttpEndpoints}"
+        println "enableApiFailover=${enableApiFailover}"
     }
 }
 
@@ -230,7 +368,12 @@ tasks.configureEach { task ->
 tasks.withType(Test).configureEach {
     maxParallelForks = 1
     forkEvery = 24
-    maxHeapSize = '1536m'
+    maxHeapSize = (project.findProperty('unitTestMaxHeap')
+        ?: System.getenv('YIYUNYING_UNIT_TEST_MAX_HEAP')
+        ?: '1536m').toString()
+    if (project.findProperty('lowMemoryTests')?.toString() == 'true') {
+        jvmArgs '-XX:+UseSerialGC', '-XX:MaxMetaspaceSize=192m', '-Xss512k'
+    }
 }
 
 dependencies {

@@ -4,6 +4,10 @@
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
+$TestPassword = [Environment]::GetEnvironmentVariable('YY_SMOKE_TEST_PASSWORD', 'Process')
+if ([string]::IsNullOrWhiteSpace($TestPassword) -or [Text.Encoding]::UTF8.GetByteCount($TestPassword) -lt 12) {
+    throw 'YY_SMOKE_TEST_PASSWORD must be set to an isolated password of at least 12 UTF-8 bytes.'
+}
 
 function Invoke-Api {
     param(
@@ -26,6 +30,13 @@ function Invoke-Api {
         $response = Invoke-RestMethod @parameters
     } catch {
         $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail) -and $null -ne $_.Exception.Response) {
+            try {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $detail = $reader.ReadToEnd()
+                $reader.Dispose()
+            } catch { }
+        }
         if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
         throw "$Method $Path failed: $detail"
     }
@@ -43,7 +54,8 @@ $appId = 0
 try {
     Invoke-Api -Method GET -Path '/api/health' | Out-Null
     $admin = Invoke-Api -Method POST -Path '/api/admin/login' -Body @{
-        account = 'admin'; password = '123456'; device = 'forum-experience-smoke'
+        platform_key = 'yiyunying-root'; app_key = 'yiyunying-demo'
+        account = 'admin'; password = $TestPassword; device = 'forum-experience-smoke'
     }
     $adminHeaders = @{ Authorization = "Bearer $($admin.access_token)" }
     $suffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -69,12 +81,12 @@ try {
     $firstAccount = "forum_a_$suffix"
     $secondAccount = "forum_b_$suffix"
     $first = Invoke-Api -Method POST -Path '/api/user/register' -Body @{
-        app_key = $appKey; account = $firstAccount; nickname = '内容作者'; password = '123456';
-        password_confirmation = '123456'; device = 'forum-smoke-a'
+        app_key = $appKey; account = $firstAccount; nickname = '内容作者'; password = $TestPassword;
+        password_confirmation = $TestPassword; device = 'forum-smoke-a'
     }
     $second = Invoke-Api -Method POST -Path '/api/user/register' -Body @{
-        app_key = $appKey; account = $secondAccount; nickname = '内容读者'; password = '123456';
-        password_confirmation = '123456'; device = 'forum-smoke-b'
+        app_key = $appKey; account = $secondAccount; nickname = '内容读者'; password = $TestPassword;
+        password_confirmation = $TestPassword; device = 'forum-smoke-b'
     }
     $firstHeaders = @{ Authorization = "Bearer $($first.access_token)"; 'X-App-Key' = $appKey }
     $secondHeaders = @{ Authorization = "Bearer $($second.access_token)"; 'X-App-Key' = $appKey }
@@ -165,7 +177,8 @@ try {
     Assert-True (@($adminDetail.post.comments).Count -eq 2) 'admin must inspect comments and replies'
 
     $root = Invoke-Api -Method POST -Path '/api/platform/login' -Body @{
-        account = 'root'; password = '123456'; device = 'forum-platform-smoke'
+        platform_key = 'yiyunying-root'
+        account = 'root'; password = $TestPassword; device = 'forum-platform-smoke'
     }
     $rootHeaders = @{ Authorization = "Bearer $($root.access_token)" }
     $platformPlates = Invoke-Api -Method GET -Path "/api/platform/apps/$appId/forum-plates" -Headers $rootHeaders

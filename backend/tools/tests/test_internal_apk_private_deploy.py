@@ -915,6 +915,293 @@ class DeploymentSafetyTests(unittest.TestCase):
         self.assertIn("0o600", source)
         self.assertNotRegex(source, r"public[/\\\\]downloads")
 
+    def test_private_tree_contract_rejects_links_hardlinks_and_permission_drift(self) -> None:
+        stage = "/srv/yiyunying-internal-apks/.candidate-" + "a" * 32
+        directories = [
+            stage,
+            f"{stage}/debug",
+            f"{stage}/debug/1.0.0",
+            f"{stage}/candidate",
+            f"{stage}/candidate/1.0.0",
+            f"{stage}/_auth",
+        ]
+        files = [
+            f"{stage}/debug/1.0.0/yiyunying-user-v1.0.0-debug.apk",
+            f"{stage}/candidate/1.0.0/yiyunying-user-v1.0.0.apk",
+            f"{stage}/_auth/verify.php",
+        ]
+
+        command = MODULE.private_tree_contract_command(stage, directories, files, 33)
+
+        self.assertIn("-xdev -type l -print -quit", command)
+        self.assertIn("-type f ! -links 1 -print -quit", command)
+        self.assertNotIn('test -z "$(find', command)
+        self.assertNotIn('test "$(find', command)
+        self.assertEqual(5, command.count("=$(find "))
+        self.assertEqual(5, command.count("then exit 1; fi"))
+        self.assertIn(f"-eq {len(directories)}", command)
+        self.assertIn(f"-eq {len(files)}", command)
+        self.assertEqual(len(directories), command.count("0:33:750"))
+        self.assertEqual(len(files), command.count("0:33:640"))
+        self.assertEqual(len(directories), command.count("root:www:750"))
+        self.assertEqual(len(files), command.count("root:www:640"))
+        self.assertNotIn("0:33:755", command)
+        self.assertNotIn("0:33:644", command)
+        with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous"):
+            MODULE.private_tree_contract_command(
+                stage,
+                directories,
+                files + ["/srv/yiyunying-internal-apks/outside.apk"],
+                33,
+            )
+        with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous"):
+            MODULE.private_tree_contract_command(
+                stage,
+                directories + [directories[-1]],
+                files,
+                33,
+            )
+
+    def test_private_tree_find_producer_failures_are_not_hidden_by_substitution(self) -> None:
+        bash = local_bash()
+        stage = f"/tmp/yiyunying-private-apk-{os.getpid()}"
+        directories = [
+            stage,
+            f"{stage}/debug",
+            f"{stage}/debug/1.0.0",
+            f"{stage}/candidate",
+            f"{stage}/candidate/1.0.0",
+            f"{stage}/_auth",
+        ]
+        files = [
+            f"{stage}/debug/1.0.0/yiyunying-user-v1.0.0-debug.apk",
+            f"{stage}/candidate/1.0.0/yiyunying-user-v1.0.0.apk",
+            f"{stage}/_auth/verify.php",
+        ]
+        command = MODULE.private_tree_contract_command(stage, directories, files, 33)
+        harness = rf'''set -euo pipefail
+FAIL_AT=$1
+ROOT={stage}
+COUNT_FILE=$(mktemp)
+cleanup() {{ command rm -rf -- "$ROOT"; command rm -f -- "$COUNT_FILE"; }}
+trap cleanup EXIT
+printf '0\n' > "$COUNT_FILE"
+mkdir -p -- "$ROOT/debug/1.0.0" "$ROOT/candidate/1.0.0" "$ROOT/_auth"
+: > "$ROOT/debug/1.0.0/yiyunying-user-v1.0.0-debug.apk"
+: > "$ROOT/candidate/1.0.0/yiyunying-user-v1.0.0.apk"
+: > "$ROOT/_auth/verify.php"
+find() {{
+  local count
+  count=$(command cat -- "$COUNT_FILE")
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$COUNT_FILE"
+  if builtin test "$count" -eq "$FAIL_AT"; then return 97; fi
+  command find "$@"
+}}
+stat() {{
+  case "$2" in
+    '%h') printf '1\n' ;;
+    '%u:%g:%a') if builtin test -d "$3"; then printf '0:33:750\n'; else printf '0:33:640\n'; fi ;;
+    '%U:%G:%a') if builtin test -d "$3"; then printf 'root:www:750\n'; else printf 'root:www:640\n'; fi ;;
+    *) return 98 ;;
+  esac
+}}
+{command}
+builtin test "$(command cat -- "$COUNT_FILE")" -eq 5
+'''
+
+        success = subprocess.run(
+            [bash, "--noprofile", "--norc", "-c", harness, "private-tree-find", "99"],
+            capture_output=True,
+            env=bash_environment(bash),
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(0, success.returncode, success.stderr)
+        for failure_position in range(1, 6):
+            with self.subTest(failure_position=failure_position):
+                result = subprocess.run(
+                    [
+                        bash,
+                        "--noprofile",
+                        "--norc",
+                        "-c",
+                        harness,
+                        "private-tree-find",
+                        str(failure_position),
+                    ],
+                    capture_output=True,
+                    env=bash_environment(bash),
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(
+                    1,
+                    result.returncode,
+                    f"find #{failure_position} did not fail closed: "
+                    f"stdout={result.stdout!r} stderr={result.stderr!r}",
+                )
+
+    def test_deploy_dynamically_freezes_new_private_tree_to_root_www(self) -> None:
+        class AlwaysEqual:
+            def __eq__(self, _other):
+                return True
+
+            def __ne__(self, _other):
+                return False
+
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def write(self, _payload):
+                return None
+
+        class FakeSftp:
+            def __init__(self):
+                self.actions = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def put(self, local, remote, confirm):
+                self.actions.append(("put", local, remote, confirm))
+
+            def chown(self, remote, uid, gid):
+                self.actions.append(("chown", remote, uid, gid))
+
+            def chmod(self, remote, mode):
+                self.actions.append(("chmod", remote, mode))
+
+            def open(self, remote, mode):
+                self.actions.append(("open", remote, mode))
+                return FakeStream()
+
+        class FakeTransport:
+            @staticmethod
+            def is_active():
+                return True
+
+        class FakeClient:
+            def __init__(self, sftp):
+                self.sftp = sftp
+                self.closed = False
+
+            def open_sftp(self):
+                return self.sftp
+
+            @staticmethod
+            def get_transport():
+                return FakeTransport()
+
+            def close(self):
+                self.closed = True
+
+        def artifact(track: str, file_name: str) -> MODULE.ApkArtifact:
+            return MODULE.ApkArtifact(
+                track=track,
+                role="user",
+                version="1.0.0",
+                version_code=66,
+                file_name=file_name,
+                package_name="xyz.jjmxg.yiyunying.user",
+                version_name="1.0.0-user",
+                signer_sha256="1" * 64,
+                path=ROOT / "README.md",
+                size=1,
+                sha256="2" * 64,
+            )
+
+        artifacts = [
+            artifact("debug", "yiyunying-user-v1.0.0-debug.apk"),
+            artifact("candidate", "yiyunying-user-v1.0.0.apk"),
+        ]
+        template, verifier = MODULE.validate_deployment_sources(ROOT)
+        args = self.args(
+            host="example.test",
+            known_hosts="known_hosts",
+            fpm_upstream="unix:/tmp/php-cgi-82.sock",
+            remote_php_binary="/www/server/php/82/bin/php",
+            remote_fpm_evidence_config=(
+                "/www/server/panel/vhost/nginx/extension/appht.jjmxg.xyz/internal-apks.conf"
+            ),
+            remote_nginx_host_config=(
+                "/www/server/panel/vhost/nginx/appht.jjmxg.xyz.conf"
+            ),
+            remote_nginx_host_include=(
+                "/www/server/panel/vhost/nginx/extension/appht.jjmxg.xyz/*.conf"
+            ),
+            remote_nginx_include=(
+                "/www/server/panel/vhost/nginx/extension/appht.jjmxg.xyz/internal-apks.conf"
+            ),
+            remote_secret_include=MODULE.EXPECTED_SECRET_INCLUDE,
+        )
+        sftp = FakeSftp()
+        client = FakeClient(sftp)
+        commands = []
+
+        def fake_run(_client, command, label):
+            commands.append((label, command))
+            if label == "resolve private runtime group":
+                return "33"
+            if label == "snapshot private deployment state":
+                return "0:0\n1:0\n2:0"
+            return ""
+
+        with mock.patch.object(MODULE, "connect_ssh", return_value=client), mock.patch.object(
+            MODULE, "run", side_effect=fake_run
+        ), mock.patch.object(
+            MODULE, "remote_identity", return_value=AlwaysEqual()
+        ), mock.patch.object(
+            MODULE, "verify_public_downloads"
+        ), mock.patch.object(
+            MODULE.secrets, "token_hex", return_value="a" * 32
+        ):
+            MODULE.deploy(
+                args,
+                artifacts,
+                template,
+                verifier,
+                MODULE.EXPECTED_PRIVATE_ROOT,
+                "https://appht.jjmxg.xyz",
+                "01" * 32,
+            )
+
+        stage = "/srv/yiyunying-internal-apks/.candidate-" + "a" * 32
+        private_chowns = [action for action in sftp.actions if action[0] == "chown"]
+        private_chmods = [
+            action
+            for action in sftp.actions
+            if action[0] == "chmod" and action[1].startswith(stage + "/")
+        ]
+        self.assertEqual(3, len(private_chowns))
+        self.assertTrue(all(action[2:] == (0, 33) for action in private_chowns))
+        self.assertEqual(3, len(private_chmods))
+        self.assertTrue(all(action[2] == 0o640 for action in private_chmods))
+        command_by_label = {label: command for label, command in commands}
+        self.assertIn(
+            "install -d -o 0 -g 33 -m 750",
+            command_by_label["prepare same-volume private staging"],
+        )
+        self.assertNotIn("-m 755", command_by_label["private download preflight and lock"])
+        self.assertIn(
+            "0:33:640",
+            command_by_label["verify staged private tree permissions and topology"],
+        )
+        self.assertIn(
+            "/srv/yiyunying-internal-apks/current",
+            command_by_label["verify activated private tree permissions and topology"],
+        )
+        self.assertTrue(client.closed)
+
     def test_ssh_connection_pins_only_the_supplied_known_hosts(self) -> None:
         class FakePolicy:
             pass
@@ -956,6 +1243,32 @@ def shutil_which(name: str) -> str | None:
     import shutil
 
     return shutil.which(name)
+
+
+def local_bash() -> str:
+    candidates = [shutil_which("bash")]
+    git = shutil_which("git")
+    if git:
+        git_root = Path(git).resolve().parent.parent
+        candidates.extend(
+            (str(git_root / "bin" / "bash.exe"), str(git_root / "usr" / "bin" / "sh.exe"))
+        )
+    candidates.append("/bin/bash")
+    for candidate in candidates:
+        if not candidate or not Path(candidate).is_file():
+            continue
+        result = subprocess.run(
+            [candidate, "--version"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0 and "GNU bash" in result.stdout:
+            return candidate
+    raise unittest.SkipTest("GNU Bash is unavailable for POSIX fault injection")
+
+
+def bash_environment(bash: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["PATH"] = str(Path(bash).parent) + os.pathsep + environment.get("PATH", "")
+    return environment
 
 
 def php_status(verifier: Path, secret: str, request_uri: str, debug_version: str = "2.7.15") -> int:
